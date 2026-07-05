@@ -2,7 +2,7 @@
 
 Two things in one command:
 
-- `/tldr N` — summarize your **last** message in at most N sentences (default 3). One-shot.
+- `/tldr N` — summarize your last **substantive** message in at most N sentences (default 3). One-shot. Repeated calls always condense the original message, never a previous TL;DR.
 - `/tldr on` / `/tldr off` — keep **every** following reply terse, across **all** sessions, until off.
 
 ## Install
