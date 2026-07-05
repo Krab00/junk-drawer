@@ -12,6 +12,7 @@ This repo is a plugin **marketplace**: one catalog, several small plugins. Insta
 /plugin marketplace add Krab00/junk-drawer      # once
 /plugin install statusline@junk-drawer          # then pick per plugin
 /plugin install ctx-tokens@junk-drawer
+/plugin install ctx-limit@junk-drawer
 /plugin install molt@junk-drawer
 ```
 
@@ -22,7 +23,10 @@ This repo is a plugin **marketplace**: one catalog, several small plugins. Insta
 | `statusline` | git branch + worktree + ANSI-colored status line | ready — run `/statusline:init` after install |
 | `ctx-tokens` | read current context token usage from the live transcript | ready — `ctx-tokens` on Bash PATH |
 | `tldr` | `/tldr N` summarize; `/tldr on\|off` terse mode (all sessions) | ready |
-| `molt` | context-limit orchestrator: spawn / hand off / close sessions | scaffold |
+| `handoff` | save a session handoff to disk, restore it in a fresh session by id (`/handoff`, `/handon <id>`) | ready |
+| `ctx-limit` | per-session context-size limit; past it the hook blocks / warns / runs a command (`/ctx-limit`) | ready — needs `ctx-tokens` |
+| `molt` | shed context into a handoff, `/clear`, and the fresh session auto-restores it (`/molt`); pairs with `ctx-limit` for detection | ready |
+| `junk-drawer` | cheatsheet of the whole marketplace: every plugin, version, and commands (`/junk-drawer`) | ready |
 
 ## Layout
 

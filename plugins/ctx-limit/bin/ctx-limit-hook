@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook: enforce the session context-size limit.
+# Off unless ~/.claude/ctx-limit-threshold holds a number. Past it, apply the configured action:
+#   block (default) -> exit 2, reject the prompt (stderr shown to user)
+#   warn            -> stdout added to context, prompt proceeds
+#   cmd             -> run ~/.claude/ctx-limit-cmd, prompt proceeds
+# Requires ctx-tokens on PATH (ctx-tokens plugin). Reads transcript_path from the hook's JSON stdin.
+cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+thrf="$cfg/ctx-limit-threshold"
+[ -f "$thrf" ] || exit 0
+thr=$(cat "$thrf"); case "$thr" in ''|*[!0-9]*) exit 0 ;; esac
+
+input=$(cat)
+tp=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
+ctx=$(ctx-tokens ${tp:+"$tp"} 2>/dev/null) || exit 0
+case "$ctx" in ''|*[!0-9]*) exit 0 ;; esac
+[ "$ctx" -ge "$thr" ] 2>/dev/null || exit 0
+
+action=$(cat "$cfg/ctx-limit-action" 2>/dev/null); action=${action:-block}
+case "$action" in
+    warn)
+        echo "⚠️ ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider /clear or /molt."
+        ;;
+    cmd)
+        c=$(cat "$cfg/ctx-limit-cmd" 2>/dev/null)
+        [ -n "$c" ] && CTX_TOKENS="$ctx" CTX_LIMIT="$thr" bash -c "$c" >/dev/null 2>&1
+        ;;
+    *)
+        echo "ctx-limit reached: ${ctx} ≥ ${thr} tokens. Run /molt to continue in a fresh session (or /clear, or /ctx-limit off)." >&2
+        exit 2
+        ;;
+esac
+exit 0

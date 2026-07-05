@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Record a pending molt handoff so the next fresh session auto-restores it. Used by /molt.
+#   molt-mark <id>
+cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+[ -n "$1" ] || { echo "usage: molt-mark <id>" >&2; exit 1; }
+printf '%s %s\n' "$(date +%s)" "$1" > "$cfg/molt-pending"

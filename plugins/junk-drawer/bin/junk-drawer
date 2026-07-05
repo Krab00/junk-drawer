@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# ponytail: reads sibling plugin manifests at runtime, so the cheatsheet never rots.
+set -euo pipefail
+
+# All plugins are siblings under plugins/<name>; this script is plugins/junk-drawer/bin/.
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+printf 'junk-drawer — Claude Code plugin marketplace (Krab00)\n'
+printf 'install: /plugin install <name>@junk-drawer\n\n'
+
+for manifest in "$root"/*/.claude-plugin/plugin.json; do
+  [ -e "$manifest" ] || continue
+  dir="$(dirname "$(dirname "$manifest")")"
+  name="$(jq -r '.name'            "$manifest")"
+  ver="$(jq  -r '.version // "?"'  "$manifest")"
+  desc="$(jq -r '.description // ""' "$manifest")"
+
+  printf '%s  v%s\n  %s\n' "$name" "$ver" "$desc"
+
+  found=0
+  for cmd in "$dir"/commands/*.md; do
+    [ -e "$cmd" ] || continue
+    found=1
+    # frontmatter = lines between the first two --- fences
+    fm="$(awk '/^---[[:space:]]*$/{n++; next} n==1{print}' "$cmd")"
+    # ponytail: assumes single-line frontmatter fields; true for every command here.
+    hint="$(printf '%s\n' "$fm" | sed -n 's/^argument-hint:[[:space:]]*//p' | tr -d '"')"
+    cdesc="$(printf '%s\n' "$fm" | sed -n 's/^description:[[:space:]]*//p')"
+    cname="/$name:$(basename "$cmd" .md)"
+    [ -n "$hint" ] && cname="$cname $hint"
+    printf '    %s\n        %s\n' "$cname" "$cdesc"
+  done
+
+  for skill in "$dir"/skills/*/SKILL.md; do
+    [ -e "$skill" ] || continue
+    found=1
+    printf '    (skill: %s — auto-invoked)\n' "$(basename "$(dirname "$skill")")"
+  done
+
+  [ "$found" -eq 0 ] && printf '    (no commands)\n'
+  printf '\n'
+done
