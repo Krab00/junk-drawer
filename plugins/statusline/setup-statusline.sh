@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# Wire this plugin's status line into your Claude Code settings.json.
-# Run from anywhere, any number of times (idempotent):
-#   bash ~/.claude/plugins/marketplaces/junk-drawer/plugins/statusline/setup-statusline.sh
-# A plugin can't auto-register a statusLine, so this does the one manual step for you.
+# Wire this status line into Claude Code. Preferred: run `/statusline:init` inside Claude Code.
+# Or from a terminal: bash <this-file>. Idempotent.
+#
+# Copies the status line script to a stable spot in your config dir and points settings.json there,
+# so it survives plugin updates/uninstall (the plugin's own path is versioned cache and would rot).
 set -euo pipefail
 
 command -v jq >/dev/null || { echo "need jq (the status line needs it too)"; exit 1; }
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT="$DIR/statusline.sh"
-SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+DEST="$CFG/junk-drawer-statusline.sh"          # namespaced name → won't clobber a user's own statusline.sh
+SETTINGS="$CFG/settings.json"
+
+install -m 0755 "$DIR/statusline.sh" "$DEST"   # copy + chmod into a stable location
 
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-cp "$SETTINGS" "$SETTINGS.bak"   # settings is precious — always back up before touching
+cp "$SETTINGS" "$SETTINGS.bak"                  # settings is precious — always back up before touching
 
 tmp="$(mktemp)"
-jq --arg cmd "$SCRIPT" '.statusLine = {type: "command", command: $cmd}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+jq --arg cmd "$DEST" '.statusLine = {type: "command", command: $cmd}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
 
-# check: the edit landed and the command renders something
 jq -e '.statusLine.command' "$SETTINGS" >/dev/null || { echo "FAILED to write statusLine"; exit 1; }
-echo "statusLine → $SCRIPT"
+echo "statusLine → $DEST"
 echo "backup     → $SETTINGS.bak"
-echo "preview    → $(printf '{"model":{"display_name":"preview"},"cwd":"%s"}' "$PWD" | bash "$SCRIPT")"
+echo "preview    → $(printf '{"model":{"display_name":"preview"},"cwd":"%s"}' "$PWD" | bash "$DEST")"

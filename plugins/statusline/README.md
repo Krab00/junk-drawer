@@ -13,8 +13,14 @@ A colored Claude Code status line. Segments, separated by a dim `│`:
 /plugin install statusline@junk-drawer
 ```
 
-A plugin can't auto-activate a status line, so run the setup once — it wires `statusLine` into your
-`settings.json` for you (idempotent, backs up first):
+A plugin can't auto-activate a status line, so run the setup once. Easiest — inside Claude Code:
+
+```
+/statusline:init
+```
+
+It copies the script to a stable spot and wires `statusLine` into your `settings.json` (idempotent,
+backs up first). Equivalent from a terminal:
 
 ```
 bash ~/.claude/plugins/marketplaces/junk-drawer/plugins/statusline/setup-statusline.sh
