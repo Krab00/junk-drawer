@@ -26,3 +26,6 @@ window; `out` is that turn's output, reported separately.
 
 Threshold on it in scripts: `[ "$(ctx-tokens)" -gt 300000 ] && …` — the basis for the `wylinka`
 orchestrator's handoff trigger.
+
+Installing also registers a `ctx-tokens` **skill**, so Claude runs the command on its own when
+context fullness is relevant (e.g. you ask "how much context is left?").
