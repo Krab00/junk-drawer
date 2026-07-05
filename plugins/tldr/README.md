@@ -1,8 +1,9 @@
 # tldr
 
-Summarize the current work, a file, or a selection on demand — short and to the point.
+Two things in one command:
 
-> Status: **scaffold** — not implemented yet.
+- `/tldr N` — summarize your **last** message in at most N sentences (default 3). One-shot.
+- `/tldr on` / `/tldr off` — keep **every** following reply terse, across **all** sessions, until off.
 
 ## Install
 
@@ -13,6 +14,17 @@ Summarize the current work, a file, or a selection on demand — short and to th
 
 ## Usage
 
-*(intended, lands when the skill is added)*
+```
+/tldr 2      # last message in ≤2 sentences
+/tldr        # last message in ≤3 sentences
+/tldr on     # terse mode ON — every reply, all sessions
+/tldr off    # back to normal
+```
 
-Ask for a tldr in chat, or invoke `/tldr` on the current context / a path.
+## How persistent mode works
+
+`/tldr on` writes a global flag (`~/.claude/tldr-on`). A bundled **UserPromptSubmit hook** checks that
+flag every turn and, while set, injects a "be terse" instruction into context — so the terseness is
+enforced deterministically each turn. A skill couldn't guarantee that (skills are model-triggered, not
+per-turn). `/tldr off` removes the flag. The flag is global on purpose: turn it on in one tab, every
+session with the plugin goes terse.
