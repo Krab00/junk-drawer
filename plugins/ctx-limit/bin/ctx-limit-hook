@@ -12,8 +12,11 @@ thr=$(cat "$thrf"); case "$thr" in ''|*[!0-9]*) exit 0 ;; esac
 
 input=$(cat)
 # ponytail: escape hatches — let control/handoff commands through even over the limit, else block
-# could lock you out (can't /ctx-limit off or /molt to recover). Slash commands arrive as .prompt.
-case "$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)" in
+# could lock you out (can't /ctx-limit off or /molt to recover). Slash commands arrive in .prompt
+# as "/<plugin>:<command> [args]" (e.g. /ctx-limit:ctx-limit 300k), so a /<name> prefix matches.
+p=$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)
+p="${p#"${p%%[![:space:]]*}"}"   # trim leading whitespace
+case "$p" in
     /ctx-limit*|/molt*|/handoff*|/handon*|/clear*) exit 0 ;;
 esac
 tp=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
