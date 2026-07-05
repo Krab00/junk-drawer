@@ -13,15 +13,23 @@ A colored Claude Code status line. Segments, separated by a dim `│`:
 /plugin install statusline@junk-drawer
 ```
 
-A plugin can't auto-activate a status line, so add this **once** to `~/.claude/settings.json`:
+A plugin can't auto-activate a status line, so run the setup once — it wires `statusLine` into your
+`settings.json` for you (idempotent, backs up first):
+
+```
+bash ~/.claude/plugins/marketplaces/junk-drawer/plugins/statusline/setup.sh
+```
+
+Or do it by hand — add to `~/.claude/settings.json`:
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "${CLAUDE_PLUGIN_ROOT}/statusline.sh"
+    "command": "/ABSOLUTE/PATH/TO/plugins/marketplaces/junk-drawer/plugins/statusline/statusline.sh"
   }
 }
 ```
 
-`${CLAUDE_PLUGIN_ROOT}` resolves to the installed plugin directory — no absolute paths needed.
+Note: `${CLAUDE_PLUGIN_ROOT}` does **not** resolve inside a user `settings.json`, so use an absolute
+path (the `marketplaces/...` one is version-stable; the `cache/.../<version>/...` one breaks on updates).
