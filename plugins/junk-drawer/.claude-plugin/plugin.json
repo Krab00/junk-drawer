@@ -1,6 +1,0 @@
-{
-  "name": "junk-drawer",
-  "description": "A junk drawer of Claude Code skills — utilities plus a context-limit orchestrator (wylinka) that sheds a full context and continues in a fresh session via handoff.",
-  "version": "0.0.1",
-  "author": { "name": "Krab00" }
-}

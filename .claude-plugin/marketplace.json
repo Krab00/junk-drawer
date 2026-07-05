@@ -3,9 +3,24 @@
   "owner": { "name": "Krab00" },
   "plugins": [
     {
-      "name": "junk-drawer",
-      "source": "./plugins/junk-drawer",
-      "description": "Assorted Claude Code skills plus a context-limit orchestrator (wylinka) that hands off to fresh sessions."
+      "name": "statusline",
+      "source": "./plugins/statusline",
+      "description": "Status line: git branch + worktree + ANSI colors, context/effort segments."
+    },
+    {
+      "name": "ctx-tokens",
+      "source": "./plugins/ctx-tokens",
+      "description": "Read current context token usage from the live session transcript."
+    },
+    {
+      "name": "tldr",
+      "source": "./plugins/tldr",
+      "description": "Summarize on demand."
+    },
+    {
+      "name": "wylinka",
+      "source": "./plugins/wylinka",
+      "description": "Context-limit orchestrator: shed a full context and continue in a fresh session via handoff (spawn / close cmux sessions)."
     }
   ]
 }
