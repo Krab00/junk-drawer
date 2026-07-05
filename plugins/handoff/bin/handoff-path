@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Target path for a new handoff + short session id (also copied to clipboard). Used by /handoff.
+# Prints: line 1 = file path, line 2 = short id. Session id from CLAUDE_CODE_SESSION_ID.
+dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs"
+mkdir -p "$dir"
+sid="${CLAUDE_CODE_SESSION_ID:-unknown}"
+short="${sid:0:8}"
+printf '%s' "$short" | pbcopy 2>/dev/null || true
+echo "$dir/$(date +%Y-%m-%dT%H-%M)_${short}.md"
+echo "$short"

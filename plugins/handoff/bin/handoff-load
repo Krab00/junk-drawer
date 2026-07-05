@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Print a saved handoff for a fresh session. With an id/fragment, match it; without, use the newest.
+#   handoff-load [id]
+dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs"
+q="${1:-}"
+f=$(ls -t "$dir"/*"$q"*.md 2>/dev/null | head -1)
+[ -n "$f" ] && [ -f "$f" ] || { echo "no handoff found${q:+ matching '$q'} in $dir" >&2; exit 1; }
+echo "# handoff: $(basename "$f")"
+echo
+cat "$f"
