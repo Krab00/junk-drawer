@@ -1,5 +1,5 @@
 {
-  "name": "wylinka",
+  "name": "molt",
   "description": "Context-limit orchestrator. Near the token limit, shed the full context (like a snake sheds its skin) and continue the work in a fresh session via a handoff prompt; spawns and closes cmux sessions.",
   "version": "0.0.1",
   "author": { "name": "Krab00" }
