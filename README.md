@@ -19,7 +19,7 @@ This repo is a plugin **marketplace**: one catalog, several small plugins. Insta
 
 | Plugin | What it does | Status |
 |--------|--------------|--------|
-| `statusline` | git branch + worktree + ANSI-colored status line | scaffold |
+| `statusline` | git branch + worktree + ANSI-colored status line | ready (needs one settings.json line) |
 | `ctx-tokens` | read current context token usage from the live transcript | scaffold |
 | `tldr` | summarize on demand | scaffold |
 | `wylinka` | context-limit orchestrator: spawn / hand off / close sessions | scaffold |
