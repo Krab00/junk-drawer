@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Wire this plugin's status line into your Claude Code settings.json.
 # Run from anywhere, any number of times (idempotent):
-#   bash ~/.claude/plugins/marketplaces/junk-drawer/plugins/statusline/setup.sh
+#   bash ~/.claude/plugins/marketplaces/junk-drawer/plugins/statusline/setup-statusline.sh
 # A plugin can't auto-register a statusLine, so this does the one manual step for you.
 set -euo pipefail
 
