@@ -19,6 +19,7 @@ Two things in one command:
 /tldr        # last message in ≤3 sentences
 /tldr on     # terse mode ON — every reply, all sessions
 /tldr off    # back to normal
+/tldr status # is terse mode currently on or off
 ```
 
 ## How persistent mode works
