@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Target path for a new molt handoff + short session id. Used by /molt. molt is self-contained:
+# it writes and reads its own handoffs and does NOT depend on the handoff plugin.
+# Prints: line 1 = file path, line 2 = short id. Session id from CLAUDE_CODE_SESSION_ID.
+dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/molt-handoffs"
+mkdir -p "$dir"
+sid="${CLAUDE_CODE_SESSION_ID:-unknown}"
+short="${sid:0:8}"
+echo "$dir/$(date +%Y-%m-%dT%H-%M)_${short}.md"
+echo "$short"

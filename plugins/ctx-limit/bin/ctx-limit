@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Configure the per-session context-size limit enforced by the UserPromptSubmit hook.
+# All state lives in ~/.claude and is read fresh each turn, so changes are live (no new session).
+#   ctx-limit                       -> show status
+#   ctx-limit on                    -> enable at the default (300000) if no threshold set yet
+#   ctx-limit <number>              -> set threshold and enable; accepts 300000, 300k, 1m
+#   ctx-limit off | reset           -> disable
+#   ctx-limit action <block|warn|cmd>
+#   ctx-limit cmd <shell command>   -> command for `action cmd` (also switches action to cmd)
+cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+thrf="$cfg/ctx-limit-threshold"; actf="$cfg/ctx-limit-action"; cmdf="$cfg/ctx-limit-cmd"
+def=300000
+
+# Parse a token count with optional k/m suffix (case-insensitive) into a plain integer. Fails on junk.
+parse_tokens() {
+    local v="$1" mult=1
+    case "$v" in
+        *[kK]) mult=1000;    v="${v%?}" ;;
+        *[mM]) mult=1000000; v="${v%?}" ;;
+    esac
+    case "$v" in ''|*[!0-9]*) return 1 ;; esac
+    echo $((v * mult))
+}
+case "${1:-status}" in
+    status)
+        if [ -f "$thrf" ]; then state="ON @ $(cat "$thrf") tokens"; else state="OFF"; fi
+        act=$(cat "$actf" 2>/dev/null); act=${act:-block}
+        echo "ctx-limit: $state — action: $act"
+        [ "$act" = cmd ] && echo "  cmd: $(cat "$cmdf" 2>/dev/null)"
+        ;;
+    on) [ -f "$thrf" ] || echo "$def" > "$thrf"; echo "ctx-limit ON @ $(cat "$thrf") tokens." ;;
+    off|reset) rm -f "$thrf"; echo "ctx-limit OFF." ;;
+    action)
+        case "$2" in
+            block|warn|cmd) echo "$2" > "$actf"; echo "ctx-limit action: $2." ;;
+            *) echo "usage: ctx-limit action <block|warn|cmd>" >&2; exit 1 ;;
+        esac ;;
+    cmd)
+        shift; [ -n "$1" ] || { echo "usage: ctx-limit cmd <shell command>" >&2; exit 1; }
+        printf '%s\n' "$*" > "$cmdf"; echo cmd > "$actf"
+        echo "ctx-limit cmd set; action switched to cmd." ;;
+    *)  n=$(parse_tokens "$1") || { echo "usage: ctx-limit [<number>[k|m]|on|off|reset|action <mode>|cmd <shell>]" >&2; exit 1; }
+        echo "$n" > "$thrf"; echo "ctx-limit ON @ $n tokens (takes effect next prompt)." ;;
+esac

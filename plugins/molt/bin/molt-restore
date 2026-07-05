@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# SessionStart hook: if a fresh molt is pending, inject its handoff so the new session resumes.
+# Fires on every session start / clear but only acts when ~/.claude/molt-pending exists and is
+# < 1h old (guard so a stale marker can't hijack an unrelated /clear). Clears the marker either way.
+# SessionStart stdout is added to the model's context.
+cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+marker="$cfg/molt-pending"
+[ -f "$marker" ] || exit 0
+read -r ts id < "$marker" 2>/dev/null
+case "$ts" in ''|*[!0-9]*) rm -f "$marker"; exit 0 ;; esac
+now=$(date +%s)
+[ $((now - ts)) -le 3600 ] || { rm -f "$marker"; exit 0; }
+f=$(ls -t "$cfg/molt-handoffs"/*"$id"*.md 2>/dev/null | head -1)
+rm -f "$marker"
+[ -n "$f" ] && [ -f "$f" ] || exit 0
+echo "# molt restore — resuming $(basename "$f")"
+echo
+cat "$f"
+echo
+if [ -f "$cfg/molt-chain" ]; then
+    IFS=$'\t' read -r b c n < "$cfg/molt-chain"
+    echo "---"
+    echo "Chain marker: suggest to the user \`/rename ${b}_${n}\` and \`/color ${c}\` to keep the molt chain visible."
+fi
+echo "---"
+echo "You just molted into a fresh session. Briefly confirm what you picked up, then continue the work from where the handoff leaves off."
