@@ -33,3 +33,9 @@ Or do it by hand — add to `~/.claude/settings.json`:
 
 Note: `${CLAUDE_PLUGIN_ROOT}` does **not** resolve inside a user `settings.json`, so use an absolute
 path (the `marketplaces/...` one is version-stable; the `cache/.../<version>/...` one breaks on updates).
+
+## Usage
+
+Once wired, it renders automatically in Claude Code — nothing to run. Tweak segments or colors by
+editing `statusline.sh`.
+
