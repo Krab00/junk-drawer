@@ -4,15 +4,25 @@
 #   block (default) -> exit 2, reject the prompt (stderr shown to user)
 #   warn            -> stdout added to context, prompt proceeds
 #   cmd             -> run ~/.claude/ctx-limit-cmd, prompt proceeds
-# Requires ctx-tokens on PATH (ctx-tokens plugin). Reads transcript_path from the hook's JSON stdin.
+# Self-contained: needs only jq. Reads transcript_path from the hook's JSON stdin.
 cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 thrf="$cfg/ctx-limit-threshold"
 [ -f "$thrf" ] || exit 0
 thr=$(cat "$thrf"); case "$thr" in ''|*[!0-9]*) exit 0 ;; esac
 
 input=$(cat)
+# ponytail: escape hatches — let control/handoff commands through even over the limit, else block
+# could lock you out (can't /ctx-limit off or /molt to recover). Slash commands arrive as .prompt.
+case "$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)" in
+    /ctx-limit*|/molt*|/handoff*|/handon*|/clear*) exit 0 ;;
+esac
 tp=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
-ctx=$(ctx-tokens ${tp:+"$tp"} 2>/dev/null) || exit 0
+[ -n "$tp" ] && [ -f "$tp" ] || exit 0
+# ponytail: inline the token count — plugin bin/ is NOT on a hook's PATH, so we can't call
+# ctx-tokens here. jq over the transcript is all it needs. Keep in sync with ctx-tokens' math.
+ctx=$(grep '"usage"' "$tp" 2>/dev/null | tail -n1 | jq -r '
+    (.message.usage // .usage) as $u
+    | (($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0))' 2>/dev/null)
 case "$ctx" in ''|*[!0-9]*) exit 0 ;; esac
 [ "$ctx" -ge "$thr" ] 2>/dev/null || exit 0
 
