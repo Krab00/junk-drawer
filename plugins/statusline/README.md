@@ -17,7 +17,7 @@ A plugin can't auto-activate a status line, so run the setup once — it wires `
 `settings.json` for you (idempotent, backs up first):
 
 ```
-bash ~/.claude/plugins/marketplaces/junk-drawer/plugins/statusline/setup.sh
+bash ~/.claude/plugins/marketplaces/junk-drawer/plugins/statusline/setup-statusline.sh
 ```
 
 Or do it by hand — add to `~/.claude/settings.json`:
