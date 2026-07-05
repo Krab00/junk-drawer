@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# ctx-tokens — current context-window token usage of the live Claude Code session.
+#   ctx-tokens              # context tokens of the current session (found via cwd)
+#   ctx-tokens -h           # human form, e.g. "ctx 56k (56657) | out 562"
+#   ctx-tokens <file.jsonl> # from a specific transcript (e.g. a hook's transcript_path)
+#
+# "context" = last turn's input side: input + cache_creation + cache_read — what actually fills the
+# window. output_tokens is reported separately. Needs jq.
+
+human=0
+[ "${1:-}" = "-h" ] && { human=1; shift; }
+
+f="${1:-}"
+if [ -z "$f" ]; then
+    # current session transcript = newest .jsonl in the project dir for this cwd
+    dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(pwd | sed 's:/:-:g')"
+    f=$(ls -t "$dir"/*.jsonl 2>/dev/null | head -1)
+fi
+[ -n "$f" ] && [ -f "$f" ] || { echo "no transcript" >&2; exit 1; }
+
+# last line carrying a usage block (portable: no tac / tail -r, works on Linux + macOS)
+read -r ctx out < <(
+    grep '"usage"' "$f" | tail -n1 | jq -r '
+        (.message.usage // .usage) as $u
+        | "\(($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0)) \($u.output_tokens // 0)"'
+)
+[ -n "${ctx:-}" ] || { echo "no usage in transcript" >&2; exit 1; }
+
+if [ "$human" = 1 ]; then
+    printf 'ctx %dk (%d) | out %d\n' "$((ctx / 1000))" "$ctx" "$out"
+else
+    echo "$ctx"
+fi
