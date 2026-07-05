@@ -1,0 +1,11 @@
+{
+  "name": "junk-drawer",
+  "owner": { "name": "Krab00" },
+  "plugins": [
+    {
+      "name": "junk-drawer",
+      "source": "./plugins/junk-drawer",
+      "description": "Assorted Claude Code skills plus a context-limit orchestrator (wylinka) that hands off to fresh sessions."
+    }
+  ]
+}
