@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Toggle global TL;DR mode by presence of a flag file. Read by the UserPromptSubmit hook each turn.
+#   tldr-flag on | off | status
+flag="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/tldr-on"
+case "${1:-status}" in
+    on)  : > "$flag"; echo "TL;DR mode ON (all sessions with the plugin). /tldr off to stop." ;;
+    off) rm -f "$flag"; echo "TL;DR mode OFF." ;;
+    *)   [ -f "$flag" ] && echo "TL;DR mode: ON" || echo "TL;DR mode: OFF" ;;
+esac
