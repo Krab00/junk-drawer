@@ -18,6 +18,11 @@
       "description": "Summarize on demand."
     },
     {
+      "name": "handoff",
+      "source": "./plugins/handoff",
+      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>)."
+    },
+    {
       "name": "molt",
       "source": "./plugins/molt",
       "description": "Context-limit orchestrator: shed a full context and continue in a fresh session via handoff (spawn / close cmux sessions)."
