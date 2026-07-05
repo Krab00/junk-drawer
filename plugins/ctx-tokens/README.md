@@ -24,7 +24,7 @@ ctx-tokens <file.jsonl> # from a specific transcript (e.g. a hook's transcript_p
 `context` = the last turn's input side (input + cache_creation + cache_read) — what actually fills the
 window; `out` is that turn's output, reported separately.
 
-Threshold on it in scripts: `[ "$(ctx-tokens)" -gt 300000 ] && …` — the basis for the `wylinka`
+Threshold on it in scripts: `[ "$(ctx-tokens)" -gt 300000 ] && …` — the basis for the `molt`
 orchestrator's handoff trigger.
 
 Installing also registers a `ctx-tokens` **skill**, so Claude runs the command on its own when

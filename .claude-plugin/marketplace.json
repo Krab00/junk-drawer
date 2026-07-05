@@ -18,8 +18,8 @@
       "description": "Summarize on demand."
     },
     {
-      "name": "wylinka",
-      "source": "./plugins/wylinka",
+      "name": "molt",
+      "source": "./plugins/molt",
       "description": "Context-limit orchestrator: shed a full context and continue in a fresh session via handoff (spawn / close cmux sessions)."
     }
   ]
