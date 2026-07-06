@@ -1,8 +1,8 @@
 # molt
 
 Context-limit **orchestrator**. Near the token limit, the agent sheds its full context like a snake
-sheds its skin (*molt*): it writes a handoff, you `/clear`, and the fresh session **auto-restores**
-the handoff and continues the work. molt is self-contained — it writes and reads its own handoffs.
+sheds its skin (*molt*): it writes a handoff, spawns a **fresh claude session** that loads the
+handoff and continues the work, and turns on remote control — no `/clear`, no lost thread.
 
 ## Install
 
@@ -11,23 +11,36 @@ the handoff and continues the work. molt is self-contained — it writes and rea
 /plugin install molt@junk-drawer
 ```
 
+Requires [`herdr`](https://herdr.dev) (running server) for the spawn path, and `jq`.
+
 ## Usage
 
-- `/molt` — write a handoff, arm the next session to restore it, then tells you to run `/clear`.
-  The new session picks the work back up automatically.
+- `/molt` — write a handoff, then spawn a fresh claude tab via herdr, seed it with the handoff, and
+  enable remote control. The new session picks the work back up on its own; the old tab can be closed.
 
 **Detection is delegated to [`ctx-limit`](../ctx-limit).** Install it and run `/ctx-limit on`
 (default 300000 tokens): when you cross the limit it blocks the prompt and tells you to `/molt`.
-molt itself has no detector — it's just the shed + restore half of the loop.
+molt itself has no detector — it's just the shed + continue half of the loop.
 
-Handoffs live in `~/.claude/molt-handoffs/`. A pending restore is marked in `~/.claude/molt-pending`
-(1h guard so a stale marker can't hijack an unrelated `/clear`).
+## How the spawn works (herdr)
 
-### Chain name + color
+`bin/molt-spawn <handoff-file> [cwd] [name]` drives herdr over its socket — **verified, not blind**
+(it reads the new session's screen; no osascript, no Screen Recording, no fixed sleeps):
 
-`/molt` prints a suggested `/rename <base>_N` and `/color <color>` so a chain of molted sessions
-stays visually consistent. Those are user-side commands — molt can't type them for you (no cmux
-socket auth), so it just hands you the exact commands to paste.
+1. `herdr agent start <name> --cwd <dir> -- claude` — new tab.
+2. `herdr agent wait --status idle` — wait until claude is ready.
+3. Inject a **self-contained** prompt pointing at the handoff file (a fresh session has no `/handon`
+   command, so molt sends the full instruction, not the slash command).
+4. Inject `/remote-control`.
 
-> Not yet: auto-spawning / closing cmux workspaces and read-screen verification. That needs
-> authorized access to the cmux socket (`CMUX_SOCKET_PASSWORD`); until then molt is in-place only.
+Injection recipe: `pane send-text` → `wait output --match` (let it render) → `pane send-keys Enter`.
+Pressing Enter immediately after the text does not submit.
+
+## Fallback (no herdr)
+
+If `molt-spawn` fails, `/molt` falls back to in-place mode: `bin/molt-mark` arms
+`~/.claude/molt-pending` (`<epoch> <id>`, 1h guard) and you run `/clear`; the SessionStart hook
+`bin/molt-restore` reloads the handoff in the same tab. Handoffs live in `~/.claude/molt-handoffs/`.
+
+> Not yet: name/color chain across spawns (`bin/molt-chain` exists), auto-closing the old session,
+> and fully autonomous spawn at the threshold (needs the handoff written before the block fires).

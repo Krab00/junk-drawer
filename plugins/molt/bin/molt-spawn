@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# molt-spawn — shed into a FRESH claude session via herdr and seed it with a handoff.
+# Opens a new tab, waits until claude is ready, injects a self-contained prompt that loads the
+# handoff file, then turns on remote control. Verified (reads the screen) — no osascript, no sleeps.
+#
+#   molt-spawn <handoff-file> [cwd] [name]
+#     handoff-file : the handoff .md the new session should load
+#     cwd          : working dir for the new session (default: $PWD)
+#     name         : herdr agent name (default: molt)
+#
+# Requires: herdr (server running) + jq. Prints the new pane id and the remote-control URL.
+set -u
+hf="${1:?usage: molt-spawn <handoff-file> [cwd] [name]}"
+cwd="${2:-$PWD}"
+name="${3:-molt}"
+
+[ -f "$hf" ] || { echo "molt-spawn: handoff file not found: $hf" >&2; exit 1; }
+command -v herdr >/dev/null 2>&1 || { echo "molt-spawn: herdr not on PATH" >&2; exit 1; }
+
+# type text into the pane and submit it. Enter must come AFTER the text has rendered, else the TUI
+# swallows it — so we wait for a marker from the text to appear before pressing Enter.
+send_submit() {
+    local p="$1" text="$2" marker="$3"
+    herdr pane send-text "$p" "$text" >/dev/null 2>&1
+    herdr wait output "$p" --match "$marker" --timeout 6000 >/dev/null 2>&1
+    herdr pane send-keys "$p" Enter >/dev/null 2>&1
+}
+
+# 1) spawn a fresh claude in a new tab
+out=$(herdr agent start "$name" --cwd "$cwd" --focus -- claude 2>&1)
+pane=$(printf '%s' "$out" | jq -r '.result.agent.pane_id // empty' 2>/dev/null)
+[ -n "$pane" ] || { echo "molt-spawn: spawn failed: $out" >&2; exit 1; }
+# ponytail: assumes cwd is already trusted (molt continues in the same repo, which it is). If a
+# fresh/untrusted dir shows a trust prompt, add: read screen, send Enter to accept, before seeding.
+herdr agent wait "$pane" --status idle --timeout 30000 >/dev/null 2>&1
+
+# 2) seed the handoff — full self-contained prompt (a fresh session has NO /handon command)
+seed="Wczytaj plik $hf i potraktuj jego tresc jako kontekst roboczy tej sesji (to jest handoff). Potwierdz w jednej linii co przejmujesz, potem kontynuuj prace od miejsca w ktorym handoff sie konczy."
+send_submit "$pane" "$seed" "$hf"
+herdr agent wait "$pane" --status idle --timeout 60000 >/dev/null 2>&1
+
+# 3) enable remote control
+send_submit "$pane" "/remote-control" "remote-control"
+herdr agent wait "$pane" --status idle --timeout 15000 >/dev/null 2>&1
+
+# 4) report
+echo "molt-spawn: new session pane=$pane name=$name cwd=$cwd"
+herdr agent read "$pane" --lines 60 2>/dev/null \
+    | jq -r '.result.read.text' 2>/dev/null \
+    | grep -iE 'remote-control is active|claude\.ai/code' | head -2
