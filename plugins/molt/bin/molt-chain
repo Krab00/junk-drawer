@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Molt chain tracker: a consistent session name (base_N) + color across a whole molt chain.
-# Without cmux socket auth, molt can't run /rename or /color itself — this just persists the
-# base, color and counter so /molt can print the exact commands for the user to paste.
+# molt-spawn reads this to name and color each spawned session (<base>_N, same color as the chain).
 #   molt-chain            -> advance the chain (or start it, base "molt") and print "<name>\t<color>"
 #   molt-chain <base>     -> same, but use <base> when starting a fresh chain
-#   molt-chain reset [b]  -> forget the chain and start over
+#   molt-chain reset      -> forget the chain (next call starts a new one)
+#   molt-chain reset <b>  -> forget it and start fresh at <b>_1
 cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 file="$cfg/molt-chain"
 colors=(red blue green yellow purple orange pink cyan)
-[ "$1" = reset ] && { rm -f "$file"; shift; }
+if [ "${1:-}" = reset ]; then
+    rm -f "$file"; shift
+    [ $# -gt 0 ] || exit 0   # bare `reset` just forgets the chain; don't recreate it
+fi
 if [ -f "$file" ]; then
     IFS=$'\t' read -r base color n < "$file"
     n=$((n + 1))
