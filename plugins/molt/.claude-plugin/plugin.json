@@ -1,6 +1,6 @@
 {
   "name": "molt",
   "description": "Context-limit orchestrator. Near the token limit, shed the full context (like a snake sheds its skin) into a handoff and continue the work in a fresh session via /clear + auto-restore. Opt-in detector nudges you when you're close.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "author": { "name": "Krab00" }
 }

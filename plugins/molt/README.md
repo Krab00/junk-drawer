@@ -18,9 +18,16 @@ Requires [`herdr`](https://herdr.dev) (running server) for the spawn path, and `
 - `/molt` — write a handoff, then spawn a fresh claude tab via herdr, seed it with the handoff, and
   enable remote control. The new session picks the work back up on its own; the old tab can be closed.
 
-**Detection is delegated to [`ctx-limit`](../ctx-limit).** Install it and run `/ctx-limit on`
-(default 300000 tokens): when you cross the limit it blocks the prompt and tells you to `/molt`.
-molt itself has no detector — it's just the shed + continue half of the loop.
+## Auto-molt at a limit
+
+Two complementary triggers, both **default-off**:
+
+- **User side — [`ctx-limit`](../ctx-limit):** `/ctx-limit on` (default 300000). Past the limit it
+  blocks *your* next prompt and tells you to `/molt`. Gates the *start* of a turn, not mid-turn work.
+- **Agent side — `/molt auto on`:** a **Stop hook**. When *the agent's* context crosses the limit
+  (`/molt limit <N>`, default 300000) it blocks the stop and makes the agent molt — write a handoff
+  and spawn the successor — before finishing. This catches a long agentic turn that a UserPromptSubmit
+  hook can't see. `stop_hook_active` guards against a loop (it forces at most one molt per turn-end).
 
 ## How the spawn works (herdr)
 
@@ -42,5 +49,4 @@ If `molt-spawn` fails, `/molt` falls back to in-place mode: `bin/molt-mark` arms
 `~/.claude/molt-pending` (`<epoch> <id>`, 1h guard) and you run `/clear`; the SessionStart hook
 `bin/molt-restore` reloads the handoff in the same tab. Handoffs live in `~/.claude/molt-handoffs/`.
 
-> Not yet: name/color chain across spawns (`bin/molt-chain` exists), auto-closing the old session,
-> and fully autonomous spawn at the threshold (needs the handoff written before the block fires).
+> Not yet: auto-closing the old session after a successful spawn.
