@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Stop hook: when auto-molt is on and this session's context has grown past the limit, block the
+# stop and tell the model to MOLT (hand off + spawn a fresh session) before finishing.
+# Opt-in (needs ~/.claude/molt-auto). Self-contained: only jq. Reads transcript_path from stdin.
+cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+[ -f "$cfg/molt-auto" ] || exit 0
+
+input=$(cat)
+# loop guard: if we already forced a continuation this stop-episode, let it stop now.
+printf '%s' "$input" | jq -e '.stop_hook_active == true' >/dev/null 2>&1 && exit 0
+
+tp=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
+[ -n "$tp" ] && [ -f "$tp" ] || exit 0
+
+lim=$(cat "$cfg/molt-limit" 2>/dev/null); lim=${lim:-300000}
+case "$lim" in ''|*[!0-9]*) lim=300000 ;; esac
+
+# ponytail: inline token count — plugin bin/ isn't on a hook's PATH. Keep in sync with ctx-tokens.
+ctx=$(grep '"usage"' "$tp" 2>/dev/null | tail -n1 | jq -r '
+    (.message.usage // .usage) as $u
+    | (($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0))' 2>/dev/null)
+case "$ctx" in ''|*[!0-9]*) exit 0 ;; esac
+[ "$ctx" -ge "$lim" ] 2>/dev/null || exit 0
+
+# block the stop; stderr of a Stop hook exit 2 is fed to the model, which then performs the molt.
+echo "MOLT NOW — context is ${ctx} tokens (limit ${lim}). Before you stop, shed into a fresh session:
+1. Run \`molt-path\` to get the handoff file path (line 1) and short id (line 2).
+2. Write a thorough handoff to that path (what we're doing, state, done, next, key paths, gotchas).
+3. Run \`molt-spawn <handoff-path> <project-dir>\` — it spawns a fresh claude session, seeds the handoff, and turns on remote control.
+4. Tell the user you molted (give the new session's name), then stop. Do NOT continue the old task in this session." >&2
+exit 2

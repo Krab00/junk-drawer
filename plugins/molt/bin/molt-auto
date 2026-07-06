@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Toggle auto-molt: when ON, a Stop hook forces a molt once this session's context passes the limit.
+# State lives in ~/.claude, read fresh each turn.
+#   molt-auto on | off | status
+#   molt-auto limit <tokens>   -> set the limit (accepts 300000, 300k, 1m); default 300000
+cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+flag="$cfg/molt-auto"; limf="$cfg/molt-limit"
+lim() { cat "$limf" 2>/dev/null || echo 300000; }
+
+case "${1:-status}" in
+    on)  : > "$flag"; echo "auto-molt ON @ $(lim) tokens — I'll molt into a fresh session when context crosses that. /molt auto off to stop." ;;
+    off) rm -f "$flag"; echo "auto-molt OFF." ;;
+    limit)
+        v="${2:-}"; mult=1
+        case "$v" in *[kK]) mult=1000; v="${v%?}" ;; *[mM]) mult=1000000; v="${v%?}" ;; esac
+        case "$v" in ''|*[!0-9]*) echo "usage: molt-auto limit <tokens>" >&2; exit 1 ;; esac
+        echo $((v * mult)) > "$limf"; echo "auto-molt limit = $(lim) tokens." ;;
+    *)   [ -f "$flag" ] && echo "auto-molt: ON @ $(lim) tokens" || echo "auto-molt: OFF (limit $(lim))" ;;
+esac
