@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # molt-spawn — shed into a FRESH claude session via herdr and seed it with a handoff.
-# Opens a new tab, waits until claude is ready, injects a self-contained prompt that loads the
-# handoff file, then turns on remote control. Verified (reads the screen) — no osascript, no sleeps.
+# Opens a new tab, names+colors it (molt chain), turns on remote control, then hands it the handoff.
+# Verified (reads the screen) — no osascript, no fixed sleeps.
 #
-#   molt-spawn <handoff-file> [cwd] [name]
+#   molt-spawn <handoff-file> [cwd] [base]
 #     handoff-file : the handoff .md the new session should load
 #     cwd          : working dir for the new session (default: $PWD)
-#     name         : herdr agent name (default: molt)
+#     base         : chain base slug (default: molt) — session becomes <base>_N, same color across the chain
 #
-# Requires: herdr (server running) + jq. Prints the new pane id and the remote-control URL.
+# Requires: herdr (server running) + jq. Prints the new pane id, name/color, and remote-control URL.
 set -u
-hf="${1:?usage: molt-spawn <handoff-file> [cwd] [name]}"
+hf="${1:?usage: molt-spawn <handoff-file> [cwd] [base]}"
 cwd="${2:-$PWD}"
-name="${3:-molt}"
+base="${3:-molt}"
 
 [ -f "$hf" ] || { echo "molt-spawn: handoff file not found: $hf" >&2; exit 1; }
 command -v herdr >/dev/null 2>&1 || { echo "molt-spawn: herdr not on PATH" >&2; exit 1; }
@@ -25,26 +25,38 @@ send_submit() {
     herdr wait output "$p" --match "$marker" --timeout 6000 >/dev/null 2>&1
     herdr pane send-keys "$p" Enter >/dev/null 2>&1
 }
+wait_idle() { herdr agent wait "$1" --status idle --timeout "${2:-15000}" >/dev/null 2>&1; }
 
-# 1) spawn a fresh claude in a new tab
+# chain: <base>_N + a color stable across the whole molt chain (molt-chain persists base/color/N).
+name="$base"; color=""
+chain_bin="$(dirname "$0")/molt-chain"   # sibling bin; resolve by path (not on a hook's PATH)
+if [ -x "$chain_bin" ]; then
+    IFS=$'\t' read -r name color < <("$chain_bin" "$base" 2>/dev/null)
+    [ -n "$name" ] || name="$base"
+fi
+
+# 1) spawn a fresh claude in a new tab, named for the chain
 out=$(herdr agent start "$name" --cwd "$cwd" --focus -- claude 2>&1)
 pane=$(printf '%s' "$out" | jq -r '.result.agent.pane_id // empty' 2>/dev/null)
 [ -n "$pane" ] || { echo "molt-spawn: spawn failed: $out" >&2; exit 1; }
 # ponytail: assumes cwd is already trusted (molt continues in the same repo, which it is). If a
 # fresh/untrusted dir shows a trust prompt, add: read screen, send Enter to accept, before seeding.
-herdr agent wait "$pane" --status idle --timeout 30000 >/dev/null 2>&1
+wait_idle "$pane" 30000
 
-# 2) seed the handoff — full self-contained prompt (a fresh session has NO /handon command)
+# 2) control commands FIRST (before the work): name, color, remote control.
+#    /rename + /color are native, sync to claude.ai/code, and keep the molt chain visible.
+send_submit "$pane" "/rename $name" "/rename $name"; wait_idle "$pane"
+[ -n "$color" ] && { send_submit "$pane" "/color $color" "/color $color"; wait_idle "$pane"; }
+send_submit "$pane" "/remote-control" "remote-control"; wait_idle "$pane"
+rc=$(herdr agent read "$pane" --lines 40 2>/dev/null | jq -r '.result.read.text' 2>/dev/null \
+     | grep -oE 'https://claude\.ai/code/[A-Za-z0-9_]+' | head -1)
+
+# 3) seed the handoff LAST — full self-contained prompt (a fresh session has NO /handon command).
+#    The session ends by continuing the actual work.
 seed="Wczytaj plik $hf i potraktuj jego tresc jako kontekst roboczy tej sesji (to jest handoff). Potwierdz w jednej linii co przejmujesz, potem kontynuuj prace od miejsca w ktorym handoff sie konczy."
 send_submit "$pane" "$seed" "$hf"
-herdr agent wait "$pane" --status idle --timeout 60000 >/dev/null 2>&1
 
-# 3) enable remote control
-send_submit "$pane" "/remote-control" "remote-control"
-herdr agent wait "$pane" --status idle --timeout 15000 >/dev/null 2>&1
-
-# 4) report
-echo "molt-spawn: new session pane=$pane name=$name cwd=$cwd"
-herdr agent read "$pane" --lines 60 2>/dev/null \
-    | jq -r '.result.read.text' 2>/dev/null \
-    | grep -iE 'remote-control is active|claude\.ai/code' | head -2
+# 4) report (must end exit 0 — /molt uses a non-zero exit to detect a real spawn failure)
+echo "molt-spawn: pane=$pane name=$name color=${color:-none} cwd=$cwd"
+[ -n "$rc" ] && echo "remote: $rc"
+exit 0
