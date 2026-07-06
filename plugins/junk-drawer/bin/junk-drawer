@@ -2,13 +2,33 @@
 # ponytail: reads sibling plugin manifests at runtime, so the cheatsheet never rots.
 set -euo pipefail
 
-# All plugins are siblings under plugins/<name>; this script is plugins/junk-drawer/bin/.
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Collect plugin manifests across both layouts:
+#   dev repo : <repo>/plugins/<name>/.claude-plugin/plugin.json      (this script: .../<name>/bin/)
+#   installed: <cache>/junk-drawer/<name>/<version>/.claude-plugin/… (this script: .../<name>/<ver>/bin/)
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cache_mkt="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/junk-drawer"
+manifests=()
+if [ "${here#"$cache_mkt"/}" != "$here" ]; then
+  # installed: one entry per plugin, latest version dir
+  for namedir in "$cache_mkt"/*/; do
+    [ -d "$namedir" ] || continue
+    # ponytail: plain sort — correct for 0.0.x single-digit patches; use sort -V if versions grow
+    latest="$(ls -d "$namedir"*/ 2>/dev/null | sort | tail -1 || true)"
+    [ -n "$latest" ] && [ -f "${latest}.claude-plugin/plugin.json" ] && manifests+=("${latest}.claude-plugin/plugin.json")
+  done
+else
+  # dev repo: siblings under plugins/
+  for m in "$(cd "$here/../.." && pwd)"/*/.claude-plugin/plugin.json; do
+    [ -e "$m" ] && manifests+=("$m")
+  done
+fi
 
 printf 'junk-drawer — Claude Code plugin marketplace (Krab00)\n'
 printf 'install: /plugin install <name>@junk-drawer\n\n'
 
-for manifest in "$root"/*/.claude-plugin/plugin.json; do
+[ ${#manifests[@]} -gt 0 ] || { printf '(no plugins found)\n'; exit 0; }
+
+for manifest in "${manifests[@]}"; do
   [ -e "$manifest" ] || continue
   dir="$(dirname "$(dirname "$manifest")")"
   name="$(jq -r '.name'            "$manifest")"

@@ -1,6 +1,6 @@
 {
   "name": "junk-drawer",
   "description": "Cheatsheet for the junk-drawer marketplace: lists every plugin with its version, description, and commands + params. Run /junk-drawer.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "author": { "name": "Krab00" }
 }
