@@ -12,9 +12,16 @@ This repo is a plugin **marketplace**: one catalog, several small plugins. Insta
 /plugin marketplace add Krab00/junk-drawer      # once
 /plugin install statusline@junk-drawer          # then pick per plugin
 /plugin install ctx-tokens@junk-drawer
+/plugin install tldr@junk-drawer
+/plugin install handoff@junk-drawer
 /plugin install ctx-limit@junk-drawer
 /plugin install molt@junk-drawer
+/plugin install junk-drawer@junk-drawer
 ```
+
+After installing or updating a plugin: `/plugin marketplace update junk-drawer` then `/reload-plugins`
+(hooks only register on reload). Bump a plugin's `plugin.json` version or `/plugin install` says
+"already installed".
 
 ## Plugins
 
@@ -25,7 +32,7 @@ This repo is a plugin **marketplace**: one catalog, several small plugins. Insta
 | `tldr` | `/tldr N` summarize; `/tldr on\|off` terse mode (all sessions) | ready |
 | `handoff` | save a session handoff to disk, restore it in a fresh session by id (`/handoff`, `/handon <id>`) | ready |
 | `ctx-limit` | per-session context-size limit; past it the hook blocks / warns / runs a command (`/ctx-limit`) | ready — needs `ctx-tokens` |
-| `molt` | shed context into a handoff, `/clear`, and the fresh session auto-restores it (`/molt`); pairs with `ctx-limit` for detection | ready |
+| `molt` | shed context: write a handoff, then spawn a fresh claude session (via [herdr](https://herdr.dev)) seeded with it and remote-control on (`/molt`); `/clear` fallback if herdr is absent; pairs with `ctx-limit` for detection | ready |
 | `junk-drawer` | cheatsheet of the whole marketplace: every plugin, version, and commands (`/junk-drawer`) | ready |
 
 ## Layout
@@ -33,12 +40,13 @@ This repo is a plugin **marketplace**: one catalog, several small plugins. Insta
 ```
 .claude-plugin/marketplace.json       # marketplace catalog (repo root), lists every plugin
 plugins/<plugin>/
-  .claude-plugin/plugin.json          # per-plugin manifest
-  skills/                             # one folder per skill (added later)
-  bin/                                # helper scripts, land on Bash PATH (added later)
-  hooks/                              # optional hooks (added later)
+  .claude-plugin/plugin.json          # per-plugin manifest (name, version, description)
+  commands/<name>.md                  # slash commands
+  bin/                                # helper scripts (on Bash PATH inside Claude Code)
+  hooks/hooks.json                    # optional hooks (UserPromptSubmit, SessionStart, …)
+  skills/<name>/SKILL.md              # optional auto-invoked skills
 ```
 
 Scripts reference `${CLAUDE_PLUGIN_ROOT}` — never absolute paths — so they work after install to cache.
-
-WIP.
+Note: a plugin's `bin/` is on PATH for the **Bash tool** but **not** inside hook subprocesses — hooks
+must be self-contained (compute inline or resolve absolute paths).
