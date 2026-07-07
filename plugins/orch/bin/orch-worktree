@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# orch-worktree — per-task git worktrees under .worktrees/ + stable port slots.
+# Zero deps (bash + git). Ports = capability port_base + slot; the slot is printed here,
+# the orchestrator/verify-coordinator adds the config port_base (also printed when declared).
+#   orch-worktree add <id> <branch> [base]  # create/attach worktree, print dir + slot + ports
+#   orch-worktree remove <id>               # remove the worktree, free its slot
+#   orch-worktree slot <id>                 # print (assigning if needed) the slot for <id>
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+config="$root/.claude/orch.config.md"
+[ -f "$config" ] || { echo "orch: no config — run /orch:init" >&2; exit 2; }
+wt="$root/.worktrees"; reg="$wt/.orch-slots"     # registry lines: "<id> <slot>"
+mkdir -p "$wt"; touch "$reg"
+
+# _cap_port_base <web|api> -> port_base int (empty if the capability is not declared)
+_cap_port_base(){
+  awk -v cap="$1" '
+    $0 ~ /^capabilities:/ { inc=1; next }
+    inc && $0 ~ /^[^ \t]/ { inc=0 }
+    inc && $0 ~ ("^[ \t]+" cap "[ \t]*:") {
+      if (match($0, /port_base:[ \t]*[0-9]+/)) { s=substr($0,RSTART,RLENGTH); gsub(/[^0-9]/,"",s); print s; exit }
+    }' "$config"
+}
+
+# stable slot for an id: reuse the registered one, else claim the lowest free index.
+_slot_for(){
+  local id="$1" s
+  s=$(awk -v id="$id" '$1==id{print $2; exit}' "$reg")
+  [ -n "$s" ] && { echo "$s"; return; }
+  s=0
+  while awk -v n="$s" '$2==n{f=1} END{exit !f}' "$reg"; do s=$((s+1)); done
+  printf '%s %s\n' "$id" "$s" >> "$reg"; echo "$s"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  add)
+    id="${1:?usage: orch-worktree add <id> <branch> [base]}"; branch="${2:?branch required}"; base="${3:-}"
+    dir="$wt/$id"; slot=$(_slot_for "$id")
+    if [ -d "$dir" ]; then
+      :
+    elif git -C "$root" rev-parse --verify --quiet "$branch" >/dev/null; then
+      git -C "$root" worktree add "$dir" "$branch" >&2
+    else
+      git -C "$root" worktree add "$dir" -b "$branch" "${base:-HEAD}" >&2
+    fi
+    echo "dir=$dir"
+    echo "slot=$slot"
+    wb=$(_cap_port_base web); [ -n "$wb" ] && echo "web_port=$((wb+slot))"
+    ab=$(_cap_port_base api); [ -n "$ab" ] && echo "api_port=$((ab+slot))"
+    ;;
+  remove)
+    id="${1:?usage: orch-worktree remove <id>}"; dir="$wt/$id"
+    git -C "$root" worktree remove --force "$dir" 2>/dev/null || true
+    if grep -qv -e "^$id " "$reg" 2>/dev/null; then
+      grep -v -e "^$id " "$reg" > "$reg.tmp" || true; mv -f "$reg.tmp" "$reg"
+    else
+      : > "$reg"
+    fi
+    echo "removed $id"
+    ;;
+  slot)
+    id="${1:?usage: orch-worktree slot <id>}"; _slot_for "$id"
+    ;;
+  *) echo "orch-worktree: unknown command '$cmd'" >&2; exit 1;;
+esac
