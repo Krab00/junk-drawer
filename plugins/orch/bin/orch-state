@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# orch-state — canonical task-file store CRUD. Frontmatter is the source of truth
+# (no separate manifest). Zero deps (bash + coreutils). ALL status edits go through here.
+#   orch-state list                 # id | status | deps table (from frontmatter)
+#   orch-state set <id> <status>    # status in: todo|in_progress|done|blocked
+#   orch-state reset-stale          # in_progress|blocked -> todo (give it fresh rounds)
+#   orch-state new <id> [title...]  # write a skeleton task file (spec layout)
+# tasks_dir is read from .claude/orch.config.md (default .orch/tasks).
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+config="$root/.claude/orch.config.md"
+[ -f "$config" ] || { echo "orch: no config ($config) — run /orch:init" >&2; exit 2; }
+
+# _fm_get <file> <key> -> value of a top-level YAML-frontmatter key (first --- block).
+_fm_get() {
+  awk -v key="$2" '
+    NR==1 && $0 ~ /^---[ \t]*$/ { i=1; next }
+    i && $0 ~ /^---[ \t]*$/ { exit }
+    i { p=index($0,":"); if(p==0) next
+        k=substr($0,1,p-1); gsub(/^[ \t]+|[ \t]+$/,"",k)
+        if(k==key){ v=substr($0,p+1); gsub(/^[ \t]+|[ \t]+$/,"",v); print v; exit } }
+  ' "$1"
+}
+
+tasks_dir=$(_fm_get "$config" tasks_dir); tasks_dir="${tasks_dir:-.orch/tasks}"
+tasks_dir="${tasks_dir%\"}"; tasks_dir="${tasks_dir#\"}"
+tasks_dir="$root/$tasks_dir"
+file_for(){ echo "$tasks_dir/$1.md"; }
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  list)
+    printf '%-18s %-13s %s\n' ID STATUS DEPS
+    shopt -s nullglob
+    for f in "$tasks_dir"/*.md; do
+      id=$(_fm_get "$f" id); [ -n "$id" ] || id=$(basename "$f" .md)
+      st=$(_fm_get "$f" status); st="${st:-todo}"
+      deps=$(_fm_get "$f" deps)
+      printf '%-18s %-13s %s\n' "$id" "$st" "$deps"
+    done
+    ;;
+  set)
+    id="${1:?usage: orch-state set <id> <status>}"; st="${2:?status required}"
+    case "$st" in todo|in_progress|done|blocked) ;; *) echo "orch: bad status '$st'" >&2; exit 1;; esac
+    f=$(file_for "$id"); [ -f "$f" ] || { echo "orch: no task '$id' ($f)" >&2; exit 1; }
+    tmp=$(mktemp)
+    awk -v st="$st" '
+      NR==1 && $0 ~ /^---[ \t]*$/ { i=1; print; next }
+      i && $0 ~ /^---[ \t]*$/ { i=0; print; next }
+      i && $0 ~ /^status:/ { print "status: " st; next }
+      { print }
+    ' "$f" > "$tmp"
+    mv "$tmp" "$f"
+    echo "$id -> $st"
+    ;;
+  reset-stale)
+    shopt -s nullglob; n=0
+    for f in "$tasks_dir"/*.md; do
+      st=$(_fm_get "$f" status)
+      if [ "$st" = in_progress ] || [ "$st" = blocked ]; then
+        id=$(_fm_get "$f" id); [ -n "$id" ] || id=$(basename "$f" .md)
+        "$0" set "$id" todo >/dev/null; echo "reset $id ($st -> todo)"; n=$((n+1))
+      fi
+    done
+    [ "$n" -gt 0 ] || echo "no stale tasks"
+    ;;
+  new)
+    id="${1:?usage: orch-state new <id> [title...]}"; shift || true
+    title="${*:-$id}"
+    mkdir -p "$tasks_dir"
+    f=$(file_for "$id")
+    [ -e "$f" ] && { echo "orch: task '$id' already exists ($f)" >&2; exit 1; }
+    cat > "$f" <<EOF
+---
+id: $id
+title: $title
+status: todo
+deps: []
+source: adhoc
+source_updated_at:
+criteria_source: derived
+---
+## Description
+<what the task is — describe the desired behaviour>
+
+## Acceptance criteria
+- [ ] AC1: <tool-checkable sentence> (modality: ui|api|test|data)
+EOF
+    echo "created $f"
+    ;;
+  ""|-h|--help|help)
+    awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"
+    ;;
+  *) echo "orch-state: unknown command '$cmd'" >&2; exit 1;;
+esac
