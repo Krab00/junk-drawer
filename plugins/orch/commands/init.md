@@ -24,6 +24,12 @@ Gather, quietly:
 - **Test runners** — per package: the `test` script, else the runner in use (jest / vitest /
   mocha / pytest / `go test` / `cargo test`). A layer with **no** runner is recorded as absent,
   never forced to grow one.
+- **Dependency install (for worktree node_modules reuse)** — the root lockfile and its matching
+  install command: `pnpm-lock.yaml`→`pnpm install --frozen-lockfile --offline`,
+  `package-lock.json`→`npm ci`, `yarn.lock`→`yarn install --frozen-lockfile`,
+  `bun.lockb`→`bun install --frozen-lockfile`. Also probe **copy-on-write** support **once**
+  (`cp -c` on a temp file on macOS, `cp --reflink=auto` on Linux). No lockfile → no `install`
+  block (the repo has no deps to provision).
 
 ## 2. Pick the backend (ask — this is a real choice)
 
@@ -48,6 +54,7 @@ project doesn't have — **do not** write a `web`/`api`/`tests` block for a laye
 backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
 tasks_dir: .orch/tasks    # canonical task files live here
 branch_prefix: task/      # per-task branch = <branch_prefix><id>-<slug>
+install: { cmd: "pnpm install --frozen-lockfile --offline", lockfiles: [pnpm-lock.yaml], reuse: clone }  # worktree node_modules; omit if the repo has no lockfile
 capabilities:
   web:  { run: "<dev-server cmd>", port_base: 5180, health: "/" }        # omit if no web app
   api:  { run: "<dev-server cmd>", port_base: 3180, health: "/health" }  # omit if no api
@@ -61,6 +68,13 @@ calibration values that must never be guessed, etc.
 
 `port_base` values are the *base* of a per-task port range (`orch-worktree` adds a stable slot),
 so pick bases far enough apart that a few parallel tasks won't collide (e.g. 5180 web / 3180 api).
+
+`install` drives **worktree node_modules provisioning** (done once, at worktree creation): `cmd` is
+the install command, `lockfiles` the paths whose content decides freshness, and `reuse` is `clone`
+(copy-on-write from the main checkout — set when the CoW probe passed), `copy` (plain recursive copy
+— the CoW fallback), or `install` (force a fresh install every time). When every listed lockfile is
+unchanged the worktree reuses the main checkout's node_modules; only a changed lockfile triggers
+`cmd`. **Omit the whole `install` line** for a repo with no lockfile.
 
 ## 4. Write + scaffold
 

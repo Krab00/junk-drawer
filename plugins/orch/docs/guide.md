@@ -374,6 +374,11 @@ frontmatter never drifts and ports never collide.
   `todo`) · `new <id> [title]` (skeleton task file).
 - **`orch-worktree`** — per-task git worktrees under `.worktrees/` plus **stable port slots**
   (`port = capability port_base + slot`): `add <id> <branch> [base]` · `remove <id>` · `slot <id>`.
+  On `add` it also provisions the worktree's **node_modules once, at creation** (never on later
+  steps) per the config `install` block: when every declared lockfile is byte-identical to the main
+  checkout it **CoW-clones** the main checkout's node_modules (all top-level *and* workspace-level
+  dirs, so a monorepo's per-package `node_modules` come along); only a changed lockfile — or
+  `reuse: install` — triggers a real `install.cmd`.
 - **`orch-sync`** — the task-store ⇄ backend bridge: `pull` / `push` (github via `gh`;
   `adhoc`/`manifest` no-op; `linear-mcp` an in-conversation stub).
 
@@ -389,6 +394,7 @@ to run `/orch:init`.** YAML frontmatter + free-form prose notes:
 backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
 tasks_dir: .orch/tasks    # where the canonical task files live
 branch_prefix: task/      # per-task branch = <branch_prefix><id>-<slug>
+install: { cmd: "pnpm install --frozen-lockfile --offline", lockfiles: [pnpm-lock.yaml], reuse: clone }  # worktree node_modules; omit if no lockfile
 capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }              # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if no api
@@ -405,6 +411,7 @@ calibration values that must never be guessed, etc.
 | `backend` | Which task source drives the run — see [§8](#8-backends). |
 | `tasks_dir` | Directory holding the canonical `<ID>.md` task files (default `.orch/tasks`). |
 | `branch_prefix` | Per-task branch name = `<branch_prefix><id>-<slug>`. |
+| `install` | Worktree **node_modules provisioning** (once, at creation). `cmd` = install command; `lockfiles` = paths whose content decides freshness; `reuse` = `clone` (copy-on-write from the main checkout) / `copy` (plain recursive copy, the CoW fallback) / `install` (always run `cmd`). Unchanged lockfiles → reuse the main checkout's node_modules; a changed lockfile → run `cmd`. **Omit if the repo has no lockfile.** |
 | `capabilities.web` / `.api` | `run` (dev-server command), `port_base`, `health` path. **Omit the whole block if the layer doesn't exist** — its standing checks are then skipped. |
 | `capabilities.tests` | Per-package test command (`{ pkg: "cmd" }`). Omit a layer with no runner. |
 | `standing_checks_extra` | Project-specific checks promoted from `_lessons.md` (starts empty). |
