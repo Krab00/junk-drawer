@@ -1,8 +1,10 @@
 # junk-drawer
 
 A junk drawer of [Claude Code](https://claude.com/claude-code) plugins — assorted, **independently
-installable** utilities plus a context-limit orchestrator (*molt*) that sheds a full context like a
-snake sheds its skin and continues the work in a fresh session via a handoff prompt.
+installable** utilities, a context-limit orchestrator (*molt*) that sheds a full context like a
+snake sheds its skin and continues the work in a fresh session via a handoff prompt, and a
+project-agnostic task orchestrator (*orch*) that drains a backlog by delegating each task to
+subagents and gating every acceptance criterion on real tool evidence.
 
 This repo is a plugin **marketplace**: one catalog, several small plugins. Install only what you want.
 
@@ -17,6 +19,7 @@ This repo is a plugin **marketplace**: one catalog, several small plugins. Insta
 /plugin install ctx-limit@junk-drawer
 /plugin install molt@junk-drawer
 /plugin install junk-drawer@junk-drawer
+/plugin install orch@junk-drawer
 ```
 
 After installing or updating a plugin: `/plugin marketplace update junk-drawer` then `/reload-plugins`
@@ -34,6 +37,7 @@ After installing or updating a plugin: `/plugin marketplace update junk-drawer` 
 | `ctx-limit` | per-session context-size limit; past it the hook blocks / warns / runs a command (`/ctx-limit`) | ready — needs `ctx-tokens` |
 | `molt` | shed context: write a handoff, then spawn a fresh claude session (via [herdr](https://herdr.dev)) seeded with it and remote-control on (`/molt`); `/clear` fallback if herdr is absent; pairs with `ctx-limit` for detection | ready |
 | `junk-drawer` | cheatsheet of the whole marketplace: every plugin, version, and commands (`/junk-drawer`) | ready |
+| `orch` | project-agnostic orchestration loop: pick tasks, delegate implement + verify to subagents, gate every criterion on tool evidence, round-cap the fix loop, open draft PRs (`/orch:init` then `/orch`) | ready — run `/orch:init` per repo after install |
 
 ## Layout
 

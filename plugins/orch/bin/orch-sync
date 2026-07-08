@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# orch-sync — backend <-> canonical task files. Backend read from .claude/orch.config.md.
+#   orch-sync pull [id...]   # backend -> task files. No ids: lazy list (ids/status/updatedAt).
+#                            #   With ids: full fetch (body -> description + checklist criteria).
+#   orch-sync push [id...]   # task files -> backend. Posts the ## Verification section as a
+#                            #   status comment + PR link. Never closes an issue, never merges.
+# Backends: github-issues (gh CLI) | adhoc,manifest (no-op) | linear-mcp (in-conversation stub).
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+config="$root/.claude/orch.config.md"
+[ -f "$config" ] || { echo "orch: no config — run /orch:init" >&2; exit 2; }
+here="$(cd "$(dirname "$0")" && pwd)"; state="$here/orch-state"
+
+_fm_get(){ awk -v key="$2" 'NR==1&&$0~/^---[ \t]*$/{i=1;next} i&&$0~/^---[ \t]*$/{exit} i{p=index($0,":");if(p==0)next;k=substr($0,1,p-1);gsub(/^[ \t]+|[ \t]+$/,"",k);if(k==key){v=substr($0,p+1);gsub(/^[ \t]+|[ \t]+$/,"",v);print v;exit}}' "$1"; }
+cfg(){ _fm_get "$config" "$1"; }
+_strip(){ local v="$1"; v="${v%\"}"; v="${v#\"}"; printf '%s' "$v"; }
+
+backend=$(cfg backend);   backend=$(_strip "${backend:-adhoc}")
+tdir=$(cfg tasks_dir);    tdir=$(_strip "${tdir:-.orch/tasks}"); dir="$root/$tdir"; mkdir -p "$dir"
+
+# label from `github: { label: "orch" }`
+_gh_label(){ awk '/^github:/{ if(match($0,/label:[ \t]*"[^"]*"/)){s=substr($0,RSTART,RLENGTH);sub(/label:[ \t]*"/,"",s);sub(/"$/,"",s);print s;exit} }' "$config"; }
+
+# github OPEN/CLOSED -> our status (no rich workflow states on plain issues)
+gh_status(){ [ "$1" = CLOSED ] && echo done || echo todo; }
+
+# author origin frontmatter fields on an existing file (backend-owned, not orch-state's job)
+_stamp(){ local f="$1" src="$2" upd="$3" ti="$4" tmp; tmp=$(mktemp)
+  awk -v src="$src" -v upd="$upd" -v ti="$ti" '
+    NR==1&&$0~/^---[ \t]*$/{i=1;print;next}
+    i&&$0~/^---[ \t]*$/{i=0;print;next}
+    i&&$0~/^source:/{print "source: " src;next}
+    i&&$0~/^source_updated_at:/{print "source_updated_at: " upd;next}
+    i&&$0~/^title:/{print "title: " ti;next}
+    {print}' "$f" > "$tmp"; mv "$tmp" "$f"; }
+
+# issue body checklist -> "- [ ] <item>" acceptance-criteria lines (verbatim, unchecked)
+_criteria(){ awk '/^[ \t]*- \[[ xX]\]/{ line=$0; sub(/^[ \t]*- \[[ xX]\][ \t]*/,"",line); printf "- [ ] %s\n", line }'; }
+
+dir_missing_gh(){ command -v gh >/dev/null || { echo "orch-sync: gh CLI not found (backend github-issues needs it)" >&2; exit 1; }; }
+
+case "${1:-pull}" in
+  pull)
+    shift || true
+    case "$backend" in
+      github-issues)
+        dir_missing_gh
+        label=$(_gh_label); label=$(_strip "${label:-orch}")
+        if [ "$#" -eq 0 ]; then
+          # lazy list: create-if-missing + status + origin stamp; no body fetch.
+          gh issue list --label "$label" --state all --limit 200 \
+             --json number,title,updatedAt,state \
+             --jq '.[] | [.number,.state,.updatedAt,.title] | @tsv' |
+          while IFS=$'\t' read -r n st upd title; do
+            id="GH-$n"; f="$dir/$id.md"
+            [ -f "$f" ] || "$state" new "$id" "$title" >/dev/null
+            "$state" set "$id" "$(gh_status "$st")" >/dev/null
+            _stamp "$f" "github#$n" "$upd" "$title"
+            echo "pulled $id ($st) — $title"
+          done
+        else
+          # full fetch: body -> description + checklist -> criteria, for the picked ids only.
+          for arg in "$@"; do
+            n="${arg#GH-}"; n="${n#\#}"
+            meta=$(gh issue view "$n" --json number,title,updatedAt,state --jq '[.number,.state,.updatedAt,.title]|@tsv') \
+              || { echo "skip $arg (gh view failed)" >&2; continue; }
+            IFS=$'\t' read -r num st upd title <<<"$meta"
+            body=$(gh issue view "$n" --json body --jq '.body')
+            id="GH-$num"; f="$dir/$id.md"
+            crit=$(printf '%s\n' "$body" | _criteria)
+            if [ -n "$crit" ]; then csrc=verbatim; else csrc=derived; crit="- [ ] AC1: <derive from the description above> (modality: ui|api|test|data)"; fi
+            keep=""; [ -f "$f" ] && keep=$(awk '/^## Verification/{k=1} k{print}' "$f")
+            { printf -- '---\nid: %s\ntitle: %s\nstatus: %s\ndeps: []\nsource: github#%s\nsource_updated_at: %s\ncriteria_source: %s\n---\n' \
+                "$id" "$title" "$(gh_status "$st")" "$num" "$upd" "$csrc"
+              printf '## Description\n%s\n\n## Acceptance criteria\n%s\n' "$body" "$crit"
+              [ -n "$keep" ] && printf '\n%s\n' "$keep"
+            } > "$f"
+            echo "pulled $id ($st, criteria: $csrc) — $title"
+          done
+        fi
+        ;;
+      adhoc|manifest) echo "orch-sync: backend '$backend' — no-op; the canonical task files ARE the source of truth." ;;
+      linear-mcp) echo "orch-sync: backend 'linear-mcp' — sync via Linear MCP in-conversation (the /orch command performs pull/push through the MCP; this script is a stub for that backend). [v0.1 limitation]" ;;
+      *) echo "orch-sync: unknown backend '$backend'" >&2; exit 1;;
+    esac
+    ;;
+
+  push)
+    shift || true
+    case "$backend" in
+      github-issues)
+        dir_missing_gh
+        files=()
+        if [ "$#" -gt 0 ]; then for a in "$@"; do files+=("$dir/${a}.md"); done
+        else shopt -s nullglob; for f in "$dir"/*.md; do files+=("$f"); done; fi
+        for f in "${files[@]}"; do
+          [ -f "$f" ] || continue
+          id=$(_fm_get "$f" id); [ -n "$id" ] || id=$(basename "$f" .md)
+          src=$(_fm_get "$f" source); case "$src" in github#*) n="${src#github#}";; *) echo "skip $id (no github source)"; continue;; esac
+          st=$(_fm_get "$f" status)
+          stored=$(_fm_get "$f" source_updated_at)
+          cur=$(gh issue view "$n" --json updatedAt --jq '.updatedAt' 2>/dev/null || echo "")
+          if [ -n "$stored" ] && [ -n "$cur" ] && [ "$cur" \> "$stored" ]; then
+            echo "FLAG $id: issue #$n changed upstream since pull ($cur > $stored) — not pushing; re-pull first"; continue
+          fi
+          ver=$(awk '/^## Verification/{k=1} k{print}' "$f")
+          [ -n "$ver" ] || ver="_(no verification recorded)_"
+          gh issue comment "$n" --body "orch status: **$st**
+
+$ver" >/dev/null && echo "pushed $id -> comment on #$n (status $st)"
+        done
+        ;;
+      adhoc|manifest) echo "orch-sync: backend '$backend' — no-op (nothing to push; task files are canonical)." ;;
+      linear-mcp) echo "orch-sync: backend 'linear-mcp' — push via Linear MCP in-conversation (stub). [v0.1 limitation]" ;;
+      *) echo "orch-sync: unknown backend '$backend'" >&2; exit 1;;
+    esac
+    ;;
+
+  ""|-h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0" ;;
+  *) echo "orch-sync: unknown command '${1:-}'" >&2; exit 1;;
+esac
