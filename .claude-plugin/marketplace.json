@@ -36,6 +36,11 @@
       "name": "junk-drawer",
       "source": "./plugins/junk-drawer",
       "description": "Cheatsheet of the whole marketplace: every plugin with its version, description, and commands + params. Run /junk-drawer."
+    },
+    {
+      "name": "orch",
+      "source": "./plugins/orch",
+      "description": "Project-agnostic orchestration loop: pick tasks from a canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .claude/orch.config.md. Run /orch:init then /orch."
     }
   ]
 }
