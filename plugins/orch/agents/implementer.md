@@ -1,7 +1,6 @@
 ---
 name: implementer
 description: Implements exactly one task from its canonical task file on its own branch in its own worktree, following the plan handed over by the orchestrator. No architectural decisions, no out-of-scope changes; authors tests for its change and runs the real build/lint/test commands before reporting.
-model: opus
 isolation: worktree
 ---
 

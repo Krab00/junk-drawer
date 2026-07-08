@@ -47,8 +47,8 @@ case "$cmd" in
     tmp=$(mktemp)
     awk -v st="$st" '
       NR==1 && $0 ~ /^---[ \t]*$/ { i=1; print; next }
-      i && $0 ~ /^---[ \t]*$/ { i=0; print; next }
-      i && $0 ~ /^status:/ { print "status: " st; next }
+      i && $0 ~ /^---[ \t]*$/ { if(!seen) print "status: " st; i=0; print; next }
+      i && $0 ~ /^status:/ { print "status: " st; seen=1; next }
       { print }
     ' "$f" > "$tmp"
     mv "$tmp" "$f"

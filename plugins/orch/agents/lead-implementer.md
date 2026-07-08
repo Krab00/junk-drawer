@@ -1,7 +1,6 @@
 ---
 name: lead-implementer
 description: Implements ONE large task by decomposing it into file-disjoint slices and fanning out to parallel sub-implementers — but only after freezing the shared contract first, so slices never guess each other's interfaces. Falls back to implementing flat itself when the task can't be cut disjointly. Owns the task branch, merges the slice branches back, runs the final build/lint/test gate.
-model: opus
 isolation: worktree
 ---
 
