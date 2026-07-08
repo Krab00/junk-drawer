@@ -1,8 +1,10 @@
 # junk-drawer
 
 A junk drawer of [Claude Code](https://claude.com/claude-code) plugins — assorted, **independently
-installable** utilities plus a context-limit orchestrator (*molt*) that sheds a full context like a
-snake sheds its skin and continues the work in a fresh session via a handoff prompt.
+installable** utilities, a context-limit orchestrator (*molt*) that sheds a full context like a
+snake sheds its skin and continues the work in a fresh session via a handoff prompt, and a
+project-agnostic task orchestrator (*orch*) that drains a backlog by delegating each task to
+subagents and gating every acceptance criterion on real tool evidence.
 
 This repo is a plugin **marketplace**: one catalog, several small plugins. Install only what you want.
 
