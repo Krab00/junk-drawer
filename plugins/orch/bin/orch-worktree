@@ -2,7 +2,9 @@
 # orch-worktree — per-task git worktrees under .worktrees/ + stable port slots.
 # Zero deps (bash + git). Ports = capability port_base + slot; the slot is printed here,
 # the orchestrator/verify-coordinator adds the config port_base (also printed when declared).
-#   orch-worktree add <id> <branch> [base]  # create/attach worktree, print dir + slot + ports
+# On `add`, node_modules is provisioned ONCE (see the `install:` config block): CoW-cloned
+# from the main checkout when the lockfile is unchanged, real install only when deps changed.
+#   orch-worktree add <id> <branch> [base]  # create/attach worktree, provision deps, print dir + slot + ports
 #   orch-worktree remove <id>               # remove the worktree, free its slot
 #   orch-worktree slot <id>                 # print (assigning if needed) the slot for <id>
 set -euo pipefail
@@ -13,6 +15,12 @@ config="$root/.claude/orch.config.md"
 wt="$root/.worktrees"; reg="$wt/.orch-slots"     # registry lines: "<id> <slot>"
 mkdir -p "$wt"; touch "$reg"
 
+# platform copy commands: CoW clone flag + plain recursive (both preserve symlinks — pnpm needs it)
+case "$(uname -s)" in
+  Darwin) cow_cp='cp -c -R'; plain_cp='cp -R' ;;    # APFS clonefile
+  *)      cow_cp='cp -a --reflink=auto'; plain_cp='cp -a' ;;
+esac
+
 # _cap_port_base <web|api> -> port_base int (empty if the capability is not declared)
 _cap_port_base(){
   awk -v cap="$1" '
@@ -21,6 +29,70 @@ _cap_port_base(){
     inc && $0 ~ ("^[ \t]+" cap "[ \t]*:") {
       if (match($0, /port_base:[ \t]*[0-9]+/)) { s=substr($0,RSTART,RLENGTH); gsub(/[^0-9]/,"",s); print s; exit }
     }' "$config"
+}
+
+# --- install block: `install: { cmd: "<cmd>", lockfiles: [a, b], reuse: clone }` (inline, in frontmatter) ---
+# raw `install:` line from the first frontmatter block (empty if absent → no provisioning)
+_install_line(){
+  awk '
+    NR==1 && $0 ~ /^---[ \t]*$/ { i=1; next }
+    i && $0 ~ /^---[ \t]*$/ { exit }
+    i && $0 ~ /^install:/ { print; exit }' "$config"
+}
+_install_cmd(){ _install_line | awk '{ if (match($0,/cmd:[ \t]*"[^"]*"/)) { s=substr($0,RSTART,RLENGTH); sub(/cmd:[ \t]*"/,"",s); sub(/"$/,"",s); print s } }'; }
+_install_reuse(){ _install_line | awk '{ if (match($0,/reuse:[ \t]*[A-Za-z]+/)) { s=substr($0,RSTART,RLENGTH); sub(/reuse:[ \t]*/,"",s); print s } }'; }
+_install_lockfiles(){ _install_line | awk '{ if (match($0,/lockfiles:[ \t]*\[[^]]*\]/)) { s=substr($0,RSTART,RLENGTH); sub(/lockfiles:[ \t]*\[/,"",s); sub(/\]$/,"",s); gsub(/[",]/," ",s); print s } }'; }
+
+# _copy_tree <clone|copy> <src> <dest> — CoW-clone (falling back to plain copy) or plain copy a dir.
+_copy_tree(){
+  local mode="$1" src="$2" dest="$3"
+  mkdir -p "$(dirname "$dest")"
+  if [ "$mode" = clone ]; then
+    $cow_cp "$src" "$dest" 2>/dev/null && return 0
+    rm -rf "$dest"                       # CoW flag unsupported here → plain copy
+  fi
+  $plain_cp "$src" "$dest"
+}
+
+# _provision <new-worktree-dir> — provision node_modules ONCE at creation. Prints one status line.
+# Reuse donor (main checkout) node_modules when reuse!=install, donor has them, and every declared
+# lockfile is byte-identical between donor and the new worktree; otherwise run install.cmd.
+_provision(){
+  local new="$1" cmd reuse donor rel lf src dest mode n=0
+  [ -n "$(_install_line)" ] || { echo "node_modules: skipped: no install block"; return 0; }
+  cmd=$(_install_cmd); reuse=$(_install_reuse); reuse="${reuse:-clone}"
+  donor=$(git -C "$root" worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+
+  # donor node_modules dirs (relative), excluding nested ones and .git/.worktrees
+  local nmlist=()
+  if [ -n "$donor" ] && [ -d "$donor" ]; then
+    while IFS= read -r nm; do
+      [ -n "$nm" ] && nmlist+=("${nm#"$donor"/}")
+    done < <(find "$donor" \( -name .git -o -name .worktrees \) -prune -o -type d -name node_modules -prune -print 2>/dev/null)
+  fi
+
+  local can_reuse=1
+  [ "$reuse" = install ] && can_reuse=0
+  [ "${#nmlist[@]}" -eq 0 ] && can_reuse=0
+  if [ "$can_reuse" = 1 ]; then
+    for lf in $(_install_lockfiles); do
+      cmp -s "$donor/$lf" "$new/$lf" || { can_reuse=0; break; }
+    done
+  fi
+
+  if [ "$can_reuse" = 1 ]; then
+    mode="$reuse"
+    for rel in "${nmlist[@]}"; do
+      src="$donor/$rel"; dest="$new/$rel"
+      [ -e "$dest" ] && continue
+      if _copy_tree "$mode" "$src" "$dest"; then n=$((n+1)); fi
+    done
+    echo "reused node_modules ($mode, $n dirs)"
+  elif [ -n "$cmd" ]; then
+    if ( cd "$new" && eval "$cmd" ) >&2; then echo "installed via $cmd"; else echo "install FAILED via $cmd"; fi
+  else
+    echo "node_modules: skipped: no install cmd"
+  fi
 }
 
 # stable slot for an id: reuse the registered one, else claim the lowest free index.
@@ -37,14 +109,15 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   add)
     id="${1:?usage: orch-worktree add <id> <branch> [base]}"; branch="${2:?branch required}"; base="${3:-}"
-    dir="$wt/$id"; slot=$(_slot_for "$id")
+    dir="$wt/$id"; slot=$(_slot_for "$id"); created=0
     if [ -d "$dir" ]; then
       :
     elif git -C "$root" rev-parse --verify --quiet "$branch" >/dev/null; then
-      git -C "$root" worktree add "$dir" "$branch" >&2
+      git -C "$root" worktree add "$dir" "$branch" >&2; created=1
     else
-      git -C "$root" worktree add "$dir" -b "$branch" "${base:-HEAD}" >&2
+      git -C "$root" worktree add "$dir" -b "$branch" "${base:-HEAD}" >&2; created=1
     fi
+    [ "$created" = 1 ] && _provision "$dir" >&2   # provision node_modules once, at creation (status → stderr)
     echo "dir=$dir"
     echo "slot=$slot"
     wb=$(_cap_port_base web); [ -n "$wb" ] && echo "web_port=$((wb+slot))"

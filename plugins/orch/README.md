@@ -40,6 +40,7 @@ runner → build + behaviour checks stand in).
 backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
 tasks_dir: .orch/tasks    # canonical task files live here
 branch_prefix: task/      # per-task branch = <branch_prefix><id>-<slug>
+install: { cmd: "pnpm install --frozen-lockfile --offline", lockfiles: [pnpm-lock.yaml], reuse: clone }  # worktree node_modules reuse; omit if no lockfile
 capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }        # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if none
@@ -114,7 +115,8 @@ of truth — no separate manifest to drift):
 
 - `bin/orch-state` — task-store CRUD (`list` / `set` / `reset-stale` / `new`).
 - `bin/orch-worktree` — per-task worktrees under `.worktrees/` + stable port slots
-  (`port = capability port_base + slot`).
+  (`port = capability port_base + slot`); provisions each worktree's node_modules once at creation
+  (CoW-clone from the main checkout when the lockfile is unchanged, real install only when it changed).
 - `bin/orch-sync` — the task-store ⇄ backend bridge.
 
 ## v0.1 limitations
