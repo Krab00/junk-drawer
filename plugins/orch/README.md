@@ -10,6 +10,10 @@ It's a portable extraction of a loop proven on a real product backlog. Every pro
 backend, branch naming, dev-server commands, ports, test runners) comes from one config file, so
 the same loop fits any stack.
 
+**Docs:** this README is the cheatsheet; the long-form companion — the why, the loop end to end, the
+subagents, backends, and config reference — is in [`docs/guide.md`](docs/guide.md)
+([HTML](docs/guide.html)).
+
 ## Install
 
 ```

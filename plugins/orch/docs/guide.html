@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orch — the full guide</title>
+<style>
+  :root {
+    --bg: #fbfbfa;
+    --surface: #ffffff;
+    --text: #1f2328;
+    --muted: #5b6472;
+    --border: #e3e6ea;
+    --code-bg: #f4f5f7;
+    --code-text: #1f2328;
+    --accent: #0f766e;
+    --accent-soft: #0f766e14;
+    --th-bg: #f4f6f8;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a;
+      --surface: #1b1f23;
+      --text: #e6e9ec;
+      --muted: #9aa4b2;
+      --border: #2c3238;
+      --code-bg: #23282d;
+      --code-text: #e6e9ec;
+      --accent: #4dd0c4;
+      --accent-soft: #4dd0c422;
+      --th-bg: #23282d;
+      --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171a; --surface: #1b1f23; --text: #e6e9ec; --muted: #9aa4b2;
+    --border: #2c3238; --code-bg: #23282d; --code-text: #e6e9ec; --accent: #4dd0c4;
+    --accent-soft: #4dd0c422; --th-bg: #23282d; --shadow: none;
+  }
+  :root[data-theme="light"] {
+    --bg: #fbfbfa; --surface: #ffffff; --text: #1f2328; --muted: #5b6472;
+    --border: #e3e6ea; --code-bg: #f4f5f7; --code-text: #1f2328; --accent: #0f766e;
+    --accent-soft: #0f766e14; --th-bg: #f4f6f8;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  .layout {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 2.5rem 1.25rem 5rem;
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 2.75rem;
+  }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; gap: 1.5rem; padding-top: 1.5rem; }
+  }
+
+  /* ---- Sidebar / TOC ---- */
+  nav.toc {
+    position: sticky;
+    top: 1.25rem;
+    align-self: start;
+    max-height: calc(100vh - 2.5rem);
+    overflow-y: auto;
+    font-size: .875rem;
+    padding-right: .25rem;
+  }
+  nav.toc .brand { font-weight: 700; font-size: 1.05rem; letter-spacing: -.01em; margin-bottom: .85rem; color: var(--text); }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: item; }
+  nav.toc li { margin: 0; counter-increment: item; }
+  nav.toc a {
+    display: block;
+    padding: .28rem .55rem .28rem 2.1rem;
+    color: var(--muted);
+    text-decoration: none;
+    border-radius: 6px;
+    position: relative;
+    line-height: 1.35;
+  }
+  nav.toc a::before {
+    content: counter(item);
+    position: absolute;
+    left: .55rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    opacity: .7;
+  }
+  nav.toc a:hover { background: var(--accent-soft); color: var(--accent); }
+  @media (max-width: 860px) {
+    nav.toc {
+      position: static; max-height: none;
+      border: 1px solid var(--border); border-radius: 10px;
+      background: var(--surface); padding: 1rem 1rem .75rem;
+    }
+  }
+
+  /* ---- Content ---- */
+  main { min-width: 0; }
+  main > header { margin-bottom: 2rem; }
+  h1 {
+    font-size: 2.1rem; line-height: 1.15; letter-spacing: -.02em;
+    margin: 0 0 .6rem;
+  }
+  .lede { color: var(--muted); font-size: 1.05rem; margin: 0; max-width: 68ch; }
+  h2 {
+    font-size: 1.5rem; letter-spacing: -.01em;
+    margin: 2.8rem 0 1rem; padding-top: .6rem;
+    border-top: 1px solid var(--border);
+  }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  h3 { font-size: 1.15rem; margin: 1.9rem 0 .7rem; }
+  p { margin: .85rem 0; }
+  p, li { max-width: 74ch; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  strong { font-weight: 650; }
+  ul, ol { padding-left: 1.35rem; }
+  li { margin: .3rem 0; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .86em;
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: .12em .4em;
+    border-radius: 5px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; font-size: .82rem; color: var(--code-text); }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 1.1rem 0;
+    box-shadow: var(--shadow);
+    -webkit-overflow-scrolling: touch;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; min-width: 520px; }
+  th, td { text-align: left; padding: .62rem .8rem; vertical-align: top; border-bottom: 1px solid var(--border); }
+  th { background: var(--th-bg); font-weight: 650; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td code, th code { white-space: nowrap; }
+
+  .note {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: .7rem 1rem;
+    margin: 1.2rem 0;
+    color: var(--text);
+  }
+  .note p { margin: .3rem 0; }
+
+  .theme-toggle {
+    position: fixed; top: .9rem; right: .9rem; z-index: 10;
+    background: var(--surface); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: .35rem .6rem; font-size: .8rem; cursor: pointer;
+    box-shadow: var(--shadow);
+  }
+  .theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
+
+  h2 a.anchor { opacity: 0; color: var(--muted); text-decoration: none; margin-left: .4rem; font-weight: 400; }
+  h2:hover a.anchor { opacity: .6; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">◐ theme</button>
+<div class="layout">
+
+<nav class="toc" aria-label="Table of contents">
+  <div class="brand">orch · guide</div>
+  <ol>
+    <li><a href="#s1">The idea — why it exists</a></li>
+    <li><a href="#s2">How it works — the loop</a></li>
+    <li><a href="#s3">The criteria freeze ladder</a></li>
+    <li><a href="#s4">Standing checks, gated by capabilities</a></li>
+    <li><a href="#s5">Learning — the retro</a></li>
+    <li><a href="#s6">Modes &amp; flags</a></li>
+    <li><a href="#s7">Setup &amp; usage walkthrough</a></li>
+    <li><a href="#s8">Backends</a></li>
+    <li><a href="#s9">The bin scripts</a></li>
+    <li><a href="#s10">Config reference</a></li>
+    <li><a href="#s11">Limitations — v0.1</a></li>
+  </ol>
+</nav>
+
+<main>
+  <header>
+    <h1>orch — the full guide</h1>
+    <p class="lede">A project-agnostic orchestration loop for Claude Code: it picks tasks from a
+    canonical store, delegates each to subagents, verifies every acceptance criterion against real
+    tool evidence, round-caps the fix loop, and opens draft PRs — while keeping the base branch
+    untouchable and the heavy build/test/screenshot output out of the orchestrator's own context.</p>
+  </header>
+
+  <p>This is the long-form companion to the plugin <code>README.md</code>. The README is the
+  cheatsheet; this guide explains <em>why</em> the loop is shaped the way it is and walks through it
+  end to end. Everything here matches the shipped <code>commands/</code>, <code>agents/</code>, and
+  <code>bin/</code> files — no invented behaviour.</p>
+
+  <h2 id="s1">1. The idea — why it exists <a class="anchor" href="#s1">#</a></h2>
+  <p>A naive “agent, go build my backlog” loop fails in four predictable ways. <code>orch</code> is
+  built around an answer to each.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>The failure mode</th><th>What goes wrong</th><th>orch's answer</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Context drift</strong></td>
+        <td>One agent implements, verifies, reads build logs, drives the browser, and reflects — all in one context. Heavy output fills the window, and quality degrades task after task.</td>
+        <td>The <strong>orchestrator never codes or verifies itself.</strong> Implementation goes to an <code>implementer</code>; the whole verification goes to a <code>verify-coordinator</code>. The noisy output lives in <em>their</em> contexts. The orchestrator sees only a short plan in and a compact verdict out — so <code>all</code> drains many more tasks before its own window fills.</td>
+      </tr>
+      <tr>
+        <td><strong>No memory</strong></td>
+        <td>The loop repeats on task 7 the mistake it made on task 2. Nothing learned in one task informs the next.</td>
+        <td>A <strong>retro step</strong> appends a lesson to <code>_lessons.md</code> at every resolve. Those lessons feed the next task's plan and verification. A pattern recurring across ≥2 tasks is proposed for promotion into a permanent standing check.</td>
+      </tr>
+      <tr>
+        <td><strong>Tokens burned on unreachable goals</strong></td>
+        <td>“Make it work” isn't checkable, so the agent grinds without knowing whether it's done — or declares victory on vibes.</td>
+        <td>Every task's goal is a set of <strong>verifiable acceptance criteria, frozen before any code.</strong> A criterion no tool can check isn't a criterion. A description too thin to derive one goes <code>blocked</code> with a question — never implemented on a guess.</td>
+      </tr>
+      <tr>
+        <td><strong>Happy-path-only verification</strong></td>
+        <td>The gate improvises checks from a <em>positive</em> acceptance list, on data that happens to cooperate — so the empty / error / edge branches never get hit, and the task bounces later.</td>
+        <td>Verification derives its cases from the <strong>diff, not the feature description</strong> (<code>test-planner</code>), and runs <strong>standing checks</strong> — real-data provenance, malformed-input handling, FE-actually-calls-the-API, E2E-through-the-UI — that hit exactly the branches a lucky run skips. <strong>No PASS without tool evidence.</strong></td>
+      </tr>
+    </tbody>
+  </table></div>
+
+  <p>Two more principles hold the whole thing together:</p>
+  <ul>
+    <li><strong>State lives in files + git, so a run is resumable.</strong> Task status is YAML frontmatter in the task file; evidence is committed alongside; work happens on real branches in worktrees. A killed run leaves a clean, inspectable state you can resume from.</li>
+    <li><strong>Everything ends with a <code>BACKLOG:</code> line</strong>, so an outer <code>/loop</code> driver can decide whether to keep going. That single machine-readable line turns <code>orch</code> from a one-shot into an autonomous drain (<code>/loop /orch all</code>).</li>
+  </ul>
+
+  <h2 id="s2">2. How it works — the loop <a class="anchor" href="#s2">#</a></h2>
+  <pre><code>                 read .claude/orch.config.md   (no config → STOP: run /orch:init)
+                              │
+                    ┌─────────▼──────────┐
+                    │  1. SYNC + SELECT  │  orch-sync pull · reset-stale · pick eligible todo(s)
+                    └─────────┬──────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │  2. FREEZE CRITERIA│  verbatim → checklist → derive(traceable) → blocked
+                    └─────────┬──────────┘   (criteria are IMMUTABLE for the whole round loop)
+                              │
+                    ┌─────────▼──────────┐
+                    │  3. PLAN + DELEGATE│  short plan + lessons → implementer
+                    └─────────┬──────────┘   (or lead-implementer fan-out for a big task)
+                              │
+                    ┌─────────▼──────────┐
+                    │  4. VERIFY (gate)  │  verify-coordinator:
+                    │                    │    test-planner → matrix from the DIFF
+                    │                    │    ui-reviewer   → browser, screenshot/criterion
+                    │                    │    test-reviewer → test-quality audit
+                    │                    │    + inline curl/build/test + standing checks
+                    └─────────┬──────────┘   → ONE merged verdict + FAILING: list
+                              │
+                  ┌───────────▼───────────┐
+             PASS │  5. RESOLVE           │ FAIL → fix loop, capped at --rounds R
+              ────┤   round strategy      ├────  round 1 build · middle rounds same impl.
+                  └───────────┬───────────┘        final round FRESH impl. + diff + why
+                              │                     still failing after R → blocked + escalate
+                    ┌─────────▼──────────┐
+                    │  6. RETRO          │  append lesson → _lessons.md
+                    └─────────┬──────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │  7. DRAFT PR       │  gh pr create --draft  (humans merge, never orch)
+                    └─────────┬──────────┘
+                              │
+                  next task (chain/batch/all)  … then  BACKLOG: DRAINED | REMAINING | BLOCKED</code></pre>
+
+  <p>Step by step, as the shipped <code>commands/orch.md</code> runs it:</p>
+  <ol>
+    <li><strong>Sync + select.</strong> <code>orch-sync pull</code> refreshes the store from the backend. <code>orch-state reset-stale</code> returns any leftover <code>in_progress</code>/<code>blocked</code> task to <code>todo</code> (a killed run, or a task escalated last time, gets a fresh attempt). The selectable pool is every <code>todo</code> row whose <code>deps</code> are all <code>done</code>. <strong>Two tasks that touch the same files are never batched together</strong> — they split across batches or run as a chain. Picked tasks are set <code>in_progress</code>.</li>
+    <li><strong>Freeze the criteria.</strong> Before <em>any</em> code, the acceptance criteria are settled once and made immutable for the rest of the loop — see <a href="#s3">§3</a>.</li>
+    <li><strong>Plan + delegate.</strong> The orchestrator writes a short implementation plan (files to touch, contracts, any spec to follow), folds in the current <code>_lessons.md</code>, and hands it to an implementer. It chooses <code>lead-implementer</code> when the work cuts into ≥2 file-disjoint slices (or <code>--deep</code> is passed), else the plain <code>implementer</code>. The agent is spawned worktree-isolated and fed the <strong>config facts it needs</strong> — dev-server commands, ports, test commands — because the agent itself assumes no stack.</li>
+    <li><strong>Verify — via <code>verify-coordinator</code>.</strong> The orchestrator never verifies; it delegates the whole thing. The coordinator builds the verify env, runs the checks, collects evidence, and returns <strong>one merged verdict table plus a <code>FAILING:</code> list</strong>.</li>
+    <li><strong>Resolve — round strategy.</strong> All criteria PASS (or PM-REVIEW) → the task is <code>done</code> and a <strong>draft PR</strong> is opened. Any FAIL → the fix loop runs, handing back <strong>only</strong> the failing criteria, capped at <code>--rounds R</code> (default 3):
+      <ul>
+        <li><strong>Round 1</strong> — the implementer's first build.</li>
+        <li><strong>Middle rounds</strong> — the <strong>same</strong> implementer, given only the failing criteria.</li>
+        <li><strong>Final round (R)</strong> — a <strong>FRESH</strong> implementer, handed the diff (<code>git diff &lt;base&gt;...&lt;branch&gt;</code>) plus a short analysis of <em>why the previous attempts keep failing</em> — a new pair of eyes.</li>
+        <li><strong>Still failing after round R</strong> → the task is <code>blocked</code>, the escalation reason is appended, and the loop moves on.</li>
+      </ul>
+    </li>
+    <li><strong>Retro.</strong> Every resolve appends a lesson to <code>_lessons.md</code> — see <a href="#s5">§5</a>.</li>
+    <li><strong>Draft PR + iterate.</strong> In <code>chain</code>/<code>all</code> the next task branches off the one just finished; in <code>batch</code> verdicts are consumed as coordinators finish. At end of run <code>orch-sync push</code> reflects statuses to the backend, and the run prints its <code>BACKLOG:</code> line.</li>
+  </ol>
+
+  <h3>The subagents — who does what, and what each guarantees</h3>
+  <p>The orchestrator delegates to six subagents. Naming them matters because each one
+  <em>guarantees</em> a specific property the orchestrator then trusts without re-checking.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Subagent</th><th>Role</th><th>What it guarantees</th></tr></thead>
+    <tbody>
+      <tr><td><code>implementer</code></td><td>Builds exactly one task on its own branch in its own worktree.</td><td>Scoped changes only (no architectural decisions, no adjacent “improvements”); authors tests for its change; runs the real build/lint/test before reporting; never touches the base branch.</td></tr>
+      <tr><td><code>lead-implementer</code></td><td>Builds one <em>big</em> task by fanning out to parallel sub-implementers.</td><td>Freezes the shared contract (types/DTOs/signatures) <strong>first</strong>, so no slice guesses another's interface; slices are <strong>file-disjoint</strong>; merges them back and runs the final gate; <strong>falls back to flat</strong> if the task can't be cut cleanly.</td></tr>
+      <tr><td><code>verify-coordinator</code></td><td>Owns the entire verification of one task.</td><td>Builds and tears down the verify env; spawns the three reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. <strong>No PASS without tool evidence.</strong> Keeps all the heavy output out of the orchestrator's context.</td></tr>
+      <tr><td><code>test-planner</code></td><td>Reads the <strong>diff</strong> and derives the mandatory test matrix.</td><td>One binding row per changed branch / guard / validation / fallback / boundary — happy <strong>and</strong> edge — each with a <em>real</em> induction recipe and a preferred layer (<code>e2e</code>/<code>web</code>/<code>api</code>). A <code>?state=</code>-style preview is never accepted as proof of an error/edge row.</td></tr>
+      <tr><td><code>ui-reviewer</code></td><td>Verifies the UI/browser criteria by driving the real browser.</td><td>One screenshot per criterion via <code>agent-browser</code>; every state (default/empty/loading/error/no-permission); data checked against the real account, not a mock; PASS/FAIL/PM-REVIEW — never on the implementer's word.</td></tr>
+      <tr><td><code>test-reviewer</code></td><td>Audits the tests that ship with the change.</td><td>Judges <em>quality</em> (real assertions, coverage of the change, no over-mocking, modifications truly updated) — not just that the suite is green. Returns <code>OK</code> or <code>GAPS</code>; <code>GAPS</code> is a FAIL.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p>A note on <strong>where evidence lives</strong>: the <code>verify-coordinator</code>
+  and <code>ui-reviewer</code> deliberately run in the orchestrator's checkout, <strong>not</strong>
+  the throwaway verify worktree, so the screenshots and the verification table survive when the
+  worktree is torn down.</p></div>
+
+  <h2 id="s3">3. The criteria freeze ladder <a class="anchor" href="#s3">#</a></h2>
+  <p>The single most important rule: <strong>the acceptance criteria are settled once, before any
+  code, and are immutable for the entire round loop.</strong> This is what makes the goal
+  <em>verifiable</em> — the fix loop grades against a fixed target, not one that drifts to whatever
+  the implementer happened to build.</p>
+  <p>The orchestrator climbs this ladder per task and stops at the first rung that applies:</p>
+  <ol>
+    <li><strong>Structured DoD / acceptance criteria in the task</strong> → copy them <strong>verbatim</strong>.</li>
+    <li><strong>A checklist / checkboxes in the task</strong> → <strong>verbatim</strong>.</li>
+    <li><strong>Neither</strong> → <strong>DERIVE</strong>. Each derived criterion must be <strong>(a) checkable by a tool</strong> — curl / test / browser / build — and <strong>(b) traceable</strong> — it cites the source sentence from the description it came from. Untraceable wishes become Open Questions, never criteria. An interactive single-task run shows the derived criteria for approval before implementing; an autonomous run (<code>/loop</code>) proceeds but stamps <code>criteria_source: derived</code> and leads the PR body with <em>“Criteria (derived — review these first)”</em>.</li>
+    <li><strong>Description too thin to derive anything checkable</strong> → the task goes <code>blocked</code> with the reason <code>needs-criteria</code> and a concrete question, and is reported under <code>BACKLOG: BLOCKED</code>. <strong>Never implement on vibes.</strong></li>
+  </ol>
+
+  <h2 id="s4">4. Standing checks, gated by capabilities <a class="anchor" href="#s4">#</a></h2>
+  <p>On top of a task's own acceptance criteria, <code>verify-coordinator</code> runs an always-on
+  quality bar. Each check is <strong>gated by a capability</strong> the project declares in its
+  config — declare <code>web</code>, <code>api</code>, <code>tests</code> for exactly the layers you
+  have and the loop verifies only those. A capability the project doesn't declare is
+  <strong>silently skipped</strong>; the loop never invents a check for a layer that doesn't exist.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Standing check</th><th>Gated on</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Green scoped suite + change covered</strong>, plus an independent <strong>test-quality audit</strong> (<code>test-reviewer</code> <code>GAPS</code> = FAIL) when tests were added/touched</td><td><code>tests</code> declared</td><td>The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions.</td></tr>
+      <tr><td><strong>Malformed body → clean 4xx naming the field, never a 500</strong></td><td><code>api</code> declared</td><td>Every touched write-endpoint validates its input. Happy-path-only is not a pass.</td></tr>
+      <tr><td><strong>Real-data provenance</strong> — a fresh account created <em>this run</em> with <strong>random</strong> values; rendered == returned == stored</td><td><code>web</code> + <code>api</code> declared</td><td>The screen shows <em>this account's</em> data from the live API — never a mock/demo seed or a <code>?preview=</code> switch a hardcoded value could pass.</td></tr>
+      <tr><td><strong>FE actually calls the live API</strong> on data-backed routes, verified <strong>E2E through the UI</strong></td><td><code>web</code> + <code>api</code> declared</td><td>The frontend really consumes the backend end to end — not static content with a silent mock behind it.</td></tr>
+      <tr><td><strong><code>ui-reviewer</code> drives the real browser</strong> — a screenshot per criterion, every state</td><td><code>web</code> declared</td><td>Screen/flow/state criteria are proven visually, at the project's target viewport, against the design tokens — not taken on the implementer's word.</td></tr>
+      <tr><td><strong>Every path from <code>test-planner</code>'s matrix</strong> — happy + each edge (empty/loading/error/no-permission/boundary), each induced for real</td><td>always (scaled to declared layers)</td><td>The branches a lucky random run skips are actually hit. A state that genuinely can't be reached this run is a visible FAIL/PM-REVIEW row with a reason — never a silently missing line.</td></tr>
+      <tr><td><strong>Everything in <code>standing_checks_extra</code></strong></td><td>project config</td><td>Project-specific lessons already promoted to permanent checks (see <a href="#s5">§5</a>).</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 id="s5">5. Learning — the retro / <code>_lessons.md</code> <a class="anchor" href="#s5">#</a></h2>
+  <p><code>orch</code> learns <em>within a run</em> and, with your approval, <em>across runs</em>.</p>
+  <ul>
+    <li><strong>The retro step.</strong> At <strong>every</strong> task resolve — especially after FAIL rounds or a <code>blocked</code> — the orchestrator appends 2–3 sentences to <code>&lt;tasks_dir&gt;/_lessons.md</code>: <em>what failed, why, and what check would have caught it.</em></li>
+    <li><strong>Fed forward immediately.</strong> Those lessons are handed into the next task's plan (step 3) and into the next <code>verify-coordinator</code> spawn (step 4). So a mistake made on task 2 informs task 3 in the same run.</li>
+    <li><strong>Promotion to a standing check.</strong> When the <strong>same pattern recurs across ≥2 tasks</strong>, the orchestrator proposes promoting it into <code>standing_checks_extra</code> in the config — where it becomes a permanent, always-on check for every future task. This <strong>asks you first; the loop never edits the config silently.</strong></li>
+  </ul>
+  <p>This is the missing feedback loop in naive agent runs: without it, the same class of bug gets
+  re-litigated task after task.</p>
+
+  <h2 id="s6">6. Modes &amp; flags <a class="anchor" href="#s6">#</a></h2>
+  <p><code>orch</code> is one command with several shapes. Parse them from the arguments:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Invocation</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>/orch "&lt;free text&gt;"</code></td><td><strong>Adhoc single task</strong> — creates a canonical task file from your prompt (id <code>ADHOC-N</code>), runs the freeze ladder <strong>interactively</strong> (shows the criteria, waits for approval), then the standard loop for that one task.</td></tr>
+      <tr><td><code>/orch &lt;ID&gt; [&lt;ID&gt;…]</code></td><td>Run <strong>explicit tasks</strong> already in the store (skips selection; still enforces <code>deps</code>).</td></tr>
+      <tr><td><code>/orch batch [N]</code></td><td>Up to <strong>N independent tasks in parallel</strong> (default N=3). Picks tasks with no unsatisfied deps and no shared files; spawns all implementers, then all verify-coordinators.</td></tr>
+      <tr><td><code>/orch chain [N]</code></td><td><strong>Task-by-task</strong>, each branch <strong>stacked</strong> on the previous finished branch.</td></tr>
+      <tr><td><code>/orch all</code></td><td><code>chain</code> with no limit — <strong>drain</strong> until no <code>todo</code> remains.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Flags</strong> (any mode):</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>--rounds R</code></td><td>Fix-loop cap (default <strong>3</strong>). The final round always brings in a fresh implementer.</td></tr>
+      <tr><td><code>--base &lt;branch&gt;</code></td><td>Start point instead of the git default branch.</td></tr>
+      <tr><td><code>--deep</code></td><td>Force the <code>lead-implementer</code> contract-freeze + file-disjoint fan-out for a big task.</td></tr>
+      <tr><td><code>--single-pr[=&lt;branch&gt;]</code></td><td>Ship the whole run as <strong>one</strong> integration branch + <strong>one</strong> draft PR (each task is still independently verified; only the PR tail changes).</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Autonomous drain:</strong> <code>/loop /orch all</code> runs a fresh cycle each
+  iteration, keying off the final <code>BACKLOG:</code> line and stopping on <code>DRAINED</code> or
+  <code>BLOCKED</code>.</p>
+
+  <h3>Which invocation for which situation</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Situation</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td>One small task, no task file yet</td><td><code>/orch "&lt;describe it&gt;"</code></td></tr>
+      <tr><td>One big task that splits into layers</td><td><code>/orch &lt;ID&gt; --deep</code> (or <code>/orch "&lt;text&gt;" --deep</code>)</td></tr>
+      <tr><td>Several independent tasks, want speed</td><td><code>/orch batch [N]</code></td></tr>
+      <tr><td>Several tasks that build on each other</td><td><code>/orch chain [N]</code></td></tr>
+      <tr><td>Drain the whole backlog, hands-off</td><td><code>/loop /orch all</code></td></tr>
+      <tr><td>Everything should land as one PR</td><td>add <code>--single-pr</code> to any mode</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>The <code>BACKLOG:</code> line</h3>
+  <p>Every run ends with <strong>exactly one</strong> of these — an outer <code>/loop</code> driver
+  keys off it:</p>
+  <pre><code>BACKLOG: DRAINED   — no todo tasks remain
+BACKLOG: REMAINING — &lt;count&gt; (&lt;ids&gt;); resume: /orch &lt;mode&gt; [N] --base &lt;last-finished-branch&gt;
+BACKLOG: BLOCKED   — remaining tasks need a human: &lt;ids + one-line reasons&gt;</code></pre>
+  <p><code>BLOCKED</code> (not <code>REMAINING</code>) is used when every remaining task is
+  ineligible for a <em>human</em> reason — <code>blocked</code> after the round cap, or a
+  <code>deps</code> entry that isn't a known task id (a human prerequisite). A <code>/loop</code>
+  driver stops on both <code>DRAINED</code> and <code>BLOCKED</code>.</p>
+
+  <h2 id="s7">7. Setup &amp; usage walkthrough <a class="anchor" href="#s7">#</a></h2>
+  <h3>Install</h3>
+  <pre><code>/plugin marketplace add Krab00/junk-drawer
+/plugin install orch@junk-drawer</code></pre>
+
+  <h3>Initialise the project (once per repo)</h3>
+  <pre><code>/orch:init</code></pre>
+  <p><code>/orch:init</code> <strong>scans</strong> the repo — it reads rather than guesses:</p>
+  <ul>
+    <li>the <strong>git default branch</strong> (becomes the <code>--base</code> default);</li>
+    <li>the <strong>layout + package manager</strong> (workspaces? <code>package.json</code> / <code>go.mod</code> / <code>pyproject.toml</code> / <code>Cargo.toml</code> / …);</li>
+    <li>each <strong>runnable capability</strong> — for every web frontend or api backend, its dev-server script, the port it binds, and a health path (<code>/</code> for web, <code>/health</code> for api);</li>
+    <li>the <strong>test runner</strong> per package (a layer with no runner is recorded as absent, never forced to grow one).</li>
+  </ul>
+  <p>It then <strong>asks which backend</strong> fits (<a href="#s8">§8</a>), shows you the filled
+  config to confirm the run/test commands + ports it detected, and on approval writes
+  <code>.claude/orch.config.md</code>, creates <code>tasks_dir</code>, and seeds an empty
+  <code>_lessons.md</code>. If a config already exists it shows a diff and asks before overwriting —
+  a hand-tuned config is never clobbered silently.</p>
+
+  <h3>The canonical task file</h3>
+  <p>Tasks live at <code>&lt;tasks_dir&gt;/&lt;ID&gt;.md</code>. <strong>Status is the
+  frontmatter</strong> — there is no separate manifest to drift out of sync.</p>
+  <pre><code>---
+id: TASK-123
+title: Fix login redirect
+status: todo            # todo | in_progress | done | blocked
+deps: [TASK-120]        # this task is eligible only once every dep is done
+source: adhoc           # adhoc | github#45 | linear:ABC-12
+source_updated_at:      # stamped on pull; push compares it (drift guard)
+criteria_source: derived # verbatim | derived
+---
+## Description
+&lt;what the task is — describe the desired behaviour&gt;
+
+## Acceptance criteria
+- [ ] AC1: &lt;tool-checkable sentence&gt; (modality: ui|api|test|data)
+
+## Verification — &lt;branch&gt;   # appended by verify-coordinator
+| Criterion | Tool | Evidence | Verdict |</code></pre>
+  <p>Evidence files land in <code>&lt;tasks_dir&gt;/&lt;ID&gt;.evidence/</code>.</p>
+
+  <h3>A concrete run: <code>/orch "fix login redirect bug"</code></h3>
+  <ol>
+    <li><strong>Adhoc task created.</strong> <code>orch-state new ADHOC-1 "fix login redirect bug"</code> writes the skeleton file; the orchestrator fills the description from your prompt.</li>
+    <li><strong>Criteria frozen (interactively).</strong> No structured DoD exists, so the loop <em>derives</em> criteria — e.g. <em>“AC1: after a successful login the user lands on <code>/dashboard</code>, not <code>/login</code> (modality: ui)”</em> — each traceable to a sentence in your prompt, and shows them to you for approval.</li>
+    <li><strong>Delegated.</strong> A short plan + the current lessons go to an <code>implementer</code>, spawned in its own worktree on branch <code>task/adhoc-1-fix-login-redirect</code>, fed the dev-server and test commands from the config.</li>
+    <li><strong>Verified.</strong> <code>verify-coordinator</code> boots the app, has <code>test-planner</code> derive the matrix from the diff (including the <em>failed</em>-login and <em>already-logged-in</em> branches), has <code>ui-reviewer</code> drive the real browser through the redirect on a fresh random account, runs the standing checks, and returns a merged verdict.</li>
+    <li><strong>Resolved.</strong> All PASS → the task is <code>done</code>, a <strong>draft PR</strong> is opened (<code>gh pr create --draft …</code>), and a lesson is appended to <code>_lessons.md</code>. The run prints <code>BACKLOG: DRAINED</code>.</li>
+  </ol>
+  <p>You review and merge the PR — <code>orch</code> never does.</p>
+
+  <h2 id="s8">8. Backends <a class="anchor" href="#s8">#</a></h2>
+  <p>The backend decides where tasks come from and what <code>orch-sync</code> does. Set it in the
+  config.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Backend</th><th>Where tasks live</th><th>What sync does</th></tr></thead>
+    <tbody>
+      <tr><td><code>adhoc</code></td><td>The task files in <code>tasks_dir</code> are the whole source of truth; <code>/orch "&lt;free text&gt;"</code> creates them.</td><td><code>orch-sync</code> is a <strong>no-op</strong> (the files <em>are</em> canon).</td></tr>
+      <tr><td><code>manifest</code></td><td>Same as adhoc, but you maintain the task files <strong>by hand</strong>.</td><td>No-op.</td></tr>
+      <tr><td><code>github-issues</code></td><td>GitHub issues carrying a configured label (default <code>orch</code>).</td><td><strong>Pull:</strong> issues → task files (<code>id</code> becomes <code>GH-&lt;number&gt;</code>, the body checklist → acceptance criteria, <code>updatedAt</code> stamped as <code>source_updated_at</code>). <strong>Push:</strong> a status comment with the verification table + PR link. Needs the <code>gh</code> CLI authenticated.</td></tr>
+      <tr><td><code>linear-mcp</code></td><td>Linear, via the Linear MCP.</td><td>Sync happens <strong>in-conversation</strong> through the MCP — <code>/orch</code> does the pull/push itself. Thin in v0.1 (see <a href="#s11">§11</a>).</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p><strong>Field ownership + drift guard (<code>github-issues</code>).</strong> The
+  tool owns human-set fields (issue state, labels); <code>orch</code> owns its status comment and
+  never overwrites human edits. Pull stamps <code>source_updated_at</code>; on push, if the issue
+  changed upstream since that stamp, <code>orch-sync</code> <strong>flags it and refuses to
+  push</strong> — re-pull first. Issue OPEN/CLOSED maps to <code>todo</code>/<code>done</code> only
+  (plain issues have no rich workflow states); push <strong>never closes an issue and never
+  merges</strong>.</p></div>
+
+  <h2 id="s9">9. The bin scripts <a class="anchor" href="#s9">#</a></h2>
+  <p>Three small, zero-dependency bash scripts carry the <strong>deterministic mechanics</strong> —
+  the mechanical, error-prone steps that shouldn't be an LLM's job. Keeping them out of the model's
+  hands is why the frontmatter never drifts and ports never collide.</p>
+  <ul>
+    <li><code>orch-state</code> — the canonical task-store CRUD and the <em>only</em> writer of status: <code>list</code> (id/status/deps table) · <code>set &lt;id&gt; &lt;status&gt;</code> · <code>reset-stale</code> (<code>in_progress</code>/<code>blocked</code> → <code>todo</code>) · <code>new &lt;id&gt; [title]</code> (skeleton task file).</li>
+    <li><code>orch-worktree</code> — per-task git worktrees under <code>.worktrees/</code> plus <strong>stable port slots</strong> (<code>port = capability port_base + slot</code>): <code>add &lt;id&gt; &lt;branch&gt; [base]</code> · <code>remove &lt;id&gt;</code> · <code>slot &lt;id&gt;</code>.</li>
+    <li><code>orch-sync</code> — the task-store ⇄ backend bridge: <code>pull</code> / <code>push</code> (github via <code>gh</code>; <code>adhoc</code>/<code>manifest</code> no-op; <code>linear-mcp</code> an in-conversation stub).</li>
+  </ul>
+
+  <h2 id="s10">10. Config reference <a class="anchor" href="#s10">#</a></h2>
+  <p><code>/orch</code> reads every project fact from <code>.claude/orch.config.md</code>. <strong>No
+  config → it stops and tells you to run <code>/orch:init</code>.</strong> YAML frontmatter +
+  free-form prose notes:</p>
+  <pre><code>---
+backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
+tasks_dir: .orch/tasks    # where the canonical task files live
+branch_prefix: task/      # per-task branch = &lt;branch_prefix&gt;&lt;id&gt;-&lt;slug&gt;
+capabilities:
+  web:  { run: "npm run dev", port_base: 5180, health: "/" }              # omit if no web app
+  api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if no api
+  tests: { api: "npm test" }   # per-package test commands; omit layers with no runner
+standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
+github: { label: "orch" }      # github-issues backend only; drop otherwise
+---
+Free-form project notes /orch should know: conventions, gotchas, where the visual spec lives,
+calibration values that must never be guessed, etc.</code></pre>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>backend</code></td><td>Which task source drives the run — see <a href="#s8">§8</a>.</td></tr>
+      <tr><td><code>tasks_dir</code></td><td>Directory holding the canonical <code>&lt;ID&gt;.md</code> task files (default <code>.orch/tasks</code>).</td></tr>
+      <tr><td><code>branch_prefix</code></td><td>Per-task branch name = <code>&lt;branch_prefix&gt;&lt;id&gt;-&lt;slug&gt;</code>.</td></tr>
+      <tr><td><code>capabilities.web</code> / <code>.api</code></td><td><code>run</code> (dev-server command), <code>port_base</code>, <code>health</code> path. <strong>Omit the whole block if the layer doesn't exist</strong> — its standing checks are then skipped.</td></tr>
+      <tr><td><code>capabilities.tests</code></td><td>Per-package test command (<code>{ pkg: "cmd" }</code>). Omit a layer with no runner.</td></tr>
+      <tr><td><code>standing_checks_extra</code></td><td>Project-specific checks promoted from <code>_lessons.md</code> (starts empty).</td></tr>
+      <tr><td><code>github.label</code></td><td>Only for the <code>github-issues</code> backend — the label to pull.</td></tr>
+      <tr><td><em>(prose below the frontmatter)</em></td><td>Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed.</td></tr>
+    </tbody>
+  </table></div>
+  <p><code>port_base</code> is the <em>base</em> of a per-task range — <code>orch-worktree</code> adds
+  a stable slot — so pick bases far enough apart that a few parallel tasks won't collide (e.g.
+  <code>5180</code> web / <code>3180</code> api).</p>
+
+  <h2 id="s11">11. Limitations — v0.1 notes <a class="anchor" href="#s11">#</a></h2>
+  <ul>
+    <li><strong><code>linear-mcp</code> is thin.</strong> The sync runs in-conversation through the Linear MCP; <code>bin/orch-sync</code> is only a stub for that backend.</li>
+    <li><strong>No Jira backend</strong> yet.</li>
+    <li><strong><code>--single-pr</code> <code>batch</code> integration resolves only <em>trivial</em> structural conflicts</strong> — it keeps both sides' entries in a shared registration file (a module registry, router, or barrel <code>index.ts</code>). Any conflict touching real task logic <strong>stops and is reported, never guessed</strong>.</li>
+  </ul>
+</main>
+</div>
+
+<script>
+  (function () {
+    var btn = document.getElementById('themeToggle');
+    var root = document.documentElement;
+    btn.addEventListener('click', function () {
+      var cur = root.getAttribute('data-theme');
+      if (!cur) {
+        cur = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      root.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+    });
+  })();
+</script>
+</body>
+</html>
