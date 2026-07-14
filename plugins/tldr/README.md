@@ -1,5 +1,8 @@
 # tldr
 
+Codex: invoke `$tldr`, optionally with a sentence count or `on|off|status`. Codex stores the
+persistent flag under `~/.codex/junk-drawer`; Claude Code keeps its flag under `~/.claude`.
+
 Two things in one command:
 
 - `/tldr N` — summarize your last **substantive** message in at most N sentences (default 3). One-shot. Repeated calls always condense the original message, never a previous TL;DR.

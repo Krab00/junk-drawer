@@ -1,6 +1,6 @@
 {
   "name": "tldr",
   "description": "Summarize the current work / a file / a selection on demand.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "author": { "name": "Krab00" }
 }

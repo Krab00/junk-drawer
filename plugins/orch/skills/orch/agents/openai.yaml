@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrate Tasks"
+  short_description: "Drain a task backlog with implementation and verification agents"
+  default_prompt: "Use $orch to process the next eligible task with subagents."

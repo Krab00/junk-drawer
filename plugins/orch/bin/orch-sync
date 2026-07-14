@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# orch-sync — backend <-> canonical task files. Backend read from .claude/orch.config.md.
+# orch-sync — backend <-> canonical task files. Backend read from .orch/config.md.
 #   orch-sync pull [id...]   # backend -> task files. No ids: lazy list (ids/status/updatedAt).
 #                            #   With ids: full fetch (body -> description + checklist criteria).
 #   orch-sync push [id...]   # task files -> backend. Posts the ## Verification section as a
@@ -8,8 +8,9 @@
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-config="$root/.claude/orch.config.md"
-[ -f "$config" ] || { echo "orch: no config — run /orch:init" >&2; exit 2; }
+config="$root/.orch/config.md"
+[ -f "$config" ] || config="$root/.claude/orch.config.md"
+[ -f "$config" ] || { echo "orch: no config - run orch-init" >&2; exit 2; }
 here="$(cd "$(dirname "$0")" && pwd)"; state="$here/orch-state"
 
 _fm_get(){ awk -v key="$2" 'NR==1&&$0~/^---[ \t]*$/{i=1;next} i&&$0~/^---[ \t]*$/{exit} i{p=index($0,":");if(p==0)next;k=substr($0,1,p-1);gsub(/^[ \t]+|[ \t]+$/,"",k);if(k==key){v=substr($0,p+1);gsub(/^[ \t]+|[ \t]+$/,"",v);print v;exit}}' "$1"; }

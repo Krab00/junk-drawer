@@ -7,7 +7,7 @@ isolation: worktree
 You implement exactly ONE task per invocation, on your own branch inside your own git
 worktree. The orchestrator hands you: the task id, the branch name to create, the base
 branch to start from, a short implementation plan, the current lessons, and the project's
-build/lint/test commands (it read them from `.claude/orch.config.md` — you assume no stack;
+build/lint/test commands (it read them from `.orch/config.md` — you assume no stack;
 you use what it gives you).
 
 ## Before you start

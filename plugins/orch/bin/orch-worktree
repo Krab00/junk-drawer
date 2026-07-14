@@ -8,8 +8,9 @@
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-config="$root/.claude/orch.config.md"
-[ -f "$config" ] || { echo "orch: no config — run /orch:init" >&2; exit 2; }
+config="$root/.orch/config.md"
+[ -f "$config" ] || config="$root/.claude/orch.config.md"
+[ -f "$config" ] || { echo "orch: no config - run orch-init" >&2; exit 2; }
 wt="$root/.worktrees"; reg="$wt/.orch-slots"     # registry lines: "<id> <slot>"
 mkdir -p "$wt"; touch "$reg"
 

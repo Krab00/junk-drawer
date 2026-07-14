@@ -1,5 +1,10 @@
 # ctx-limit
 
+Codex: use `$ctx-limit`. The hook supports the locally observed Codex `token_count` transcript
+shape and returns structured hook output when blocking. Parsing is best effort and fails open; use
+the native `context-remaining` footer as the stable visual indicator. `$ctx-limit on` defaults to
+200k tokens in Codex; the Claude Code command below keeps its 300k default.
+
 Set a **context-size limit** for a Claude Code session. A `UserPromptSubmit` hook checks the
 session's context size each turn (via [`ctx-tokens`](../ctx-tokens)) and, once you cross the
 threshold, does one of three things — your choice:

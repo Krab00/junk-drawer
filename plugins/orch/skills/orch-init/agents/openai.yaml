@@ -1,0 +1,4 @@
+interface:
+  display_name: "Initialize Orchestrator"
+  short_description: "Detect project commands and configure the orch workflow"
+  default_prompt: "Use $orch-init to configure this repository for orchestration."

@@ -1,5 +1,8 @@
 # handoff
 
+Codex: use `$handoff` to save, or `$handoff resume <id>` to restore. Codex handoffs live under
+`~/.codex/junk-drawer/handoffs`; Claude Code retains the paths below.
+
 Save the state of a session to disk and pick it up in a fresh one — by id, not copy-paste.
 
 - **`/handoff`** — writes a handoff to `~/.claude/handoffs/<date>_<id>.md`, prints a short session id and copies it to your clipboard.

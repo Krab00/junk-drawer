@@ -1,6 +1,6 @@
 {
   "name": "ctx-limit",
   "description": "Set a context-size limit for a Claude Code session. A UserPromptSubmit hook checks context size each turn and, past the threshold, blocks the prompt, warns, or runs a command — your choice. Control/handoff commands (/ctx-limit, /molt, /handoff, /clear) always pass. Live, no new session.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "author": { "name": "Krab00" }
 }

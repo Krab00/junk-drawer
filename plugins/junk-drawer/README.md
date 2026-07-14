@@ -1,5 +1,8 @@
 # junk-drawer
 
+Codex: invoke `$junk-drawer` for a runtime list of Codex manifests and skills. Claude Code keeps
+the slash-command catalog described below.
+
 Cheatsheet for the whole marketplace. Run `/junk-drawer` to list every plugin
 with its version, description, and commands + params.
 
