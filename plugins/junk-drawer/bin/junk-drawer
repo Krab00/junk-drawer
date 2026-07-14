@@ -1,62 +1,70 @@
 #!/usr/bin/env bash
-# ponytail: reads sibling plugin manifests at runtime, so the cheatsheet never rots.
+# Build a live catalog from sibling manifests in a checkout or installed marketplace cache.
 set -euo pipefail
 
-# Collect plugin manifests across both layouts:
-#   dev repo : <repo>/plugins/<name>/.claude-plugin/plugin.json      (this script: .../<name>/bin/)
-#   installed: <cache>/junk-drawer/<name>/<version>/.claude-plugin/… (this script: .../<name>/<ver>/bin/)
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cache_mkt="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/junk-drawer"
+runtime="${JUNK_DRAWER_RUNTIME:-claude}"
 manifests=()
-if [ "${here#"$cache_mkt"/}" != "$here" ]; then
-  # installed: one entry per plugin, latest version dir
-  for namedir in "$cache_mkt"/*/; do
-    [ -d "$namedir" ] || continue
-    # ponytail: plain sort — correct for 0.0.x single-digit patches; use sort -V if versions grow
-    latest="$(ls -d "$namedir"*/ 2>/dev/null | sort | tail -1 || true)"
-    [ -n "$latest" ] && [ -f "${latest}.claude-plugin/plugin.json" ] && manifests+=("${latest}.claude-plugin/plugin.json")
-  done
+
+if [ "$runtime" = codex ]; then
+    manifest_dir=.codex-plugin
+    cache_mkt="${CODEX_HOME:-$HOME/.codex}/plugins/cache/junk-drawer"
+    heading="junk-drawer - Codex plugin marketplace (Krab00)"
+    install="install: codex plugin add <name>@junk-drawer"
 else
-  # dev repo: siblings under plugins/
-  for m in "$(cd "$here/../.." && pwd)"/*/.claude-plugin/plugin.json; do
-    [ -e "$m" ] && manifests+=("$m")
-  done
+    manifest_dir=.claude-plugin
+    cache_mkt="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/junk-drawer"
+    heading="junk-drawer - Claude Code plugin marketplace (Krab00)"
+    install="install: /plugin install <name>@junk-drawer"
+fi
+[ -d "$cache_mkt" ] && cache_mkt="$(cd "$cache_mkt" && pwd)"
+
+if [ "${here#"$cache_mkt"/}" != "$here" ]; then
+    for namedir in "$cache_mkt"/*/; do
+        [ -d "$namedir" ] || continue
+        latest="$(ls -d "$namedir"*/ 2>/dev/null | sort | tail -1 || true)"
+        manifest="${latest}${manifest_dir}/plugin.json"
+        [ -n "$latest" ] && [ -f "$manifest" ] && manifests+=("$manifest")
+    done
+else
+    plugins_root="$(cd "$here/../.." && pwd)"
+    for manifest in "$plugins_root"/*/"$manifest_dir"/plugin.json; do
+        [ -e "$manifest" ] && manifests+=("$manifest")
+    done
 fi
 
-printf 'junk-drawer — Claude Code plugin marketplace (Krab00)\n'
-printf 'install: /plugin install <name>@junk-drawer\n\n'
-
+printf '%s\n%s\n\n' "$heading" "$install"
 [ ${#manifests[@]} -gt 0 ] || { printf '(no plugins found)\n'; exit 0; }
 
 for manifest in "${manifests[@]}"; do
-  [ -e "$manifest" ] || continue
-  dir="$(dirname "$(dirname "$manifest")")"
-  name="$(jq -r '.name'            "$manifest")"
-  ver="$(jq  -r '.version // "?"'  "$manifest")"
-  desc="$(jq -r '.description // ""' "$manifest")"
+    dir="$(dirname "$(dirname "$manifest")")"
+    name="$(jq -r '.name' "$manifest")"
+    ver="$(jq -r '.version // "?"' "$manifest")"
+    desc="$(jq -r '.description // ""' "$manifest")"
+    printf '%s  v%s\n  %s\n' "$name" "$ver" "$desc"
 
-  printf '%s  v%s\n  %s\n' "$name" "$ver" "$desc"
+    found=0
+    for skill in "$dir"/skills/*/SKILL.md; do
+        [ -e "$skill" ] || continue
+        found=1
+        skill_name="$(awk -F': *' '$1 == "name" { print $2; exit }' "$skill")"
+        skill_desc="$(awk -F': *' '$1 == "description" { sub(/^description: */, ""); print; exit }' "$skill")"
+        printf '    $%s\n        %s\n' "${skill_name:-$(basename "$(dirname "$skill")")}" "$skill_desc"
+    done
 
-  found=0
-  for cmd in "$dir"/commands/*.md; do
-    [ -e "$cmd" ] || continue
-    found=1
-    # frontmatter = lines between the first two --- fences
-    fm="$(awk '/^---[[:space:]]*$/{n++; next} n==1{print}' "$cmd")"
-    # ponytail: assumes single-line frontmatter fields; true for every command here.
-    hint="$(printf '%s\n' "$fm" | sed -n 's/^argument-hint:[[:space:]]*//p' | tr -d '"')"
-    cdesc="$(printf '%s\n' "$fm" | sed -n 's/^description:[[:space:]]*//p')"
-    cname="/$name:$(basename "$cmd" .md)"
-    [ -n "$hint" ] && cname="$cname $hint"
-    printf '    %s\n        %s\n' "$cname" "$cdesc"
-  done
+    if [ "$runtime" != codex ]; then
+        for cmd in "$dir"/commands/*.md; do
+            [ -e "$cmd" ] || continue
+            found=1
+            fm="$(awk '/^---[[:space:]]*$/{n++; next} n==1{print}' "$cmd")"
+            hint="$(printf '%s\n' "$fm" | sed -n 's/^argument-hint:[[:space:]]*//p' | tr -d '"')"
+            cdesc="$(printf '%s\n' "$fm" | sed -n 's/^description:[[:space:]]*//p')"
+            cname="/$name:$(basename "$cmd" .md)"
+            [ -n "$hint" ] && cname="$cname $hint"
+            printf '    %s\n        %s\n' "$cname" "$cdesc"
+        done
+    fi
 
-  for skill in "$dir"/skills/*/SKILL.md; do
-    [ -e "$skill" ] || continue
-    found=1
-    printf '    (skill: %s — auto-invoked)\n' "$(basename "$(dirname "$skill")")"
-  done
-
-  [ "$found" -eq 0 ] && printf '    (no commands)\n'
-  printf '\n'
+    [ "$found" -eq 0 ] && printf '    (no workflows)\n'
+    printf '\n'
 done

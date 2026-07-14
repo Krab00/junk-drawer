@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook: while global TL;DR mode is on, inject a be-terse instruction into context
 # every turn. stdout of a UserPromptSubmit hook is added to the model's context.
-flag="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/tldr-on"
+if [ -n "${PLUGIN_ROOT:-}" ]; then
+    flag="${CODEX_HOME:-$HOME/.codex}/junk-drawer/tldr-on"
+else
+    flag="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/tldr-on"
+fi
 [ -f "$flag" ] && echo "TL;DR MODE ON: answer as tersely as possible — result first, a few sentences max, no preamble or filler. Drop tables and multi-section formatting unless explicitly asked."
 exit 0

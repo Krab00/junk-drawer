@@ -53,7 +53,7 @@ Two more principles hold the whole thing together:
 ## 2. How it works — the loop
 
 ```
-                 read .claude/orch.config.md   (no config → STOP: run /orch:init)
+                 read .orch/config.md   (no config → STOP: run /orch:init)
                               │
                     ┌─────────▼──────────┐
                     │  1. SYNC + SELECT  │  orch-sync pull · reset-stale · pick eligible todo(s)
@@ -291,7 +291,7 @@ A `/loop` driver stops on both `DRAINED` and `BLOCKED`.
   grow one).
 
 It then **asks which backend** fits ([§8](#8-backends)), shows you the filled config to confirm the
-run/test commands + ports it detected, and on approval writes `.claude/orch.config.md`, creates
+run/test commands + ports it detected, and on approval writes `.orch/config.md`, creates
 `tasks_dir`, and seeds an empty `_lessons.md`. If a config already exists it shows a diff and asks
 before overwriting — a hand-tuned config is never clobbered silently.
 
@@ -381,18 +381,19 @@ frontmatter never drifts and ports never collide.
 
 ## 10. Config reference
 
-`/orch` reads every project fact from `.claude/orch.config.md`. **No config → it stops and tells you
+`/orch` reads every project fact from `.orch/config.md`. **No config → it stops and tells you
 to run `/orch:init`.** YAML frontmatter + free-form prose notes:
 
 ```markdown
 ---
 backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
 tasks_dir: .orch/tasks    # where the canonical task files live
+default_base: main        # detected git default branch; --base overrides it
 branch_prefix: task/      # per-task branch = <branch_prefix><id>-<slug>
 capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }              # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if no api
-  tests: { api: "npm test" }   # per-package test commands; omit layers with no runner
+  tests: { api: "npm test" }   # use `root` for a repo-level suite; omit absent runners
 standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
 github: { label: "orch" }      # github-issues backend only; drop otherwise
 ---
@@ -404,9 +405,10 @@ calibration values that must never be guessed, etc.
 |---|---|
 | `backend` | Which task source drives the run — see [§8](#8-backends). |
 | `tasks_dir` | Directory holding the canonical `<ID>.md` task files (default `.orch/tasks`). |
+| `default_base` | Detected git default branch; overridden by `--base`. |
 | `branch_prefix` | Per-task branch name = `<branch_prefix><id>-<slug>`. |
 | `capabilities.web` / `.api` | `run` (dev-server command), `port_base`, `health` path. **Omit the whole block if the layer doesn't exist** — its standing checks are then skipped. |
-| `capabilities.tests` | Per-package test command (`{ pkg: "cmd" }`). Omit a layer with no runner. |
+| `capabilities.tests` | Test command map (`{ pkg: "cmd" }`); use `root` for a repo-level suite. |
 | `standing_checks_extra` | Project-specific checks promoted from `_lessons.md` (starts empty). |
 | `github.label` | Only for the `github-issues` backend — the label to pull. |
 | *(prose below the frontmatter)* | Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed. |

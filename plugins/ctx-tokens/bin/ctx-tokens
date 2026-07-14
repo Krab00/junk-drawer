@@ -1,33 +1,87 @@
 #!/usr/bin/env bash
-# ctx-tokens — current context-window token usage of the live Claude Code session.
-#   ctx-tokens              # context tokens of the current session (found via cwd)
-#   ctx-tokens -h           # human form, e.g. "ctx 56k (56657) | out 562"
-#   ctx-tokens <file.jsonl> # from a specific transcript (e.g. a hook's transcript_path)
-#
-# "context" = last turn's input side: input + cache_creation + cache_read — what actually fills the
-# window. output_tokens is reported separately. Needs jq.
+# Report the latest input-context usage from a Claude Code or Codex JSONL transcript.
+# Codex transcript parsing is best effort because its transcript format is not a stable API.
+set -u
 
+runtime=auto
 human=0
-[ "${1:-}" = "-h" ] && { human=1; shift; }
+file=""
+target_cwd="$PWD"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --codex) runtime=codex ;;
+        --claude) runtime=claude ;;
+        --cwd) shift; target_cwd="${1:?--cwd requires a directory}" ;;
+        -h|--human) human=1 ;;
+        *) file="$1" ;;
+    esac
+    shift
+done
 
-f="${1:-}"
-if [ -z "$f" ]; then
-    # current session transcript = newest .jsonl in the project dir for this cwd
-    dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(pwd | sed 's:/:-:g')"
-    f=$(ls -t "$dir"/*.jsonl 2>/dev/null | head -1)
+find_codex_transcript() {
+    local root pattern candidate first
+    root="${CODEX_HOME:-$HOME/.codex}/sessions"
+    [ -d "$root" ] || return 1
+    pattern="\"cwd\":\"$target_cwd\""
+    # Prefer a parent/user thread. Subagents commonly share cwd and are newer on disk.
+    for source in user any; do
+        while IFS= read -r candidate; do
+            [ -f "$candidate" ] || continue
+            first=$(head -n1 "$candidate" 2>/dev/null)
+            if printf '%s' "$first" | jq -e --arg cwd "$target_cwd" --arg source "$source" '
+                .type == "session_meta" and .payload.cwd == $cwd and
+                ($source == "any" or .payload.thread_source == "user")
+            ' >/dev/null 2>&1; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done < <(rg -l --fixed-strings "$pattern" "$root" -g '*.jsonl' 2>/dev/null | xargs ls -t 2>/dev/null)
+    done
+    return 1
+}
+
+if [ -z "$file" ]; then
+    if [ "$runtime" = codex ]; then
+        file=$(find_codex_transcript)
+    else
+        claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$target_cwd" | sed 's:/:-:g')"
+        file=$(ls -t "$claude_dir"/*.jsonl 2>/dev/null | head -1)
+        if [ -z "$file" ] && [ "$runtime" = auto ]; then
+            file=$(find_codex_transcript)
+            runtime=codex
+        fi
+    fi
 fi
-[ -n "$f" ] && [ -f "$f" ] || { echo "no transcript" >&2; exit 1; }
+[ -n "$file" ] && [ -f "$file" ] || { echo "no transcript" >&2; exit 1; }
 
-# last line carrying a usage block (portable: no tac / tail -r, works on Linux + macOS)
-read -r ctx out < <(
-    grep '"usage"' "$f" | tail -n1 | jq -r '
+if [ "$runtime" = auto ]; then
+    jq -e 'select(.type == "session_meta")' "$file" >/dev/null 2>&1 && runtime=codex || runtime=claude
+fi
+
+ctx= out=0 window=0
+if [ "$runtime" = codex ]; then
+    IFS=$'\t' read -r ctx out window < <(jq -rs '
+        [ .[] | select(.type == "event_msg" and .payload.type == "token_count") ][-1]
+        | [(.payload.info.last_token_usage.input_tokens // 0),
+           (.payload.info.last_token_usage.output_tokens // 0),
+           (.payload.info.model_context_window // 0)]
+        | @tsv
+    ' "$file" 2>/dev/null)
+else
+    read -r ctx out < <(grep '"usage"' "$file" | tail -n1 | jq -r '
         (.message.usage // .usage) as $u
-        | "\(($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0)) \($u.output_tokens // 0)"'
-)
-[ -n "${ctx:-}" ] || { echo "no usage in transcript" >&2; exit 1; }
+        | "\(($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0)) \($u.output_tokens // 0)"
+    ' 2>/dev/null)
+fi
+case "${ctx:-}" in ''|*[!0-9]*) echo "no supported usage record in transcript" >&2; exit 1 ;; esac
 
 if [ "$human" = 1 ]; then
-    printf 'ctx %dk (%d) | out %d\n' "$((ctx / 1000))" "$ctx" "$out"
+    if [ "${window:-0}" -gt 0 ]; then
+        remaining=$((window - ctx)); [ "$remaining" -lt 0 ] && remaining=0
+        printf 'ctx %dk (%d) | remaining %dk (%d) | window %d | out %d\n' "$((ctx / 1000))" "$ctx" "$((remaining / 1000))" "$remaining" "$window" "${out:-0}"
+    else
+        printf 'ctx %dk (%d) | out %d\n' "$((ctx / 1000))" "$ctx" "${out:-0}"
+    fi
 else
     echo "$ctx"
 fi

@@ -5,12 +5,13 @@
 #   orch-state set <id> <status>    # status in: todo|in_progress|done|blocked
 #   orch-state reset-stale          # in_progress|blocked -> todo (give it fresh rounds)
 #   orch-state new <id> [title...]  # write a skeleton task file (spec layout)
-# tasks_dir is read from .claude/orch.config.md (default .orch/tasks).
+# tasks_dir is read from .orch/config.md (legacy fallback: .claude/orch.config.md).
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-config="$root/.claude/orch.config.md"
-[ -f "$config" ] || { echo "orch: no config ($config) — run /orch:init" >&2; exit 2; }
+config="$root/.orch/config.md"
+[ -f "$config" ] || config="$root/.claude/orch.config.md"
+[ -f "$config" ] || { echo "orch: no config ($root/.orch/config.md) - run orch-init" >&2; exit 2; }
 
 # _fm_get <file> <key> -> value of a top-level YAML-frontmatter key (first --- block).
 _fm_get() {

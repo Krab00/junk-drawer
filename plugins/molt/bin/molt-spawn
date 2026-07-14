@@ -13,6 +13,7 @@ set -u
 hf="${1:?usage: molt-spawn <handoff-file> [cwd] [base]}"
 cwd="${2:-$PWD}"
 base="${3:-molt}"
+runtime="${JUNK_DRAWER_RUNTIME:-claude}"
 
 [ -f "$hf" ] || { echo "molt-spawn: handoff file not found: $hf" >&2; exit 1; }
 command -v herdr >/dev/null 2>&1 || { echo "molt-spawn: herdr not on PATH" >&2; exit 1; }
@@ -35,25 +36,32 @@ if [ -x "$chain_bin" ]; then
     [ -n "$name" ] || name="$base"
 fi
 
-# 1) spawn a fresh claude in a new tab, named for the chain
-out=$(herdr agent start "$name" --cwd "$cwd" --focus -- claude 2>&1)
+# 1) spawn a fresh agent in a new tab, named for the chain
+if [ "$runtime" = codex ]; then
+    agent_cmd="${CODEX_BIN:-codex}"
+else
+    agent_cmd=claude
+fi
+out=$(herdr agent start "$name" --cwd "$cwd" --focus -- "$agent_cmd" 2>&1)
 pane=$(printf '%s' "$out" | jq -r '.result.agent.pane_id // empty' 2>/dev/null)
 [ -n "$pane" ] || { echo "molt-spawn: spawn failed: $out" >&2; exit 1; }
 # ponytail: assumes cwd is already trusted (molt continues in the same repo, which it is). If a
 # fresh/untrusted dir shows a trust prompt, add: read screen, send Enter to accept, before seeding.
 wait_idle "$pane" 30000
 
-# 2) control commands FIRST (before the work): name, color, remote control.
-#    /rename + /color are native, sync to claude.ai/code, and keep the molt chain visible.
-send_submit "$pane" "/rename $name" "/rename $name"; wait_idle "$pane"
-[ -n "$color" ] && { send_submit "$pane" "/color $color" "/color $color"; wait_idle "$pane"; }
-send_submit "$pane" "/remote-control" "remote-control"; wait_idle "$pane"
-rc=$(herdr agent read "$pane" --lines 40 2>/dev/null | jq -r '.result.read.text' 2>/dev/null \
-     | grep -oE 'https://claude\.ai/code/[A-Za-z0-9_]+' | head -1)
+# 2) Claude-only controls. Codex receives the work prompt directly.
+rc=""
+if [ "$runtime" = claude ]; then
+    send_submit "$pane" "/rename $name" "/rename $name"; wait_idle "$pane"
+    [ -n "$color" ] && { send_submit "$pane" "/color $color" "/color $color"; wait_idle "$pane"; }
+    send_submit "$pane" "/remote-control" "remote-control"; wait_idle "$pane"
+    rc=$(herdr agent read "$pane" --lines 40 2>/dev/null | jq -r '.result.read.text' 2>/dev/null \
+         | grep -oE 'https://claude\.ai/code/[A-Za-z0-9_]+' | head -1)
+fi
 
 # 3) seed the handoff LAST — full self-contained prompt (a fresh session has NO /handon command).
 #    The session ends by continuing the actual work.
-seed="Wczytaj plik $hf i potraktuj jego tresc jako kontekst roboczy tej sesji (to jest handoff). Potwierdz w jednej linii co przejmujesz, potem kontynuuj prace od miejsca w ktorym handoff sie konczy."
+seed="Read $hf and treat it as the complete working handoff for this session. Confirm what you picked up in one line, then continue from the final next action."
 send_submit "$pane" "$seed" "$hf"
 
 # 4) report (must end exit 0 — /molt uses a non-zero exit to detect a real spawn failure)

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context Limit"
+  short_description: "Configure and inspect context usage limits for this task"
+  default_prompt: "Use $ctx-limit to show the current context limit status."

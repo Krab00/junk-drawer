@@ -1,5 +1,9 @@
 # ctx-tokens
 
+Codex: invoke `$ctx-tokens`; the skill runs `ctx-tokens --codex`. The script reports used and
+remaining context when the model window is present. Parsing is best effort because Codex does not
+guarantee transcript layout.
+
 Read the current context-window token usage of the **live** Claude Code session, straight from its
 transcript — so an agent (or you) can check how full the context is and act before it degrades.
 

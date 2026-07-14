@@ -260,7 +260,7 @@
   </ul>
 
   <h2 id="s2">2. How it works — the loop <a class="anchor" href="#s2">#</a></h2>
-  <pre><code>                 read .claude/orch.config.md   (no config → STOP: run /orch:init)
+  <pre><code>                 read .orch/config.md   (no config → STOP: run /orch:init)
                               │
                     ┌─────────▼──────────┐
                     │  1. SYNC + SELECT  │  orch-sync pull · reset-stale · pick eligible todo(s)
@@ -442,7 +442,7 @@ BACKLOG: BLOCKED   — remaining tasks need a human: &lt;ids + one-line reasons&
   </ul>
   <p>It then <strong>asks which backend</strong> fits (<a href="#s8">§8</a>), shows you the filled
   config to confirm the run/test commands + ports it detected, and on approval writes
-  <code>.claude/orch.config.md</code>, creates <code>tasks_dir</code>, and seeds an empty
+  <code>.orch/config.md</code>, creates <code>tasks_dir</code>, and seeds an empty
   <code>_lessons.md</code>. If a config already exists it shows a diff and asks before overwriting —
   a hand-tuned config is never clobbered silently.</p>
 
@@ -509,17 +509,18 @@ criteria_source: derived # verbatim | derived
   </ul>
 
   <h2 id="s10">10. Config reference <a class="anchor" href="#s10">#</a></h2>
-  <p><code>/orch</code> reads every project fact from <code>.claude/orch.config.md</code>. <strong>No
+  <p><code>/orch</code> reads every project fact from <code>.orch/config.md</code>. <strong>No
   config → it stops and tells you to run <code>/orch:init</code>.</strong> YAML frontmatter +
   free-form prose notes:</p>
   <pre><code>---
 backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
 tasks_dir: .orch/tasks    # where the canonical task files live
+default_base: main        # detected git default branch; --base overrides it
 branch_prefix: task/      # per-task branch = &lt;branch_prefix&gt;&lt;id&gt;-&lt;slug&gt;
 capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }              # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if no api
-  tests: { api: "npm test" }   # per-package test commands; omit layers with no runner
+  tests: { api: "npm test" }   # use `root` for a repo-level suite; omit absent runners
 standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
 github: { label: "orch" }      # github-issues backend only; drop otherwise
 ---
@@ -530,9 +531,10 @@ calibration values that must never be guessed, etc.</code></pre>
     <tbody>
       <tr><td><code>backend</code></td><td>Which task source drives the run — see <a href="#s8">§8</a>.</td></tr>
       <tr><td><code>tasks_dir</code></td><td>Directory holding the canonical <code>&lt;ID&gt;.md</code> task files (default <code>.orch/tasks</code>).</td></tr>
+      <tr><td><code>default_base</code></td><td>Detected git default branch; overridden by <code>--base</code>.</td></tr>
       <tr><td><code>branch_prefix</code></td><td>Per-task branch name = <code>&lt;branch_prefix&gt;&lt;id&gt;-&lt;slug&gt;</code>.</td></tr>
       <tr><td><code>capabilities.web</code> / <code>.api</code></td><td><code>run</code> (dev-server command), <code>port_base</code>, <code>health</code> path. <strong>Omit the whole block if the layer doesn't exist</strong> — its standing checks are then skipped.</td></tr>
-      <tr><td><code>capabilities.tests</code></td><td>Per-package test command (<code>{ pkg: "cmd" }</code>). Omit a layer with no runner.</td></tr>
+      <tr><td><code>capabilities.tests</code></td><td>Test command map (<code>{ pkg: "cmd" }</code>); use <code>root</code> for a repo-level suite.</td></tr>
       <tr><td><code>standing_checks_extra</code></td><td>Project-specific checks promoted from <code>_lessons.md</code> (starts empty).</td></tr>
       <tr><td><code>github.label</code></td><td>Only for the <code>github-issues</code> backend — the label to pull.</td></tr>
       <tr><td><em>(prose below the frontmatter)</em></td><td>Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed.</td></tr>

@@ -1,5 +1,9 @@
 # orch
 
+Codex: install the plugin, open a new task, run `$orch-init` once per repository, then invoke
+`$orch` with a task id, free text, `batch`, `chain`, or `all`. Claude Code keeps `/orch:init` and
+`/orch`. Both hosts share `.orch/config.md`, task files, worktrees, and helper scripts.
+
 A **project-agnostic orchestration loop** for Claude Code. Point it at a repo, and it picks tasks
 from a canonical store, delegates each to an `implementer` subagent, verifies **every acceptance
 criterion against real tool evidence** (not the implementer's word) through a `verify-coordinator`,
@@ -29,8 +33,8 @@ Then, **in the target repo**, generate the adapter once:
 
 ## Config = the adapter
 
-`/orch:init` scans the repo and writes `.claude/orch.config.md`. `/orch` reads only this file for
-project facts — **no config, no run** (it tells you to init). The `capabilities` block **gates**
+`/orch:init` scans the repo and writes `.orch/config.md`. The orchestrator uses it as the primary
+config and accepts legacy `.claude/orch.config.md` as a fallback. **No config, no run.** The `capabilities` block **gates**
 the checks: declare `web`, `api`, `tests` for exactly the layers you have, and the loop verifies
 only those (no api → the malformed-body check is skipped; no web → no browser review; no test
 runner → build + behaviour checks stand in).
@@ -39,11 +43,12 @@ runner → build + behaviour checks stand in).
 ---
 backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
 tasks_dir: .orch/tasks    # canonical task files live here
+default_base: main        # detected git default branch; --base overrides it
 branch_prefix: task/      # per-task branch = <branch_prefix><id>-<slug>
 capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }        # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if none
-  tests: { api: "npm test" }  # per-package test commands; omit layers with no runner
+  tests: { api: "npm test" }  # use `root` for a repo-level suite; omit absent runners
 standing_checks_extra: []     # project lessons promoted to standing checks
 github: { label: "orch" }     # github-issues backend only
 ---

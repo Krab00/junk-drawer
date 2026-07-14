@@ -1,5 +1,10 @@
 # molt
 
+Codex: invoke `$molt` to write a durable continuation before compaction or a fresh task. Codex
+already compacts automatically, so spawning a fresh Codex CLI through `herdr` is explicit opt-in
+and does not use Claude-only remote-control commands. Codex auto mode only warns at Stop; it does
+not block completion or spawn a successor without an explicit request.
+
 Context-limit **orchestrator**. Near the token limit, the agent sheds its full context like a snake
 sheds its skin (*molt*): it writes a handoff, spawns a **fresh claude session** that loads the
 handoff and continues the work, and turns on remote control — no `/clear`, no lost thread.
@@ -18,7 +23,7 @@ Requires [`herdr`](https://herdr.dev) (running server) for the spawn path, and `
 - `/molt` — write a handoff, then spawn a fresh claude tab via herdr, seed it with the handoff, and
   enable remote control. The new session picks the work back up on its own; the old tab can be closed.
 
-## Auto-molt at a limit
+## Auto-molt at a limit (Claude Code)
 
 Two complementary triggers, both **default-off**:
 

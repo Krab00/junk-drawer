@@ -1,0 +1,4 @@
+interface:
+  display_name: "Molt"
+  short_description: "Create a continuation handoff before context compaction"
+  default_prompt: "Use $molt to prepare a continuation handoff for this work."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Configure Status Line"
+  short_description: "Configure the native Codex CLI footer"
+  default_prompt: "Use $statusline to configure my Codex CLI footer."

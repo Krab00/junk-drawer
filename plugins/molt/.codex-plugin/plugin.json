@@ -1,0 +1,7 @@
+{
+  "name": "molt", "version": "0.0.5",
+  "description": "Prepare a durable continuation handoff before compaction or a fresh task.",
+  "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["continuity", "compaction", "handoff"], "skills": "./skills/",
+  "interface": { "displayName": "Molt", "shortDescription": "Continue work with a fresh context", "longDescription": "Captures task state before compaction and supports optional successor sessions through a terminal orchestrator.", "developerName": "Krab00", "category": "Productivity", "capabilities": ["Read", "Write"], "defaultPrompt": ["Prepare a continuation handoff for this work."] }
+}
