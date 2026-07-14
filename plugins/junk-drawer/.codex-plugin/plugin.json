@@ -1,0 +1,7 @@
+{
+  "name": "junk-drawer", "version": "0.0.3",
+  "description": "Show the plugins and workflows available in the junk-drawer marketplace.",
+  "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["plugins", "skills", "catalog"], "skills": "./skills/",
+  "interface": { "displayName": "Junk Drawer", "shortDescription": "Browse junk-drawer workflows", "longDescription": "Produces a runtime catalog of installed junk-drawer plugins, skills, and Claude commands.", "developerName": "Krab00", "category": "Developer Tools", "capabilities": ["Read"], "defaultPrompt": ["Show the junk-drawer workflow catalog."] }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TL;DR"
+  short_description: "Summarize the latest substantive request or keep replies terse"
+  default_prompt: "Use $tldr to summarize my latest substantive request in three sentences."

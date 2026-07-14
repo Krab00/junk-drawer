@@ -1,0 +1,14 @@
+{
+  "name": "junk-drawer",
+  "interface": { "displayName": "Junk Drawer" },
+  "plugins": [
+    { "name": "statusline", "source": { "source": "local", "path": "./plugins/statusline" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Developer Tools" },
+    { "name": "ctx-tokens", "source": { "source": "local", "path": "./plugins/ctx-tokens" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Developer Tools" },
+    { "name": "tldr", "source": { "source": "local", "path": "./plugins/tldr" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Productivity" },
+    { "name": "handoff", "source": { "source": "local", "path": "./plugins/handoff" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Productivity" },
+    { "name": "ctx-limit", "source": { "source": "local", "path": "./plugins/ctx-limit" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Developer Tools" },
+    { "name": "molt", "source": { "source": "local", "path": "./plugins/molt" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Productivity" },
+    { "name": "junk-drawer", "source": { "source": "local", "path": "./plugins/junk-drawer" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Developer Tools" },
+    { "name": "orch", "source": { "source": "local", "path": "./plugins/orch" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Developer Tools" }
+  ]
+}

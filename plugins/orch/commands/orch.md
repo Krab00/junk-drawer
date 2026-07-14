@@ -1,5 +1,5 @@
 ---
-description: "Project-agnostic orchestration loop: pick tasks from the canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .claude/orch.config.md. Usage: /orch <free text> | <ID...> | batch [N] | chain [N] | all [--base <b>] [--rounds R] [--deep] [--single-pr[=<b>]]"
+description: "Project-agnostic orchestration loop: pick tasks from the canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Usage: /orch <free text> | <ID...> | batch [N] | chain [N] | all [--base <b>] [--rounds R] [--deep] [--single-pr[=<b>]]"
 argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
 ---
@@ -17,8 +17,8 @@ before your own context fills.
 
 ## 0. Config = the adapter (read it first, or stop)
 
-Every project fact — task store location, branch naming, dev-server run commands, ports,
-test runners, health paths — comes from **`.claude/orch.config.md`** in the target repo.
+Every project fact — task store location, default base, branch naming, dev-server run commands, ports,
+test runners, health paths — comes from **`.orch/config.md`** in the target repo.
 Read it before anything else. **No config → STOP** and tell the user to run `/orch:init`;
 never guess a stack.
 
@@ -44,7 +44,7 @@ appends a `## Verification — <branch>` table; evidence files go under `<tasks_
 
 Every piece of work happens on its own task branch (`<branch_prefix><id>-<slug>` from config)
 inside its own worktree — never on the base branch. On its own branch the system may commit,
-push, and open **draft** PRs freely. The base branch (`main` or `--base`) is untouchable: never
+push, and open **draft** PRs freely. The base branch (`default_base` or `--base`) is untouchable: never
 commit to it, never push it, never merge into it, never mark a PR ready for review — merging and
 readiness are human decisions.
 
@@ -70,7 +70,7 @@ for a human — never merge it yourself, or the run's record is lost when the wo
 - No mode and no free text → ask which mode.
 
 Flags (any mode): `--rounds R` (fix-loop cap, default **3**); `--base <branch>` (start point
-instead of `main`); `--deep` (force `lead-implementer` fan-out — see **Deep mode**);
+instead of config `default_base`); `--deep` (force `lead-implementer` fan-out — see **Deep mode**);
 `--single-pr[=<branch>]` (one integration branch + one draft PR for the whole run — see
 **Single-PR mode**).
 
