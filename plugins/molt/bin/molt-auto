@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
-# Toggle auto-molt: when ON, a Stop hook forces a molt once this session's context passes the limit.
+# Toggle auto-molt: Claude forces continuation; Codex emits a Stop-hook warning at the limit.
 # State lives in ~/.claude, read fresh each turn.
 #   molt-auto on | off | status
-#   molt-auto limit <tokens>   -> set the limit (accepts 300000, 300k, 1m); default 300000
-cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+#   molt-auto limit <tokens>   -> defaults: Codex 200000, Claude Code 300000
+if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
+    cfg="${CODEX_HOME:-$HOME/.codex}/junk-drawer"
+else
+    cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+fi
+mkdir -p "$cfg"
 flag="$cfg/molt-auto"; limf="$cfg/molt-limit"
-lim() { cat "$limf" 2>/dev/null || echo 300000; }
+if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then def=200000; else def=300000; fi
+lim() { cat "$limf" 2>/dev/null || echo "$def"; }
 
 case "${1:-status}" in
-    on)  : > "$flag"; echo "auto-molt ON @ $(lim) tokens — I'll molt into a fresh session when context crosses that. /molt auto off to stop." ;;
+    on)  : > "$flag"; echo "auto-molt ON @ $(lim) tokens - the Stop hook will request a continuation when context crosses it." ;;
     off) rm -f "$flag"; echo "auto-molt OFF." ;;
     limit)
         v="${2:-}"; mult=1

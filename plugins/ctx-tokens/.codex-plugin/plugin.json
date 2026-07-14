@@ -1,0 +1,7 @@
+{
+  "name": "ctx-tokens", "version": "0.0.3",
+  "description": "Inspect current Codex context-window usage from the active transcript.",
+  "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["codex", "tokens", "context"], "skills": "./skills/",
+  "interface": { "displayName": "Context Tokens", "shortDescription": "Inspect live context-window usage", "longDescription": "Reports context usage for Claude Code and Codex transcripts with a native-footer fallback.", "developerName": "Krab00", "category": "Developer Tools", "capabilities": ["Read"], "defaultPrompt": ["How much context is left in this task?"] }
+}

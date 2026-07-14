@@ -1,0 +1,4 @@
+interface:
+  display_name: "Junk Drawer"
+  short_description: "Show installed junk-drawer workflows and usage"
+  default_prompt: "Use $junk-drawer to show the available workflows."

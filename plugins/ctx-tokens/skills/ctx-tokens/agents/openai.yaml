@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context Tokens"
+  short_description: "Inspect current Codex or Claude context usage"
+  default_prompt: "Use $ctx-tokens to show how much context is used and remaining."

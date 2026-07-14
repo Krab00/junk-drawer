@@ -1,6 +1,6 @@
 {
   "name": "handoff",
   "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "author": { "name": "Krab00" }
 }

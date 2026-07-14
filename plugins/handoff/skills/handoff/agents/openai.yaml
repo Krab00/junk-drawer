@@ -1,0 +1,4 @@
+interface:
+  display_name: "Handoff"
+  short_description: "Save or resume durable task handoffs across Codex tasks"
+  default_prompt: "Use $handoff to save a durable handoff for this task."

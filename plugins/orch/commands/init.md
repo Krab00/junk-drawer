@@ -1,12 +1,12 @@
 ---
-description: "Scan this repo and generate .claude/orch.config.md — the adapter /orch reads for every project fact (task backend, branch naming, dev-server run commands, ports, test runners). Run once before /orch."
+description: "Scan this repo and generate .orch/config.md — the adapter /orch reads for every project fact (task backend, branch naming, dev-server run commands, ports, test runners). Run once before /orch."
 argument-hint: "(no arguments)"
 allowed-tools: Bash(git:*), Bash(cat:*), Bash(ls:*), Bash(test:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Read, Write, Glob
 ---
 
 # /orch:init — generate the project config for `/orch`
 
-Produce `.claude/orch.config.md` in this repo: the single adapter that makes the
+Produce `.orch/config.md` in this repo: the single adapter that makes the
 project-agnostic `/orch` loop fit THIS stack. Scan, propose, confirm, write — don't invent
 facts you can read from the repo, and don't ask the user things the repo already answers.
 
@@ -47,11 +47,12 @@ project doesn't have — **do not** write a `web`/`api`/`tests` block for a laye
 ---
 backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
 tasks_dir: .orch/tasks    # canonical task files live here
+default_base: main        # detected git default branch; --base overrides it
 branch_prefix: task/      # per-task branch = <branch_prefix><id>-<slug>
 capabilities:
   web:  { run: "<dev-server cmd>", port_base: 5180, health: "/" }        # omit if no web app
   api:  { run: "<dev-server cmd>", port_base: 3180, health: "/health" }  # omit if no api
-  tests: { <pkg>: "<test cmd>" }   # per-package test commands; omit layers with no runner
+  tests: { <pkg>: "<test cmd>" }   # use key `root` for a repo-level suite; omit absent runners
 standing_checks_extra: []          # project lessons promoted to standing checks (starts empty)
 github: { label: "orch" }          # github-issues backend only; drop otherwise
 ---
@@ -65,9 +66,9 @@ so pick bases far enough apart that a few parallel tasks won't collide (e.g. 518
 ## 4. Write + scaffold
 
 After the user confirms:
-1. Write `.claude/orch.config.md`.
+1. Create `.orch/` if needed, then write `.orch/config.md`.
 2. Create `tasks_dir` and an empty `<tasks_dir>/_lessons.md` (the retro log `/orch` appends to).
 3. Confirm `${CLAUDE_PLUGIN_ROOT}/bin/orch-state list` runs clean against the new config (empty
    store is fine), then tell the user how to start: `/orch <free text>` for an adhoc task, or
-   `/orch batch` once tasks exist. If `.claude/orch.config.md` already exists, show the diff and
+   `/orch batch` once tasks exist. If `.orch/config.md` already exists, show the diff and
    ask before overwriting — never clobber a hand-tuned config silently.

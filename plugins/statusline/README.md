@@ -1,5 +1,8 @@
 # statusline
 
+Codex: invoke `$statusline` to configure the native CLI `[tui].status_line` list. Codex does not run
+the custom shell renderer below; that implementation remains Claude Code-specific.
+
 A colored Claude Code status line. Segments, separated by a dim `│`:
 
 `ctx` (cyan) · `branch` (green) · `⑂worktree` (magenta, only in a linked worktree) · `model` (bold blue) · `effort` (yellow)
@@ -44,4 +47,3 @@ path (the `marketplaces/...` one is version-stable; the `cache/.../<version>/...
 
 Once wired, it renders automatically in Claude Code — nothing to run. Tweak segments or colors by
 editing `statusline.sh`.
-

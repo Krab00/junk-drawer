@@ -3,7 +3,11 @@
 # Fires on every session start / clear but only acts when ~/.claude/molt-pending exists and is
 # < 1h old (guard so a stale marker can't hijack an unrelated /clear). Clears the marker either way.
 # SessionStart stdout is added to the model's context.
-cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+if [ -n "${PLUGIN_ROOT:-}" ]; then
+    cfg="${CODEX_HOME:-$HOME/.codex}/junk-drawer"
+else
+    cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+fi
 marker="$cfg/molt-pending"
 [ -f "$marker" ] || exit 0
 read -r ts id < "$marker" 2>/dev/null
@@ -20,7 +24,11 @@ echo
 if [ -f "$cfg/molt-chain" ]; then
     IFS=$'\t' read -r b c n < "$cfg/molt-chain"
     echo "---"
-    echo "Chain marker: suggest to the user \`/rename ${b}_${n}\` and \`/color ${c}\` to keep the molt chain visible."
+    if [ -n "${PLUGIN_ROOT:-}" ]; then
+        echo "Chain marker: continuation ${b}_${n}."
+    else
+        echo "Chain marker: suggest to the user \`/rename ${b}_${n}\` and \`/color ${c}\` to keep the molt chain visible."
+    fi
 fi
 echo "---"
-echo "You just molted into a fresh session. Briefly confirm what you picked up, then continue the work from where the handoff leaves off."
+echo "You just loaded a molt continuation. Briefly confirm what you picked up, then continue from the handoff."
