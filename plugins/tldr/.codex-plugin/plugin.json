@@ -1,5 +1,5 @@
 {
-  "name": "tldr", "version": "0.0.4",
+  "name": "tldr", "version": "0.0.5",
   "description": "Summarize the latest substantive request or keep subsequent replies terse.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["summary", "concise", "productivity"], "skills": "./skills/",

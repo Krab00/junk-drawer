@@ -1,6 +1,6 @@
 {
   "name": "statusline",
   "description": "Claude Code status line: git branch + worktree + ANSI-colored context/effort segments.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "author": { "name": "Krab00" }
 }

@@ -5,10 +5,10 @@ description: Scan a repository and create the neutral .orch/config.md adapter us
 
 # Initialize orch
 
-Read `../../commands/init.md` from this skill directory as the canonical initialization specification, with these Codex mappings:
+Read `../../commands/init.md` from this skill directory as the canonical initialization specification, with these host mappings:
 
 - Write `.orch/config.md`, not a vendor-specific config path.
-- Use the current tool names instead of Claude frontmatter `allowed-tools`.
+- Use your host's tool names instead of Claude frontmatter `allowed-tools`.
 - Run helper scripts by paths relative to this skill: `../../bin/orch-state`, `../../bin/orch-worktree`, and `../../bin/orch-sync`.
 
 Scan the repository before asking questions. Detect the default branch, package manager, applications, dev commands, ports, health routes, and test commands. Ask only for the real backend choice and confirmation of detected commands and ports.

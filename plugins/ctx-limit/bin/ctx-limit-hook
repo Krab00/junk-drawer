@@ -5,7 +5,9 @@
 #   warn            -> stdout added to context, prompt proceeds
 #   cmd             -> run ~/.claude/ctx-limit-cmd, prompt proceeds
 # Self-contained: needs only jq. Reads transcript_path from the hook's JSON stdin.
-if [ -n "${PLUGIN_ROOT:-}" ]; then
+if [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    cfg="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer"
+elif [ -n "${PLUGIN_ROOT:-}" ]; then
     cfg="${CODEX_HOME:-$HOME/.codex}/junk-drawer"
 else
     cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -21,12 +23,17 @@ input=$(cat)
 # command/skill names so lookalikes such as /ctx-limiter or $ctx-limiter cannot bypass the guard.
 p=$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)
 p="${p#"${p%%[![:space:]]*}"}"   # trim leading whitespace
-if [[ "$p" =~ ^(/ctx-limit(:ctx-limit)?|/molt(:molt)?|/handoff(:handoff)?|/handon|/handoff:handon|/clear)([[:space:]]|$) ]] ||
+if [[ "$p" =~ ^(/ctx-limit(:ctx-limit)?|/molt(:molt)?|/handoff(:handoff)?|/handon|/handoff:handon|/clear|/skill:(ctx-limit|molt|handoff))([[:space:]]|$) ]] ||
    [[ "$p" =~ ^(\$ctx-limit|\$molt|\$handoff)([[:space:]]|$) ]] ||
    [[ "$p" =~ ^Use[[:space:]]+(\$ctx-limit|\$molt|\$handoff)([[:space:]]|$) ]]; then
     exit 0
 fi
 tp=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
+if [ -z "$tp" ] && [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    # Kimi hooks pass session_id/cwd, not transcript_path; resolve the live wire.jsonl ourselves.
+    sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
+    tp=$(ls -t "${KIMI_CODE_HOME:-$HOME/.kimi-code}/sessions"/*/"${sid:-__none__}"/agents/main/wire.jsonl 2>/dev/null | head -1)
+fi
 [ -n "$tp" ] && [ -f "$tp" ] || exit 0
 # ponytail: inline the token count — plugin bin/ is NOT on a hook's PATH, so we can't call
 # ctx-tokens here. jq over the transcript is all it needs. Keep in sync with ctx-tokens' math.
@@ -34,6 +41,14 @@ ctx=$(jq -rs '
     [ .[] | select(.type == "event_msg" and .payload.type == "token_count") ][-1]
     | .payload.info.last_token_usage.input_tokens // empty
 ' "$tp" 2>/dev/null)
+if [ -z "$ctx" ]; then
+    ctx=$(jq -rs '
+        [ .[] | select(.type == "context.append_loop_event" and .event.type == "step.end" and .event.usage) ][-1]
+        | if . == null then empty
+          else .event.usage as $u | (($u.inputOther // 0) + ($u.inputCacheRead // 0) + ($u.inputCacheCreation // 0))
+          end
+    ' "$tp" 2>/dev/null)
+fi
 if [ -z "$ctx" ]; then
     ctx=$(grep '"usage"' "$tp" 2>/dev/null | tail -n1 | jq -r '
         (.message.usage // .usage) as $u
@@ -45,7 +60,7 @@ case "$ctx" in ''|*[!0-9]*) exit 0 ;; esac
 action=$(cat "$cfg/ctx-limit-action" 2>/dev/null); action=${action:-block}
 case "$action" in
     warn)
-        if [ -n "${PLUGIN_ROOT:-}" ]; then
+        if [ -n "${PLUGIN_ROOT:-}" ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
             echo "ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider compaction or invoke the molt skill."
         else
             echo "ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider /clear or /molt."

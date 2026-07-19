@@ -1,6 +1,6 @@
 {
   "name": "orch",
   "description": "Project-agnostic orchestration loop: pick tasks from a canonical task store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, and open draft PRs. Config-driven via .claude/orch.config.md. Run /orch (or /orch:init first).",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": { "name": "Krab00" }
 }

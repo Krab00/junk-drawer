@@ -9,8 +9,8 @@ Interpret the user's requested operation:
 
 - A positive integer means summarize the latest substantive user message in at most that many sentences.
 - No argument means use three sentences.
-- `on`, `off`, or `status` controls persistent terse mode. Run `JUNK_DRAWER_RUNTIME=codex ../../bin/tldr-flag <operation>` from this skill directory and return its output.
+- `on`, `off`, or `status` controls persistent terse mode. Set `JUNK_DRAWER_RUNTIME` to your host (`codex` or `kimi`; unset on Claude Code) and run `JUNK_DRAWER_RUNTIME=<host> ../../bin/tldr-flag <operation>` from this skill directory, then return its output.
 
 For a summary, skip messages that only invoke this skill and skip earlier summaries. Always summarize the original substantive user message, not a previous TLDR. Return only the summary. If there is no substantive message, say so in one line.
 
-When terse mode is on, the bundled `UserPromptSubmit` hook injects the concise-response instruction on every Codex turn. The mode is stored under `${CODEX_HOME:-$HOME/.codex}/junk-drawer/` and does not change Claude Code's separate flag.
+When terse mode is on, the bundled `UserPromptSubmit` hook injects the concise-response instruction on every turn. The mode flag is stored per host (`${CODEX_HOME:-$HOME/.codex}/junk-drawer/`, `${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/`, or `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/`) and does not leak across hosts. On Kimi Code the hook must be declared in the plugin manifest's `hooks` to be active.

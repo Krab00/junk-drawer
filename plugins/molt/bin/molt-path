@@ -2,13 +2,17 @@
 # Target path for a new molt handoff + short session id. Used by /molt. molt is self-contained:
 # it writes and reads its own handoffs and does NOT depend on the handoff plugin.
 # Prints: line 1 = file path, line 2 = short id. Session id from CLAUDE_CODE_SESSION_ID.
-if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
+if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    dir="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/molt-handoffs"
+elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
     dir="${CODEX_HOME:-$HOME/.codex}/junk-drawer/molt-handoffs"
 else
     dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/molt-handoffs"
 fi
 mkdir -p "$dir"
-if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
+if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    sid="${KIMI_SESSION_ID:-$(date +%s)-$$}"
+elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
     sid="${CODEX_THREAD_ID:-$(date +%s)-$$}"
 else
     sid="${CLAUDE_CODE_SESSION_ID:-$(date +%s)-$$}"

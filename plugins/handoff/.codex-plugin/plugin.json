@@ -1,5 +1,5 @@
 {
-  "name": "handoff", "version": "0.0.2",
+  "name": "handoff", "version": "0.0.3",
   "description": "Save task state to disk and resume it in a fresh Codex task by id.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["handoff", "continuity", "context"], "skills": "./skills/",
