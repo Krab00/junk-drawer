@@ -1,5 +1,5 @@
 {
-  "name": "junk-drawer", "version": "0.0.3",
+  "name": "junk-drawer", "version": "0.0.4",
   "description": "Show the plugins and workflows available in the junk-drawer marketplace.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["plugins", "skills", "catalog"], "skills": "./skills/",

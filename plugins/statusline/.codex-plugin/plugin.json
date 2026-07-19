@@ -1,5 +1,5 @@
 {
-  "name": "statusline", "version": "0.0.3",
+  "name": "statusline", "version": "0.0.4",
   "description": "Configure the native Codex CLI footer with context, model, directory, and Git information.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["codex", "status-line", "context"], "skills": "./skills/",

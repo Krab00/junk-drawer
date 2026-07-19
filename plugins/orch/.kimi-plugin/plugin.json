@@ -1,0 +1,15 @@
+{
+  "name": "orch",
+  "version": "0.1.2",
+  "description": "Drain a project backlog with implementation and independent verification subagents.",
+  "author": { "name": "Krab00" },
+  "homepage": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["orchestration", "subagents", "verification", "worktrees"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Orchestrator",
+    "shortDescription": "Implement and verify backlog tasks with subagents",
+    "longDescription": "Runs a resumable task loop with isolated worktrees, specialized implementation and verification agents, evidence gates, and draft pull requests.",
+    "developerName": "Krab00"
+  }
+}

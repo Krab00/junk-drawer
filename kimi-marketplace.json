@@ -1,0 +1,13 @@
+{
+  "version": "2",
+  "plugins": [
+    { "id": "statusline", "displayName": "Status Line", "source": "./plugins/statusline" },
+    { "id": "ctx-tokens", "displayName": "Context Tokens", "source": "./plugins/ctx-tokens" },
+    { "id": "tldr", "displayName": "TL;DR", "source": "./plugins/tldr" },
+    { "id": "handoff", "displayName": "Handoff", "source": "./plugins/handoff" },
+    { "id": "ctx-limit", "displayName": "Context Limit", "source": "./plugins/ctx-limit" },
+    { "id": "molt", "displayName": "Molt", "source": "./plugins/molt" },
+    { "id": "junk-drawer", "displayName": "Junk Drawer", "source": "./plugins/junk-drawer" },
+    { "id": "orch", "displayName": "Orchestrator", "source": "./plugins/orch" }
+  ]
+}
