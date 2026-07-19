@@ -1,0 +1,15 @@
+{
+  "name": "ctx-tokens",
+  "version": "0.0.4",
+  "description": "Inspect current context-window usage for this Kimi Code session.",
+  "author": { "name": "Krab00" },
+  "homepage": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["kimi", "tokens", "context"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Context Tokens",
+    "shortDescription": "Inspect live context-window usage",
+    "longDescription": "Reports context usage for Kimi Code, Claude Code, and Codex sessions with a native-footer fallback.",
+    "developerName": "Krab00"
+  }
+}

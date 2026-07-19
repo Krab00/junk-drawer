@@ -1,0 +1,15 @@
+{
+  "name": "statusline",
+  "version": "0.0.4",
+  "description": "Configure the Kimi Code CLI status line and explain available status items.",
+  "author": { "name": "Krab00" },
+  "homepage": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["kimi", "status-line", "context"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Status Line",
+    "shortDescription": "Configure the Kimi Code status line",
+    "longDescription": "Configures Kimi Code status-line items in tui.toml while preserving existing user configuration.",
+    "developerName": "Krab00"
+  }
+}

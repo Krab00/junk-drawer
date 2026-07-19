@@ -3,14 +3,17 @@
 # State lives in ~/.claude, read fresh each turn.
 #   molt-auto on | off | status
 #   molt-auto limit <tokens>   -> defaults: Codex 200000, Claude Code 300000
-if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
+if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    cfg="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer"
+elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
     cfg="${CODEX_HOME:-$HOME/.codex}/junk-drawer"
 else
     cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 fi
 mkdir -p "$cfg"
 flag="$cfg/molt-auto"; limf="$cfg/molt-limit"
-if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then def=200000; else def=300000; fi
+if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then def=200000
+elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then def=200000; else def=300000; fi
 lim() { cat "$limf" 2>/dev/null || echo "$def"; }
 
 case "${1:-status}" in

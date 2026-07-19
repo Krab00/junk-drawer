@@ -1,5 +1,5 @@
 {
-  "name": "ctx-limit", "version": "0.0.4",
+  "name": "ctx-limit", "version": "0.0.5",
   "description": "Warn or stop before a task exceeds a configured context threshold.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["context", "tokens", "hooks"], "skills": "./skills/",

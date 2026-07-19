@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook: while global TL;DR mode is on, inject a be-terse instruction into context
 # every turn. stdout of a UserPromptSubmit hook is added to the model's context.
-if [ -n "${PLUGIN_ROOT:-}" ]; then
+if [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    flag="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/tldr-on"
+elif [ -n "${PLUGIN_ROOT:-}" ]; then
     flag="${CODEX_HOME:-$HOME/.codex}/junk-drawer/tldr-on"
 else
     flag="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/tldr-on"

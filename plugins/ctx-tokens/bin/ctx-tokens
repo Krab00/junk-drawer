@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Report the latest input-context usage from a Claude Code or Codex JSONL transcript.
-# Codex transcript parsing is best effort because its transcript format is not a stable API.
+# Report the latest input-context usage from a Claude Code, Codex, or Kimi Code JSONL transcript.
+# Codex/Kimi transcript parsing is best effort because neither transcript format is a stable API.
 set -u
 
 runtime=auto
@@ -11,6 +11,7 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --codex) runtime=codex ;;
         --claude) runtime=claude ;;
+        --kimi) runtime=kimi ;;
         --cwd) shift; target_cwd="${1:?--cwd requires a directory}" ;;
         -h|--human) human=1 ;;
         *) file="$1" ;;
@@ -40,22 +41,45 @@ find_codex_transcript() {
     return 1
 }
 
+find_kimi_transcript() {
+    local root candidate
+    root="${KIMI_CODE_HOME:-$HOME/.kimi-code}/sessions"
+    [ -d "$root" ] || return 1
+    # Match the session whose state.json workDir equals the target cwd; newest wire.jsonl wins.
+    while IFS= read -r candidate; do
+        [ -d "$candidate" ] || continue
+        [ -f "$candidate/state.json" ] || continue
+        [ -f "$candidate/agents/main/wire.jsonl" ] || continue
+        if jq -e --arg cwd "$target_cwd" '.workDir == $cwd' "$candidate/state.json" >/dev/null 2>&1; then
+            printf '%s\n' "$candidate/agents/main/wire.jsonl"
+            return 0
+        fi
+    done < <(ls -td "$root"/*/session_* 2>/dev/null)
+    return 1
+}
+
 if [ -z "$file" ]; then
     if [ "$runtime" = codex ]; then
         file=$(find_codex_transcript)
+    elif [ "$runtime" = kimi ]; then
+        file=$(find_kimi_transcript)
     else
         claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$target_cwd" | sed 's:/:-:g')"
         file=$(ls -t "$claude_dir"/*.jsonl 2>/dev/null | head -1)
         if [ -z "$file" ] && [ "$runtime" = auto ]; then
-            file=$(find_codex_transcript)
-            runtime=codex
+            file=$(find_codex_transcript) && runtime=codex
+        fi
+        if [ -z "$file" ] && [ "$runtime" = auto ]; then
+            file=$(find_kimi_transcript) && runtime=kimi
         fi
     fi
 fi
 [ -n "$file" ] && [ -f "$file" ] || { echo "no transcript" >&2; exit 1; }
 
 if [ "$runtime" = auto ]; then
-    jq -e 'select(.type == "session_meta")' "$file" >/dev/null 2>&1 && runtime=codex || runtime=claude
+    if jq -e 'select(.type == "session_meta")' "$file" >/dev/null 2>&1; then runtime=codex
+    elif head -n1 "$file" | jq -e 'select(.type == "metadata" and has("protocol_version"))' >/dev/null 2>&1; then runtime=kimi
+    else runtime=claude; fi
 fi
 
 ctx= out=0 window=0
@@ -67,6 +91,17 @@ if [ "$runtime" = codex ]; then
            (.payload.info.model_context_window // 0)]
         | @tsv
     ' "$file" 2>/dev/null)
+elif [ "$runtime" = kimi ]; then
+    # wire.jsonl: step.end loop events carry usage{inputOther,inputCacheRead,inputCacheCreation,output}.
+    read -r ctx out < <(jq -rs '
+        [ .[] | select(.type == "context.append_loop_event" and .event.type == "step.end" and .event.usage) ][-1]
+        | if . == null then empty
+          else .event.usage as $u
+            | [(($u.inputOther // 0) + ($u.inputCacheRead // 0) + ($u.inputCacheCreation // 0)),
+               ($u.output // 0)]
+            | @tsv
+          end
+    ' "$file" 2>/dev/null | tr '\t' ' ')
 else
     read -r ctx out < <(grep '"usage"' "$file" | tail -n1 | jq -r '
         (.message.usage // .usage) as $u

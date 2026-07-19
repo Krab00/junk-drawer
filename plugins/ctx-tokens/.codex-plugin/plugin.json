@@ -1,5 +1,5 @@
 {
-  "name": "ctx-tokens", "version": "0.0.3",
+  "name": "ctx-tokens", "version": "0.0.4",
   "description": "Inspect current Codex context-window usage from the active transcript.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["codex", "tokens", "context"], "skills": "./skills/",
