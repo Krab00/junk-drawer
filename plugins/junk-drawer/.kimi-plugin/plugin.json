@@ -1,0 +1,15 @@
+{
+  "name": "junk-drawer",
+  "version": "0.0.4",
+  "description": "Show the plugins and workflows available in the junk-drawer marketplace.",
+  "author": { "name": "Krab00" },
+  "homepage": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["plugins", "skills", "catalog"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Junk Drawer",
+    "shortDescription": "Browse junk-drawer workflows",
+    "longDescription": "Produces a runtime catalog of installed junk-drawer plugins, skills, and commands.",
+    "developerName": "Krab00"
+  }
+}

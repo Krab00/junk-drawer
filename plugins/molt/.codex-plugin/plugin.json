@@ -1,5 +1,5 @@
 {
-  "name": "molt", "version": "0.0.5",
+  "name": "molt", "version": "0.0.6",
   "description": "Prepare a durable continuation handoff before compaction or a fresh task.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["continuity", "compaction", "handoff"], "skills": "./skills/",

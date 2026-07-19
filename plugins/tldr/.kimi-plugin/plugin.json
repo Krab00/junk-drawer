@@ -1,0 +1,22 @@
+{
+  "name": "tldr",
+  "version": "0.0.5",
+  "description": "Summarize the latest substantive request or keep subsequent replies terse.",
+  "author": { "name": "Krab00" },
+  "homepage": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["summary", "concise", "productivity"],
+  "skills": "./skills/",
+  "hooks": [
+    {
+      "event": "UserPromptSubmit",
+      "command": "bash ./bin/tldr-hook",
+      "timeout": 5
+    }
+  ],
+  "interface": {
+    "displayName": "TL;DR",
+    "shortDescription": "Summaries and persistent terse mode",
+    "longDescription": "Summarizes the latest substantive request and can enforce concise replies through a lifecycle hook.",
+    "developerName": "Krab00"
+  }
+}

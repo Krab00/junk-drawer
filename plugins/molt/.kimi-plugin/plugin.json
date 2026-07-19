@@ -1,0 +1,27 @@
+{
+  "name": "molt",
+  "version": "0.0.6",
+  "description": "Prepare a durable continuation handoff before compaction or a fresh session.",
+  "author": { "name": "Krab00" },
+  "homepage": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["continuity", "compaction", "handoff"],
+  "skills": "./skills/",
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "command": "bash ./bin/molt-restore",
+      "timeout": 10
+    },
+    {
+      "event": "Stop",
+      "command": "bash ./bin/molt-stop",
+      "timeout": 15
+    }
+  ],
+  "interface": {
+    "displayName": "Molt",
+    "shortDescription": "Continue work with a fresh context",
+    "longDescription": "Captures session state before compaction and supports optional successor sessions through a terminal orchestrator.",
+    "developerName": "Krab00"
+  }
+}

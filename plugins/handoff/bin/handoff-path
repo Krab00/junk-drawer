@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Target path for a new handoff + short session id (also copied to clipboard). Used by /handoff.
 # Prints: line 1 = file path, line 2 = short id. Session id from CLAUDE_CODE_SESSION_ID.
-if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
+if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    dir="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/handoffs"
+elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
     dir="${CODEX_HOME:-$HOME/.codex}/junk-drawer/handoffs"
 else
     dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs"
 fi
 mkdir -p "$dir"
-if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
+if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    sid="${KIMI_SESSION_ID:-$(date +%s)-$$}"
+elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
     sid="${CODEX_THREAD_ID:-$(date +%s)-$$}"
 else
     sid="${CLAUDE_CODE_SESSION_ID:-$(date +%s)-$$}"

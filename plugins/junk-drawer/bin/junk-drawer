@@ -11,6 +11,11 @@ if [ "$runtime" = codex ]; then
     cache_mkt="${CODEX_HOME:-$HOME/.codex}/plugins/cache/junk-drawer"
     heading="junk-drawer - Codex plugin marketplace (Krab00)"
     install="install: codex plugin add <name>@junk-drawer"
+elif [ "$runtime" = kimi ]; then
+    manifest_dir=.kimi-plugin
+    cache_mkt="${KIMI_CODE_HOME:-$HOME/.kimi-code}/plugins/managed"
+    heading="junk-drawer - Kimi Code plugin marketplace (Krab00)"
+    install="install: /plugins install <name> (see kimi-marketplace.json)"
 else
     manifest_dir=.claude-plugin
     cache_mkt="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/junk-drawer"
@@ -22,9 +27,15 @@ fi
 if [ "${here#"$cache_mkt"/}" != "$here" ]; then
     for namedir in "$cache_mkt"/*/; do
         [ -d "$namedir" ] || continue
-        latest="$(ls -d "$namedir"*/ 2>/dev/null | sort | tail -1 || true)"
-        manifest="${latest}${manifest_dir}/plugin.json"
-        [ -n "$latest" ] && [ -f "$manifest" ] && manifests+=("$manifest")
+        if [ "$runtime" = kimi ]; then
+            # Kimi keeps a flat managed copy per plugin id: managed/<id>/.kimi-plugin/plugin.json
+            manifest="${namedir}${manifest_dir}/plugin.json"
+            [ -f "$manifest" ] && manifests+=("$manifest")
+        else
+            latest="$(ls -d "$namedir"*/ 2>/dev/null | sort | tail -1 || true)"
+            manifest="${latest}${manifest_dir}/plugin.json"
+            [ -n "$latest" ] && [ -f "$manifest" ] && manifests+=("$manifest")
+        fi
     done
 else
     plugins_root="$(cd "$here/../.." && pwd)"
@@ -49,10 +60,15 @@ for manifest in "${manifests[@]}"; do
         found=1
         skill_name="$(awk -F': *' '$1 == "name" { print $2; exit }' "$skill")"
         skill_desc="$(awk -F': *' '$1 == "description" { sub(/^description: */, ""); print; exit }' "$skill")"
-        printf '    $%s\n        %s\n' "${skill_name:-$(basename "$(dirname "$skill")")}" "$skill_desc"
+        skill_name="${skill_name:-$(basename "$(dirname "$skill")")}"
+        if [ "$runtime" = kimi ]; then
+            printf '    /skill:%s\n        %s\n' "$skill_name" "$skill_desc"
+        else
+            printf '    $%s\n        %s\n' "$skill_name" "$skill_desc"
+        fi
     done
 
-    if [ "$runtime" != codex ]; then
+    if [ "$runtime" != codex ] && [ "$runtime" != kimi ]; then
         for cmd in "$dir"/commands/*.md; do
             [ -e "$cmd" ] || continue
             found=1

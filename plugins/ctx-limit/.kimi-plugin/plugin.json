@@ -1,0 +1,22 @@
+{
+  "name": "ctx-limit",
+  "version": "0.0.5",
+  "description": "Warn or stop before a session exceeds a configured context threshold.",
+  "author": { "name": "Krab00" },
+  "homepage": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["context", "tokens", "hooks"],
+  "skills": "./skills/",
+  "hooks": [
+    {
+      "event": "UserPromptSubmit",
+      "command": "bash ./bin/ctx-limit-hook",
+      "timeout": 10
+    }
+  ],
+  "interface": {
+    "displayName": "Context Limit",
+    "shortDescription": "Configure a context usage guard",
+    "longDescription": "Uses session transcripts and lifecycle hooks to warn or stop near a configured context threshold.",
+    "developerName": "Krab00"
+  }
+}

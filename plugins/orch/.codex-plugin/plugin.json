@@ -1,5 +1,5 @@
 {
-  "name": "orch", "version": "0.1.1",
+  "name": "orch", "version": "0.1.2",
   "description": "Drain a project backlog with implementation and independent verification subagents.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["orchestration", "subagents", "verification", "worktrees"], "skills": "./skills/",

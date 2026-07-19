@@ -39,6 +39,8 @@ fi
 # 1) spawn a fresh agent in a new tab, named for the chain
 if [ "$runtime" = codex ]; then
     agent_cmd="${CODEX_BIN:-codex}"
+elif [ "$runtime" = kimi ]; then
+    agent_cmd="${KIMI_BIN:-kimi}"
 else
     agent_cmd=claude
 fi

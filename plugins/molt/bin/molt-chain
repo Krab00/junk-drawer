@@ -5,7 +5,9 @@
 #   molt-chain <base>     -> same, but use <base> when starting a fresh chain
 #   molt-chain reset      -> forget the chain (next call starts a new one)
 #   molt-chain reset <b>  -> forget it and start fresh at <b>_1
-if [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
+if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+    cfg="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer"
+elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
     cfg="${CODEX_HOME:-$HOME/.codex}/junk-drawer"
 else
     cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
