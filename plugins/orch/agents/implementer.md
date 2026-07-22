@@ -63,6 +63,12 @@ Run the exact build / lint / test commands the orchestrator handed you (from the
 every layer you touched, and keep the trimmed output. A red build/lint/test is not "done".
 Commit in small steps with clear messages, and push your branch (`git push -u origin <branch>`).
 
+**Self-run a mutant sweep before reporting.** For each guard branch / validation / fallback /
+boundary you wrote, mutate the source (flip / remove / bound-shift), run the targeted suite,
+confirm a test goes RED, revert, and confirm a clean `git status` after every revert. Commit
+source fixes BEFORE the sweep — a revert-based sweep can wipe uncommitted work. Your sweep does
+not replace the verifier's: an independent mutant author runs its own set afterward.
+
 ## Report (your final message — keep it short)
 
 1. **Summary** — what was built, key files.
