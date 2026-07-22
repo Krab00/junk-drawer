@@ -140,7 +140,8 @@ merged verdict table plus a `FAILING:` list. You consume the verdict; you drive 
 tell it which apply; never ask for a check on an undeclared layer):
 
 - **`tests` declared** → the changed package's suite must be green with the change covered; when
-  tests were added/touched, an independent `test-reviewer` audit (`GAPS` = FAIL).
+  tests were added/touched, an independent `test-reviewer` audit (`GAPS` = FAIL), and the
+  coordinator independently mutant-checks every new guard/boundary to a RED kill (survivor = FAIL).
 - **`api` declared** → every touched write-endpoint, given an empty / partial / wrong-type body,
   returns a clean **4xx naming the field, never a 500**. Happy-path-only is not a pass.
 - **`web` + `api` declared** → **data provenance** (a fresh account created THIS run with random
