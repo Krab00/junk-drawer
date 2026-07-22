@@ -72,6 +72,18 @@ not a fix.
      one empty is NOT a pass. **Every state/edge is its own verdict row**; one that genuinely can't
      be reached this run is logged as that row's FAIL/PM-REVIEW with the reason, never left out (a
      missing row = not checked = FAIL).
+   - **Killing-tests (tests):** for every guard branch / validation / fallback / boundary the diff
+     introduces or touches, **independently author one mutant** (flip the condition / remove the
+     branch / shift the bound), run the targeted suite, and require a **RED kill** — every survivor
+     is a FAIL row. Cover defensive branches, error-mapping, exact value bounds (assertions must
+     pin exact values, never `> 0`-style), and negative-state paths; that is where survivors hide.
+     Treat a survivor as a **suspected behavior bug first**, a coverage gap second. The
+     implementer's own mutant sweep never clears this — independence is the point.
+   - **Fixture/commit hygiene (tests):** every file the new tests open must be **tracked in git**
+     (`git ls-files`) — gitignored artifacts (`*.log`, `*.db`, ad-hoc fixtures) pass every
+     in-worktree gate yet vanish on a fresh checkout. And `git diff --name-only <base>...<branch>`
+     must not contain vendored/dependency paths (e.g. `node_modules`) — symlinked dependency
+     dirs have entered committed diffs before despite `.gitignore`.
 
 ## Where evidence goes (critical — you are NOT worktree-isolated)
 
