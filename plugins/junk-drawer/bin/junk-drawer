@@ -2,7 +2,11 @@
 # Build a live catalog from sibling manifests in a checkout or installed marketplace cache.
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# -P resolves the physical dir. Skill dirs reach this script through a `bin -> ../../bin`
+# symlink, and a logical pwd would report the skill dir, making the marketplace walk below
+# land on plugins/<p>/skills instead of plugins/. A standalone skill install has a real
+# bin/ dir, so -P is a no-op there and the sibling-skill fallback still triggers.
+here="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 runtime="${JUNK_DRAWER_RUNTIME:-claude}"
 manifests=()
 
