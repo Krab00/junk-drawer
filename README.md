@@ -93,7 +93,10 @@ Two known limits of the skills-only install:
 - `$junk-drawer` catalogs sibling skills instead of plugins, since no plugin manifests are present,
   so it cannot report versions or slash commands.
 - The symlinks are stored in git as symlinks. A Windows clone without `core.symlinks=true` writes
-  them as plain text files, which breaks this install path. Plugin installs are unaffected.
+  them as plain text files, which breaks this install path. It also breaks skill invocation for a
+  plugin install on such a clone, since the skills now reach helpers through the symlink rather
+  than through `../../bin/`. Slash commands and hooks are unaffected either way, because they
+  resolve `${CLAUDE_PLUGIN_ROOT}/bin` directly.
 
 ## Plugins
 

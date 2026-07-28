@@ -90,6 +90,13 @@ CONFIG
 catalog=$(JUNK_DRAWER_RUNTIME=codex "$root/plugins/junk-drawer/bin/junk-drawer")
 rg -q '\$orch' <<<"$catalog"
 
+# Reaching the catalog through the skill dir's `bin -> ../../bin` symlink must produce the
+# same marketplace listing as calling bin/ directly. It resolves its own location to decide
+# whether it is in a marketplace, and a logical pwd would report the skill dir and silently
+# degrade this to a one-entry list.
+via_skill=$(cd "$root/plugins/junk-drawer/skills/junk-drawer" && JUNK_DRAWER_RUNTIME=codex ./bin/junk-drawer)
+[ "$via_skill" = "$catalog" ]
+
 # Standalone-skill install contract (`npx skills add <repo>`).
 #
 # That installer copies ONLY plugins/<p>/skills/<s>/ into <project>/.claude/skills/<s>/,
