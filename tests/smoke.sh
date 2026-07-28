@@ -89,4 +89,51 @@ CONFIG
 
 catalog=$(JUNK_DRAWER_RUNTIME=codex "$root/plugins/junk-drawer/bin/junk-drawer")
 rg -q '\$orch' <<<"$catalog"
+
+# Standalone-skill install contract (`npx skills add <repo>`).
+#
+# That installer copies ONLY plugins/<p>/skills/<s>/ into <project>/.claude/skills/<s>/,
+# dereferencing symlinks into real files and preserving exec bits. So every path a
+# SKILL.md tells the agent to run or read must resolve *inside its own skill dir* --
+# a `../../` escape works in the plugin layout but breaks once installed.
+# `cp -RL` reproduces those copy semantics without needing the network.
+installed="$tmp/installed"
+mkdir -p "$installed"
+for skill in "$root"/plugins/*/skills/*/; do
+    cp -RL "$skill" "$installed/$(basename "$skill")"
+done
+
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 9 ]
+
+for skill_md in "$installed"/*/SKILL.md; do
+    skill_dir=$(dirname "$skill_md")
+    # No SKILL.md may reach outside its own directory. Checked with an explicit if,
+    # not `! rg -q`: set -e ignores a failure whose status is inverted with `!`.
+    if rg -q '\.\./' "$skill_md"; then
+        echo "escapes skill dir with ../ : $skill_md"; exit 1
+    fi
+    # Every skill-local path it does reference must exist after the copy. No look-around
+    # here -- ripgrep's default engine rejects it and would exit 2, silently checking
+    # nothing. A `../../bin/x` would also match this pattern, but the ../ check above
+    # already exited by then. rg exit 1 (no matches at all) is a failure too: every
+    # SKILL.md in this marketplace references at least one skill-local path.
+    refs=$(rg -o -e '\./(bin/[a-z-]+|commands/[a-z-]+\.md|roles/|[a-z-]+\.sh)' "$skill_md" | sort -u) \
+        || { echo "no skill-local refs extracted from $skill_md"; exit 1; }
+    for ref in $refs; do
+        [ -e "$skill_dir/$ref" ] || { echo "unresolved $ref in $skill_md"; exit 1; }
+    done
+done
+
+# Helpers must actually execute from the installed layout, not merely exist.
+[ -x "$installed/molt/bin/molt-path" ]
+home="$tmp/home"
+mkdir -p "$home/.claude"
+(cd "$installed/tldr" && [ "$(HOME=$home CLAUDE_CONFIG_DIR=$home/.claude ./bin/tldr-flag status)" = "TL;DR mode: OFF" ])
+(cd "$installed/orch" && [ "$(wc -l < ./commands/orch.md)" -gt 100 ] && [ -e ./roles/implementer.md ])
+
+# The catalog degrades to listing sibling skills instead of claiming the marketplace is empty.
+standalone_catalog=$(cd "$installed/junk-drawer" && HOME=$home ./bin/junk-drawer)
+rg -q 'standalone skills' <<<"$standalone_catalog"
+rg -q '\$orch' <<<"$standalone_catalog"
+
 echo "smoke tests passed"
