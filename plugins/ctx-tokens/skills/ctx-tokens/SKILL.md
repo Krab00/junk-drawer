@@ -8,10 +8,10 @@ description: Check current context-window usage for this Codex, Kimi Code, or Cl
 Remember the active project directory, then run the bundled command from this skill directory and
 pass that directory explicitly. Use the flag for your host (`--codex` or `--kimi`):
 
-- `../../bin/ctx-tokens --kimi --cwd <project-dir> -h` -> human form with used and remaining context.
-- `../../bin/ctx-tokens --kimi --cwd <project-dir>` -> current input-context tokens as a bare number.
-- `../../bin/ctx-tokens --codex --cwd <project-dir> -h` / `--codex --cwd <project-dir>` -> same for Codex.
-- `../../bin/ctx-tokens --codex <file.jsonl>` / `--kimi <file.jsonl>` -> inspect a specific transcript.
+- `./bin/ctx-tokens --kimi --cwd <project-dir> -h` -> human form with used and remaining context.
+- `./bin/ctx-tokens --kimi --cwd <project-dir>` -> current input-context tokens as a bare number.
+- `./bin/ctx-tokens --codex --cwd <project-dir> -h` / `--codex --cwd <project-dir>` -> same for Codex.
+- `./bin/ctx-tokens --codex <file.jsonl>` / `--kimi <file.jsonl>` -> inspect a specific transcript.
 
 For Claude Code, preserve the original forms:
 

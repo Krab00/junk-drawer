@@ -9,7 +9,7 @@ Interpret the user's requested operation:
 
 - A positive integer means summarize the latest substantive user message in at most that many sentences.
 - No argument means use three sentences.
-- `on`, `off`, or `status` controls persistent terse mode. Set `JUNK_DRAWER_RUNTIME` to your host (`codex` or `kimi`; unset on Claude Code) and run `JUNK_DRAWER_RUNTIME=<host> ../../bin/tldr-flag <operation>` from this skill directory, then return its output.
+- `on`, `off`, or `status` controls persistent terse mode. Set `JUNK_DRAWER_RUNTIME` to your host (`codex` or `kimi`; unset on Claude Code) and run `JUNK_DRAWER_RUNTIME=<host> ./bin/tldr-flag <operation>` from this skill directory, then return its output.
 
 For a summary, skip messages that only invoke this skill and skip earlier summaries. Always summarize the original substantive user message, not a previous TLDR. Return only the summary. If there is no substantive message, say so in one line.
 

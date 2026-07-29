@@ -8,7 +8,7 @@ description: Configure, disable, or inspect a context-window threshold enforced 
 Run the bundled controller from this skill directory (set the runtime to your host: `codex` or `kimi`; omit on Claude Code):
 
 ```bash
-JUNK_DRAWER_RUNTIME=<host> ../../bin/ctx-limit <arguments>
+JUNK_DRAWER_RUNTIME=<host> ./bin/ctx-limit <arguments>
 ```
 
 Supported forms are `status`, `on`, `off`, `<tokens>` with optional `k` or `m`, `action <block|warn|cmd>`, and `cmd <shell command>`. Return the controller output verbatim.

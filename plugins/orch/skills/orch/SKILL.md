@@ -9,13 +9,13 @@ You are the root orchestrator. You must delegate implementation and verification
 
 ## Load the specification
 
-Read `../../commands/orch.md` from this skill directory completely before acting. Treat it as the canonical workflow, with these host mappings:
+Read `./commands/orch.md` from this skill directory completely before acting. Treat it as the canonical workflow, with these host mappings:
 
 - An explicit skill mention replaces `/orch` (`$orch` on Codex, `/skill:orch` on Kimi Code).
 - `.orch/config.md` is primary; `.claude/orch.config.md` is a read-only compatibility fallback.
-- Resolve helpers as `../../bin/orch-state`, `../../bin/orch-worktree`, and `../../bin/orch-sync`.
+- Resolve helpers as `./bin/orch-state`, `./bin/orch-worktree`, and `./bin/orch-sync`.
 - Replace Claude's `Task` operation with your host's subagent mechanism (see below).
-- Read the matching role file under `../../agents/` and include its full task-relevant instructions in each agent prompt.
+- Read the matching role file under `./roles/` and include its full task-relevant instructions in each agent prompt.
 
 ## Codex delegation rules
 
