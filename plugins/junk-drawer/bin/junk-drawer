@@ -2,7 +2,11 @@
 # Build a live catalog from sibling manifests in a checkout or installed marketplace cache.
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# -P resolves the physical dir. Skill dirs reach this script through a `bin -> ../../bin`
+# symlink, and a logical pwd would report the skill dir, making the marketplace walk below
+# land on plugins/<p>/skills instead of plugins/. A standalone skill install has a real
+# bin/ dir, so -P is a no-op there and the sibling-skill fallback still triggers.
+here="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 runtime="${JUNK_DRAWER_RUNTIME:-claude}"
 manifests=()
 
@@ -42,6 +46,32 @@ else
     for manifest in "$plugins_root"/*/"$manifest_dir"/plugin.json; do
         [ -e "$manifest" ] && manifests+=("$manifest")
     done
+fi
+
+# Standalone skill install (npx skills add): there is no marketplace to walk — no sibling
+# plugin manifests exist, only sibling skill dirs. Catalog those instead of claiming emptiness.
+if [ ${#manifests[@]} -eq 0 ]; then
+    skills_root="$(cd "$here/../.." && pwd)"
+    standalone=()
+    for skill in "$skills_root"/*/SKILL.md; do
+        [ -e "$skill" ] && standalone+=("$skill")
+    done
+    if [ ${#standalone[@]} -gt 0 ]; then
+        printf '%s\n%s\n\n' "$heading" "installed as standalone skills in $skills_root"
+        for skill in "${standalone[@]}"; do
+            skill_name="$(awk -F': *' '$1 == "name" { print $2; exit }' "$skill")"
+            skill_desc="$(awk -F': *' '$1 == "description" { sub(/^description: */, ""); print; exit }' "$skill")"
+            skill_name="${skill_name:-$(basename "$(dirname "$skill")")}"
+            if [ "$runtime" = kimi ]; then
+                printf '/skill:%s\n    %s\n' "$skill_name" "$skill_desc"
+            else
+                printf '$%s\n    %s\n' "$skill_name" "$skill_desc"
+            fi
+        done
+        printf '\nNo plugin manifests here, so versions and slash commands are unavailable.\n'
+        printf 'Install the full marketplace for those: %s\n' "$install"
+        exit 0
+    fi
 fi
 
 printf '%s\n%s\n\n' "$heading" "$install"

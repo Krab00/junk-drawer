@@ -38,5 +38,15 @@ Do not install or invoke `statusline.sh` for Codex. Keep that script for Claude 
 
 ## Claude Code
 
-Use the bundled `setup-statusline.sh` / `statusline.sh` as before (git branch + worktree + colored
-context/effort segments). That flow is unchanged by this multi-host skill.
+Use the bundled `./setup-statusline.sh` / `./statusline.sh` from this skill directory (git branch +
+worktree + colored context/effort segments). That flow is unchanged by this multi-host skill.
+
+Run the installer from this skill directory:
+
+```bash
+bash ./setup-statusline.sh
+```
+
+It is idempotent. It needs `jq`, copies the script to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junk-drawer-statusline.sh`,
+backs up `settings.json` to `settings.json.bak`, and points `statusLine` at that absolute path,
+because `${CLAUDE_PLUGIN_ROOT}` does not resolve inside a user `settings.json`.

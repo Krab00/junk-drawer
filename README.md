@@ -65,6 +65,39 @@ Invoke Codex workflows by mentioning their skill, for example `$orch-init`, `$or
 
 After installing or updating: `/plugin marketplace update junk-drawer`, then `/reload-plugins`.
 
+## Install the skills only (any agent)
+
+The workflows are also installable as plain agent skills with
+[`npx skills`](https://github.com/vercel-labs/skills), which works across ~70 agents rather than the
+three hosts above. This installs the skills **without** the plugins — no slash commands and no
+lifecycle hooks, so `tldr`, `ctx-limit`, and `molt` lose their automatic hook behavior and you drive
+them explicitly instead.
+
+```bash
+npx skills add Krab00/junk-drawer                     # all nine skills
+npx skills add Krab00/junk-drawer --skill orch        # just one
+npx skills add Krab00/junk-drawer --list              # preview, install nothing
+```
+
+Skills land in the target agent's project directory, e.g. `.claude/skills/<name>/` for Claude Code
+or `.agents/skills/<name>/` for Codex and Cursor. Add `-g` for a global install.
+
+Each skill directory is self-contained: `bin/` and, for `orch`, `commands/` and `roles/` are
+symlinks into the plugin root here, and the installer dereferences them into real files with
+executable bits intact. That is why every SKILL.md addresses its helpers as `./bin/<script>` and
+never `../../bin/<script>` — a path that escapes the skill directory works in the plugin layout but
+breaks once the skill is copied out on its own. `tests/smoke.sh` enforces this.
+
+Two known limits of the skills-only install:
+
+- `$junk-drawer` catalogs sibling skills instead of plugins, since no plugin manifests are present,
+  so it cannot report versions or slash commands.
+- The symlinks are stored in git as symlinks. A Windows clone without `core.symlinks=true` writes
+  them as plain text files, which breaks this install path. It also breaks skill invocation for a
+  plugin install on such a clone, since the skills now reach helpers through the symlink rather
+  than through `../../bin/`. Slash commands and hooks are unaffected either way, because they
+  resolve `${CLAUDE_PLUGIN_ROOT}/bin` directly.
+
 ## Plugins
 
 | Plugin | What it does | Codex / Kimi entry point |
@@ -90,6 +123,7 @@ plugins/<plugin>/
   .kimi-plugin/plugin.json            # Kimi Code manifest (skills + hooks)
   commands/<name>.md                  # Claude Code slash commands
   skills/<name>/SKILL.md              # Codex, Kimi, and shared workflows
+  skills/<name>/bin -> ../../bin      # symlink, so a skills-only install is self-contained
   bin/                                # shared helper scripts
   hooks/hooks.json                    # optional shared lifecycle hooks
 ```
