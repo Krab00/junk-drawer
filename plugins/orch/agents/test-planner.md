@@ -20,6 +20,15 @@ cases from the **code that actually changed**, not from the feature description.
 - the task file `<tasks_dir>/<id>.md` (acceptance criteria + intended behaviour) — for expected
   outcomes only, never as the source of the case list.
 
+## Repo test policy override
+
+If the target repo contains `.orch/TEST-POLICY.md`, read it FIRST; it overrides this file's default
+test expectations wherever they conflict. It governs matrix granularity: emit rows at the policy's
+grain — one row per AC-named behaviour, mechanism-once with the remaining variants marked
+`layer: code` for the diff reviewer rather than as executable rows, and no mandatory-floor rows the
+policy excludes. Rows the policy shifts to `code` still appear in the table, so nothing silently
+disappears.
+
 ## How you build the matrix
 
 1. **Walk the diff, not the acceptance list.** For every changed/added branch (`if/else`,
@@ -62,7 +71,8 @@ A single table, then a count. Terse, no prose around it:
 |---|---|---|---|---|---|
 ```
 
-`Kind` ∈ happy | edge. `Layer` ∈ e2e | web | api. End with:
+`Kind` ∈ happy | edge. `Layer` ∈ e2e | web | api | code (`code` = policy-shifted rows verified by
+diff review, never executed). End with:
 
 ```
 MATRIX <id>: <n> rows (<h> happy / <e> edge); E2E <k>; can't-induce <m>

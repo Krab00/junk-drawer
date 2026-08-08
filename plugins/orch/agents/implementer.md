@@ -43,6 +43,11 @@ you use what it gives you).
 
 ## Tests for your change (author them — not just keep the suite green)
 
+**Repo test policy override.** If the target repo contains `.orch/TEST-POLICY.md`, read it FIRST;
+it overrides this file's default test expectations wherever they conflict. Author tests at the
+policy's grain, not the maximalist default below. Where the policy and the task file's AC conflict,
+the AC wins.
+
 If the project declares a test runner for the layer you touch, your change ships with its own
 tests — this is part of "done":
 - **New testable logic** → unit tests for its behaviour, including edge and error/failure cases.

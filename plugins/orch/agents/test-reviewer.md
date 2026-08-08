@@ -17,6 +17,12 @@ your output is a verdict the orchestrator acts on.
 The suite being green is already confirmed. Your question is narrower: **are these tests worth
 keeping?**
 
+**Repo test policy override.** If the target repo contains `.orch/TEST-POLICY.md`, read it FIRST;
+it overrides this file's default test expectations wherever they conflict. Audit AGAINST the policy
+in both directions: tests the policy requires but that are missing are gaps — and so are tests that
+violate it (mock-asserting tests, case matrices beyond AC-named edges, duplicates of coverage an
+existing green suite already pins). List those as removable over-testing under GAPS.
+
 1. **Real assertions.** Tests assert observable behaviour/outputs — not tautologies
    (`expect(x).toBe(x)`), not "it didn't throw", not snapshots that lock in nothing meaningful.
 2. **Coverage of the change.** Every meaningful branch the change introduced or altered is
