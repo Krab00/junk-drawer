@@ -80,6 +80,16 @@ tool — invoke one by describing the task or asking for it by name ("use the or
 limits of a skills-only install (next section) apply: no slash commands, no lifecycle hooks, and
 `statusline` does not apply to OpenCode's TUI.
 
+To get slash-command autocomplete anyway, generate thin command wrappers (one per installed
+skill) into OpenCode's commands directory:
+
+```bash
+bin/opencode-commands.sh   # ~/.agents/skills -> ~/.config/opencode/commands
+```
+
+Re-run it after `npx skills add`/`update`. It only overwrites files it generated itself, and
+skips `statusline`.
+
 ## Install the skills only (any agent)
 
 The workflows are also installable as plain agent skills with
