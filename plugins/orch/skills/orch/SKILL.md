@@ -11,7 +11,7 @@ You are the root orchestrator. You must delegate implementation and verification
 
 Read `./commands/orch.md` from this skill directory completely before acting. Treat it as the canonical workflow, with these host mappings:
 
-- An explicit skill mention replaces `/orch` (`$orch` on Codex, `/skill:orch` on Kimi Code).
+- An explicit skill mention replaces `/orch` (`$orch` on Codex, `/skill:orch` on Kimi Code, "use the orch skill" on OpenCode).
 - `.orch/config.md` is primary; `.claude/orch.config.md` is a read-only compatibility fallback.
 - Resolve helpers as `./bin/orch-state`, `./bin/orch-worktree`, and `./bin/orch-sync`.
 - Replace Claude's `Task` operation with your host's subagent mechanism (see below).
@@ -32,5 +32,13 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 - `/loop /orch all` has no native equivalent: use `CronCreate` in the same session to re-trigger the loop, or resume manually with the spec's `BACKLOG:` resume line.
 - Browser-based UI verification (`ui-reviewer`) needs a browser tool (e.g. Playwright MCP); if none is available, state the gap and gate on the remaining checks — never fabricate screenshots.
 - Git mutations (commit, push, `gh pr create`) require explicit user confirmation on this host: ask ONCE per run for a blanket approval covering task branches and draft PRs, then proceed. Never touch the base branch regardless.
+
+## OpenCode delegation rules
+
+- Subagents = the `task` tool. orch's roles are not registered as OpenCode agents: read the matching `./roles/<role>.md` and include its full task-relevant instructions in each task prompt (spawn the default/general subagent unless the user configured dedicated ones).
+- Keep the root as the fan-out owner in every mode, deep included — do not assume a subagent can spawn grandchildren.
+- Parallelize by issuing multiple `task` calls in one message, only when the implementers' expected files do not overlap; one `verify-coordinator` task per implemented task, independent from implementation.
+- Browser-based UI verification (`ui-reviewer`) needs a browser tool (e.g. Playwright MCP); if none is available, state the gap and gate on the remaining checks — never fabricate screenshots.
+- `/loop /orch all` has no native equivalent: resume manually with the spec's `BACKLOG:` resume line.
 
 Preserve the specification's immutable-criteria ladder, capability-gated checks, maximum fix rounds, draft-only PR rule, cleanup, lessons, and final `BACKLOG:` state line. Never merge a PR or mark it ready.

@@ -1,7 +1,7 @@
 # junk-drawer
 
 A multi-host marketplace of independently installable plugins for **Claude Code, Codex, and Kimi
-Code CLI**. It contains small context utilities, durable handoffs, a context-continuation workflow
+Code CLI** — plus a skills-only install path for **OpenCode** and other agents. It contains small context utilities, durable handoffs, a context-continuation workflow
 (*molt*), and a project-agnostic task orchestrator (*orch*) that delegates implementation and
 verification to subagents and gates acceptance criteria on real tool evidence.
 
@@ -64,6 +64,21 @@ Invoke Codex workflows by mentioning their skill, for example `$orch-init`, `$or
 ```
 
 After installing or updating: `/plugin marketplace update junk-drawer`, then `/reload-plugins`.
+
+## Install in OpenCode
+
+OpenCode has no plugin layer for this marketplace, but it discovers Agent Skills natively. Install
+them into a project with:
+
+```bash
+npx skills add Krab00/junk-drawer -a opencode
+```
+
+Skills land in `.agents/skills/<name>/`, one of the directories OpenCode scans (alongside
+`.opencode/skills/`); add `-g` for a per-user install. The agent sees them via its native `skill`
+tool — invoke one by describing the task or asking for it by name ("use the orch skill"). The
+limits of a skills-only install (next section) apply: no slash commands, no lifecycle hooks, and
+`statusline` does not apply to OpenCode's TUI.
 
 ## Install the skills only (any agent)
 
