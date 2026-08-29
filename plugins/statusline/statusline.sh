@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code status line — colored segments separated by a dim │
-#   ctx | branch | ⑂worktree | model | effort
+#   ctx | branch | ⑂worktree | model | effort | 5h/wk rate limits
 # ctx shows only if the host provides .context_window; the rest render when available. Needs jq.
 
 input=$(cat)
@@ -89,6 +89,28 @@ fi
 effort_segment=""
 [ -n "$effort" ] && effort_segment="effort:${effort}"
 
+# ── Rate limits (Anthropic 5h + weekly windows) ───────────────────────────────
+rl5=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+rl7=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+
+# Truecolor (bypasses terminal palette remap): green <=50, orange 51-80, red >80
+pct_color() {
+    local p; p=$(printf '%.0f' "$1")
+    if   [ "$p" -gt 80 ]; then printf '\033[1;38;2;239;68;68m'
+    elif [ "$p" -gt 50 ]; then printf '\033[38;2;249;115;22m'
+    else                       printf '\033[38;2;34;197;94m'
+    fi
+}
+
+limits_segment=""
+if [ -n "$rl5" ] || [ -n "$rl7" ]; then
+    [ -n "$rl5" ] && limits_segment="${C_SEP}5h:${RST}$(pct_color "$rl5")$(printf '%.0f' "$rl5")%${RST}"
+    if [ -n "$rl7" ]; then
+        [ -n "$limits_segment" ] && limits_segment="${limits_segment} "
+        limits_segment="${limits_segment}${C_SEP}week:${RST}$(pct_color "$rl7")$(printf '%.0f' "$rl7")%${RST}"
+    fi
+fi
+
 # ── Assemble ──────────────────────────────────────────────────────────────────
 parts=()
 [ -n "$ctx_segment" ]      && parts+=("${C_CTX}${ctx_segment}${RST}")
@@ -96,6 +118,7 @@ parts=()
 [ -n "$worktree_segment" ] && parts+=("${C_WT}${worktree_segment}${RST}")
 [ -n "$model"       ]      && parts+=("${C_MODEL}${model}${RST}")
 [ -n "$effort_segment" ]   && parts+=("${C_EFFORT}${effort_segment}${RST}")
+[ -n "$limits_segment" ]   && parts+=("${limits_segment}")
 
 sep="${C_SEP} │ ${RST}"
 out=""
