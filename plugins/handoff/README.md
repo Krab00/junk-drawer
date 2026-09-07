@@ -8,6 +8,10 @@ Save the state of a session to disk and pick it up in a fresh one — by id, not
 - **`/handoff`** — writes a handoff to `~/.claude/handoffs/<date>_<id>.md`, prints a short session id and copies it to your clipboard.
 - **`/handon <id>`** — in a new session, loads that handoff as context. No id → loads the newest.
 
+A skills-only install (`npx skills add Krab00/junk-drawer`) has no slash commands, so the resume half
+ships as its own skill: `handon` takes the same optional id and delegates to `handoff`. On Claude Code
+that makes it invocable as `/handon <id>` even without the plugin.
+
 Files live in `~/.claude/handoffs/` (outside the plugin cache, so they survive updates). The date + id in each filename make old handoffs greppable.
 
 Session id comes from `$CLAUDE_CODE_SESSION_ID`.
