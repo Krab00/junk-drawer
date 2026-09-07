@@ -1,6 +1,6 @@
 {
   "name": "handoff",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Save task state to disk and resume it in a fresh session by id.",
   "author": { "name": "Krab00" },
   "homepage": "https://github.com/Krab00/junk-drawer",
