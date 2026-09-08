@@ -99,7 +99,7 @@ lifecycle hooks, so `tldr`, `ctx-limit`, and `molt` lose their automatic hook be
 them explicitly instead.
 
 ```bash
-npx skills add Krab00/junk-drawer                     # all nine skills
+npx skills add Krab00/junk-drawer                     # all ten skills
 npx skills add Krab00/junk-drawer --skill orch        # just one
 npx skills add Krab00/junk-drawer --list              # preview, install nothing
 ```
@@ -107,21 +107,37 @@ npx skills add Krab00/junk-drawer --list              # preview, install nothing
 Skills land in the target agent's project directory, e.g. `.claude/skills/<name>/` for Claude Code
 or `.agents/skills/<name>/` for Codex and Cursor. Add `-g` for a global install.
 
-Each skill directory is self-contained: `bin/` and, for `orch`, `commands/` and `roles/` are
-symlinks into the plugin root here, and the installer dereferences them into real files with
-executable bits intact. That is why every SKILL.md addresses its helpers as `./bin/<script>` and
-never `../../bin/<script>` — a path that escapes the skill directory works in the plugin layout but
-breaks once the skill is copied out on its own. `tests/smoke.sh` enforces this.
+Each skill directory owns its files. The real helpers live inside it and the plugin root reaches
+them through relative symlinks: `plugins/<p>/bin -> skills/<p>/bin`, statusline's `statusline.sh`
+and `setup-statusline.sh`, and for `orch` its `bin`, `commands`, and `agents -> skills/orch/roles`.
+Plugin manifests, hooks, and slash commands therefore keep resolving `${CLAUDE_PLUGIN_ROOT}/bin/...`
+unchanged, `npx skills add` dereferences the links into real files with executable bits intact, and
+every SKILL.md addresses its helpers as `./bin/<script>`, never `../../bin/<script>`, because a path
+that escapes the skill directory breaks once the skill is copied out on its own. The direction also
+matters for updates: editing a helper now changes a file inside the skill folder, so the folder's
+git tree hash moves and `npx skills update` reinstalls. The reverse layout hid every such change,
+because a git tree entry hashes a symlink's target text rather than the target's content.
+`tests/smoke.sh` enforces the layout.
 
-Two known limits of the skills-only install:
+The `handoff` plugin's `/handon` half also ships as its own skill (`handon`), so a skills-only
+install can resume a handoff by id: `/handon <id>` in Claude Code, and in OpenCode through the
+wrapper `bin/opencode-commands.sh` generates.
+
+Known limits of the skills-only install:
 
 - `$junk-drawer` catalogs sibling skills instead of plugins, since no plugin manifests are present,
   so it cannot report versions or slash commands.
+- `orch-init` borrows `orch`'s helpers through a sibling symlink, so its own tree hash does not move
+  when those helpers change. Once `npx skills update` has refreshed `orch`, refresh it explicitly
+  with `npx skills add Krab00/junk-drawer --skill orch-init`; `add` always reinstalls.
+- Codex's plugin installer drops symlinks. Under the previous layout that left Codex plugin installs
+  with no `bin/` inside the skills at all; now the skills carry real files and work. `orch-init`'s
+  sibling symlinks are still dropped there, which is why its SKILL.md says to fall back to the
+  `orch` skill's copies.
 - The symlinks are stored in git as symlinks. A Windows clone without `core.symlinks=true` writes
-  them as plain text files, which breaks this install path. It also breaks skill invocation for a
-  plugin install on such a clone, since the skills now reach helpers through the symlink rather
-  than through `../../bin/`. Slash commands and hooks are unaffected either way, because they
-  resolve `${CLAUDE_PLUGIN_ROOT}/bin` directly.
+  them as plain text files, which breaks the plugin-root paths, so hooks and slash commands fail for
+  a plugin install made from such a clone. The skills themselves are real files, so a skills-only
+  install is unaffected.
 
 ## Plugins
 
@@ -148,10 +164,14 @@ plugins/<plugin>/
   .kimi-plugin/plugin.json            # Kimi Code manifest (skills + hooks)
   commands/<name>.md                  # Claude Code slash commands
   skills/<name>/SKILL.md              # Codex, Kimi, and shared workflows
-  skills/<name>/bin -> ../../bin      # symlink, so a skills-only install is self-contained
-  bin/                                # shared helper scripts
+  skills/<name>/bin/                  # real helper scripts, hashed with the skill folder
+  bin -> skills/<name>/bin            # symlink, so manifests and hooks keep one stable path
   hooks/hooks.json                    # optional shared lifecycle hooks
 ```
+
+`orch` goes one step further: its `commands/` and `agents/` are symlinks too (`agents -> skills/orch/roles`),
+because the `orch` skill reads the command spec and the role files as its canonical workflow.
+
 
 Codex exposes `${PLUGIN_ROOT}` and compatibility aliases including `${CLAUDE_PLUGIN_ROOT}`; Kimi
 plugin hooks get `${KIMI_PLUGIN_ROOT}` and `${KIMI_CODE_HOME}`. Scripts that persist state separate

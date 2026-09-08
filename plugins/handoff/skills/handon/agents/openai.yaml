@@ -1,0 +1,4 @@
+interface:
+  display_name: "Handon"
+  short_description: "Resume a saved handoff by short id, or the newest one"
+  default_prompt: "Use $handon to resume the newest handoff."
