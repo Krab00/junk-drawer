@@ -2,10 +2,11 @@
 # Build a live catalog from sibling manifests in a checkout or installed marketplace cache.
 set -euo pipefail
 
-# -P resolves the physical dir. Skill dirs reach this script through a `bin -> ../../bin`
-# symlink, and a logical pwd would report the skill dir, making the marketplace walk below
-# land on plugins/<p>/skills instead of plugins/. A standalone skill install has a real
-# bin/ dir, so -P is a no-op there and the sibling-skill fallback still triggers.
+# -P resolves the physical dir, which is what the marketplace walk below needs. The real
+# script lives inside its skill dir (plugins/junk-drawer/skills/junk-drawer/bin) and the
+# plugin root reaches it through `bin -> skills/junk-drawer/bin`, so a logical pwd would
+# report the plugin root and make the walk depth wrong. A standalone skill install has a
+# real bin/ dir, so -P is a no-op there and the sibling-skill fallback still triggers.
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 runtime="${JUNK_DRAWER_RUNTIME:-claude}"
 manifests=()
@@ -42,9 +43,18 @@ if [ "${here#"$cache_mkt"/}" != "$here" ]; then
         fi
     done
 else
-    plugins_root="$(cd "$here/../.." && pwd)"
-    for manifest in "$plugins_root"/*/"$manifest_dir"/plugin.json; do
-        [ -e "$manifest" ] && manifests+=("$manifest")
+    # Two possible depths from the physical bin dir to the plugins root. Two levels up covers
+    # a host that dereferenced the plugin-root symlink into a real bin/ (and a standalone skill
+    # install, where two up is the skills root: it holds no manifests, so the sibling-skill
+    # fallback below takes over). Four levels up covers the canonical layout, where the real
+    # bin/ sits at plugins/<p>/skills/<p>/bin. Use whichever actually holds manifests.
+    for candidate in "$here/../.." "$here/../../../.."; do
+        [ -d "$candidate" ] || continue
+        plugins_root="$(cd "$candidate" && pwd)"
+        for manifest in "$plugins_root"/*/"$manifest_dir"/plugin.json; do
+            [ -e "$manifest" ] && manifests+=("$manifest")
+        done
+        if [ ${#manifests[@]} -gt 0 ]; then break; fi
     done
 fi
 

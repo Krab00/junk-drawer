@@ -12,6 +12,51 @@ for file in $(rg --files -uu "$root/.agents" "$root/plugins" | rg '\.json$'); do
     jq empty "$file"
 done
 
+# A dangling link would make hooks and slash commands fail at runtime, and it hides from every
+# check below that resolves a path (`test -e` on a broken link is false).
+dangling=$(find "$root/plugins" -type l ! -exec test -e {} \; -print)
+[ -z "$dangling" ] || { echo "dangling symlink(s):"; printf '%s\n' "$dangling"; exit 1; }
+
+# Targets stay relative so a clone works from any path, in a plugin cache as well as a checkout.
+while IFS= read -r link; do
+    case "$(readlink "$link")" in
+        /*) echo "absolute symlink target: $link -> $(readlink "$link")"; exit 1 ;;
+    esac
+done < <(find "$root/plugins" -type l)
+
+# Structural invariant: every helper that a manifest, hook, or slash command can reach through
+# the plugin root lives physically inside a skill directory, and the plugin root only holds a
+# relative symlink to it. Equivalently: no regular file referenced from outside a skill dir
+# lives outside a skill dir.
+#
+# Why this direction and not the reverse: `npx skills update` reinstalls a skill only when the
+# git tree SHA of that skill's folder changed. A tree entry for a symlink hashes the target
+# *string*, not the target's content, so with the old layout (skills/<s>/bin -> ../../bin) an
+# edit to plugins/<p>/bin/<script> left every skill folder's tree SHA identical and installed
+# skills silently went stale. Keeping the real files inside the skill dir puts each edit back
+# inside the subtree that gets hashed.
+for plugin in "$root"/plugins/*/; do
+    plugin_phys=$(cd -P "$plugin" && pwd)
+    for entry in "$plugin"bin "$plugin"agents "$plugin"commands "$plugin"*.sh; do
+        [ -e "$entry" ] || continue
+        # A plugin-root commands/ that no skill reads is Claude-only slash-command surface, not
+        # a helper a SKILL.md runs, so it may stay a real directory. orch is the exception: its
+        # skills read ./commands/*.md as their canonical specification, so it must move too.
+        case "$entry" in
+            */commands)
+                if ! rg -q -e '\./commands/' "$plugin"skills/*/SKILL.md; then continue; fi
+                ;;
+        esac
+        [ -L "$entry" ] || { echo "plugin-root helper is not a symlink into skills/: $entry"; exit 1; }
+        # macOS has no GNU realpath; python3 resolves the whole path physically.
+        phys=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$entry")
+        case "$phys" in
+            "$plugin_phys"/skills/*) ;;
+            *) echo "plugin-root helper resolves outside skills/: $entry -> $phys"; exit 1 ;;
+        esac
+    done
+done
+
 cat > "$tmp/codex.jsonl" <<'JSONL'
 {"type":"session_meta","payload":{"cwd":"/tmp/example"}}
 {"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1200,"output_tokens":30},"model_context_window":10000}}}
@@ -90,10 +135,11 @@ CONFIG
 catalog=$(JUNK_DRAWER_RUNTIME=codex "$root/plugins/junk-drawer/bin/junk-drawer")
 rg -q '\$orch' <<<"$catalog"
 
-# Reaching the catalog through the skill dir's `bin -> ../../bin` symlink must produce the
-# same marketplace listing as calling bin/ directly. It resolves its own location to decide
-# whether it is in a marketplace, and a logical pwd would report the skill dir and silently
-# degrade this to a one-entry list.
+# The real script sits in the skill dir and the plugin root reaches it through
+# `bin -> skills/junk-drawer/bin`, so both entry points must produce the same marketplace
+# listing. The script resolves its own physical location to decide whether it is in a
+# marketplace and how far up the plugins root is; getting that wrong silently degrades this
+# to the sibling-skill fallback list.
 via_skill=$(cd "$root/plugins/junk-drawer/skills/junk-drawer" && JUNK_DRAWER_RUNTIME=codex ./bin/junk-drawer)
 [ "$via_skill" = "$catalog" ]
 
@@ -110,7 +156,7 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 9 ]
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 10 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
@@ -119,6 +165,10 @@ for skill_md in "$installed"/*/SKILL.md; do
     if rg -q '\.\./' "$skill_md"; then
         echo "escapes skill dir with ../ : $skill_md"; exit 1
     fi
+    # `handon` ships no helpers and references no skill-local path at all -- it only delegates
+    # to the `handoff` skill -- so the extraction below would correctly find nothing and the
+    # fail-on-zero-refs rule does not apply to it. Its own contract is checked further down.
+    case "$(basename "$skill_dir")" in handon) continue ;; esac
     # Every skill-local path it does reference must exist after the copy. No look-around
     # here -- ripgrep's default engine rejects it and would exit 2, silently checking
     # nothing. A `../../bin/x` would also match this pattern, but the ../ check above
@@ -137,6 +187,24 @@ home="$tmp/home"
 mkdir -p "$home/.claude"
 (cd "$installed/tldr" && [ "$(HOME=$home CLAUDE_CONFIG_DIR=$home/.claude ./bin/tldr-flag status)" = "TL;DR mode: OFF" ])
 (cd "$installed/orch" && [ "$(wc -l < ./commands/orch.md)" -gt 100 ] && [ -e ./roles/implementer.md ])
+
+# orch owns the real bin/ and commands/ (both orch.md and init.md); orch-init reaches them
+# through a sibling symlink, which the install dereferences into independent real copies.
+cmp -s "$installed/orch-init/bin/orch-state" "$installed/orch/bin/orch-state" ||
+    { echo "orch-init/bin/orch-state differs from orch/bin/orch-state"; exit 1; }
+[ -e "$installed/orch/commands/init.md" ] ||
+    { echo "orch skill is missing commands/init.md"; exit 1; }
+
+# `handon` gives skills-only installs the resume half of the handoff plugin. It must stay a
+# pure delegator: SKILL.md plus its Codex metadata, no helpers and no symlinks of its own.
+[ -f "$installed/handon/SKILL.md" ] || { echo "handon: no SKILL.md"; exit 1; }
+[ -f "$installed/handon/agents/openai.yaml" ] || { echo "handon: no agents/openai.yaml"; exit 1; }
+handon_files=$(find "$installed/handon" -mindepth 1 ! -type d | wc -l | tr -d ' ')
+[ "$handon_files" = 2 ] || { echo "handon ships $handon_files files, expected 2"; exit 1; }
+[ -z "$(find "$root/plugins/handoff/skills/handon" -type l)" ] ||
+    { echo "handon must not contain symlinks"; exit 1; }
+rg -qF '`handoff` skill' "$installed/handon/SKILL.md" ||
+    { echo "handon/SKILL.md does not delegate to the handoff skill"; exit 1; }
 
 # The catalog degrades to listing sibling skills instead of claiming the marketplace is empty.
 standalone_catalog=$(cd "$installed/junk-drawer" && HOME=$home ./bin/junk-drawer)

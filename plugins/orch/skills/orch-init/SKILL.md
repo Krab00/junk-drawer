@@ -11,6 +11,8 @@ Read `./commands/init.md` from this skill directory as the canonical initializat
 - Use your host's tool names instead of Claude frontmatter `allowed-tools`.
 - Run helper scripts by paths relative to this skill: `./bin/orch-state`, `./bin/orch-worktree`, and `./bin/orch-sync`.
 
+Some plugin installers strip symlinks, so if `./bin` or `./commands` is missing from this skill directory, use the same files from the sibling `orch` skill's `bin/` and `commands/` directories.
+
 Scan the repository before asking questions. Detect the default branch, package manager, applications, dev commands, ports, health routes, and test commands. Ask only for the real backend choice and confirmation of detected commands and ports.
 
 Never overwrite an existing `.orch/config.md` without showing the diff and receiving confirmation. If only legacy `.claude/orch.config.md` exists, offer to migrate it while preserving its content. Create the configured task directory and `_lessons.md`, then confirm `./bin/orch-state list` succeeds.
