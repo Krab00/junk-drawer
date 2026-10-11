@@ -54,7 +54,8 @@ const auto: View = (c) => {
   const window = S.percent > 0 ? (S.tokens * 100) / S.percent : 0
   const at = (window * S.threshold) / 100
   const next = S.checkEvery - (S.calls % S.checkEvery)
-  const cont = S.continueWith === 'fixed' && S.prompt ? `fixed · ${S.prompt}` : `last prompt · ${S.lastPrompt ?? '—'}`
+  // what continuation() in register.tsx will actually send
+  const cont = S.prompt ? `fixed · ${S.prompt}` : S.lastPrompt ? `last prompt · ${S.lastPrompt}` : 'last prompt (none typed yet)'
   const last = S.lastId ? byId(S.lastId) : undefined
   return {
     body: (
@@ -96,7 +97,7 @@ const auto: View = (c) => {
           </Row>
           <Row c={c} label="Continue with"><Text wrap="truncate">{line(cont)}</Text></Row>
           <Box paddingLeft={16} flexDirection="column">
-            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="enter saves · empty = last prompt" placeholder="the prompt sent after /handon"
+            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="fixed text sent after each /handon · empty = last typed prompt" placeholder="e.g. /orch:orch all"
               value={draft.prompt ?? S.prompt ?? ''} set={(v) => { draft.prompt = v }}
               onSubmit={(v) => { S.prompt = v.trim() || null; draft.prompt = null; say(c, S.prompt ? '✓ prompt set' : '✓ continues with the last prompt') }} />
             <Button key="last" plain dimColor hotkey="l" label="Use last" onPress={() => { S.prompt = null; draft.prompt = null; say(c, '✓ continues with the last prompt') }} />
