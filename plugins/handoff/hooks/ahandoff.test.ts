@@ -45,6 +45,7 @@ test('turn.complete past the threshold asks /handoff, then chains clear → hand
   on('session.usage', () => ({ value: usage(percent) }))
   on('tool.call', () => ({ result: 'ok', text: 'ok' }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('command.list', () => ({ value: [{ name: 'handoff:handoff', description: '', source: 'plugin' }, { name: 'handoff:handon', description: '', source: 'plugin' }] }))
   on('command.run', (_$, e) => { commands.push(`${e.command} ${e.args}`.trim()); return { text: e.command } })
   on('prompt.submit', (_$, e) => { prompts.push(e.text); return { text: e.text } })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
@@ -59,12 +60,12 @@ test('turn.complete past the threshold asks /handoff, then chains clear → hand
   // turn ends over the threshold with no handoff written → /handoff is queued
   await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
   await clock.advance(1)
-  expect(commands).toEqual(['handoff'])
+  expect(commands).toEqual(['handoff:handoff'])
 
   // the /handoff turn writes the file and ends → clear → handon <id> → continuation prompt
   await $.tool.call({ tool: 'Write', file_path: '/home/u/.claude/handoffs/2026-10-11T12-30_abcd1234.md', content: '# h' })
   await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
   await clock.advance(1)
-  expect(commands).toEqual(['handoff', 'clear', 'handon abcd1234'])
+  expect(commands).toEqual(['handoff:handoff', 'clear', 'handoff:handon abcd1234'])
   expect(prompts.at(-1)).toContain('/orch:orch all')
 })

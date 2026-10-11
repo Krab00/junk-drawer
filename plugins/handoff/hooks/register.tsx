@@ -7,6 +7,12 @@ const PANE = 'ahandoff'
 const STORE = 'ahandoff'
 const HANDOFF_ID = /_([0-9a-f]{8})\.md$/
 
+// ponytail: plugin commands are namespaced (`handoff:handon`) — find by suffix instead of guessing the prefix.
+async function findCommand($: EngineInterface, name: string) {
+  const names = (await $.command.list()).map(c => c.name)
+  return names.find(n => n === name || n.endsWith(`:${name}`)) ?? name
+}
+
 const view = atom({ plugin: 'handoff', key: 'ahandoff' } as const, {
   on: false, phase: 'idle', percent: 0, threshold: 85, checkEvery: 5,
   prompt: '', lastId: '', count: 0,
@@ -16,6 +22,7 @@ const view = atom({ plugin: 'handoff', key: 'ahandoff' } as const, {
 const S = {
   armed: false, phase: 'idle' as Ahandoff['phase'], threshold: 85, checkEvery: 5,
   prompt: '', lastPrompt: '', written: '', calls: 0, count: 0, lastId: '',
+  fresh: false, // right after /clear: usage() still reports the old window until the first response
 }
 
 function sync($: EngineInterface, percent?: number) {
@@ -76,7 +83,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     if (!S.armed || e.agentId) return next(e)
-    if (S.phase === 'idle' && ++S.calls % S.checkEvery === 0) {
+    if (S.phase === 'idle' && !S.fresh && ++S.calls % S.checkEvery === 0) {
       const { context } = await $.session.usage()
       const percent = context.percent ?? 0
       status($, percent)
@@ -85,10 +92,11 @@ export const register: Register = (on, options) => {
     if (S.phase !== 'handoff') return next(e)
     const isHandoffWrite = e.tool === 'Write' && /\/handoffs\/[^/]+\.md$/.test(String(e.file_path))
     const isHandoffPath = e.tool === 'Bash' && /handoff-path/.test(String(e.command))
+    const isHandoffSkill = e.tool === 'Skill' && /handoff/.test(String((e as { skill?: unknown }).skill))
     if (isHandoffWrite) S.written = String(e.file_path)
-    if (isHandoffWrite || isHandoffPath) return next(e)
+    if (isHandoffWrite || isHandoffPath || isHandoffSkill) return next(e)
     return {
-      deny: 'ahandoff: context limit reached. Stop the current work now. Run the /handoff skill: `${CLAUDE_PLUGIN_ROOT}/bin/handoff-path` (plugin handoff) then Write the handoff markdown to that path — include task ids, branch, worktree, round and what to do next. Then end the turn with one line. Every other tool is denied until then.',
+      deny: 'ahandoff: context limit reached. Stop the current work now. Call the Skill tool with skill "handoff:handoff" and follow it (run its bin/handoff-path, then Write the handoff markdown to the path it prints — include task ids, branch, worktree, round and what to do next). Then end the turn with one line. Every other tool is denied until the handoff is written.',
     }
   })
 
@@ -96,14 +104,16 @@ export const register: Register = (on, options) => {
     if (!S.armed || e.agentId) return next(e)
     const { context } = await $.session.usage()
     const percent = context.percent ?? 0
-    if (S.phase === 'handoff' && !S.written) {
+    if (S.fresh) {
+      // nothing: the first measurement of the new window decides (session.measure)
+    } else if (S.phase === 'handoff' && !S.written) {
       // model never wrote it mid-turn: ask /handoff as the next turn
-      void $.clock.sleep(0).then(() => $.command.run({ command: 'handoff' }))
+      void $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') }))
     } else if (S.phase === 'idle' && percent >= S.threshold) {
       S.phase = 'handoff'
-      void $.clock.sleep(0).then(() => $.command.run({ command: 'handoff' }))
+      void $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') }))
     } else if (S.phase === 'handoff' && S.written) {
-      S.lastId = HANDOFF_ID.exec(S.written)?.[1] ?? ''
+      S.lastId = HANDOFF_ID.exec(S.written)?.[1] ?? S.written.replace(/^.*\//, '').replace(/\.md$/, '')
       S.written = ''; S.calls = 0; S.count++
       S.phase = 'resume'
       await persist($)
@@ -111,8 +121,9 @@ export const register: Register = (on, options) => {
       const text = `Kontynuuj pracę wg handoffu ${id}, bez pytań: ${S.prompt || S.lastPrompt}`
       // ponytail: detached chain — $.command.run is refused inside a hook the turn waits on.
       void $.clock.sleep(0).then(async () => {
+        S.fresh = true
         await $.command.run({ command: 'clear' })
-        await $.command.run({ command: 'handon', args: id })
+        await $.command.run({ command: await findCommand($, 'handon'), args: id })
         S.phase = 'idle'
         await $.store.set(STORE, { on: S.armed, prompt: S.prompt })
         await sync($, 0)
@@ -127,6 +138,15 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     if (S.armed && e.changed.includes('context')) {
       const percent = e.context.percent ?? 0
+      if (S.fresh && e.context.percent !== undefined) {
+        S.fresh = false
+        if (percent >= S.threshold) {
+          // ponytail: a fresh window already over the limit would loop forever — disarm instead.
+          S.armed = false; S.phase = 'idle'
+          await persist($)
+          $.ui.toast(`ahandoff: fresh session already at ${percent}% ≥ ${S.threshold}% — disarmed`)
+        }
+      }
       status($, percent)
       await sync($, percent)
     }
