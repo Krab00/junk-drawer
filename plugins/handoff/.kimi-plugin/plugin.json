@@ -1,7 +1,7 @@
 {
   "name": "handoff",
-  "version": "0.0.4",
-  "description": "Save task state to disk and resume it in a fresh session by id.",
+  "version": "0.1.0",
+  "description": "Save task state to disk and resume it in a fresh session by id. Automatic /ahandoff is Claude Code only; here use /handoff and /handon by hand.",
   "author": { "name": "Krab00" },
   "homepage": "https://github.com/Krab00/junk-drawer",
   "keywords": ["handoff", "continuity", "context"],
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Handoff",
     "shortDescription": "Save and resume durable task context",
-    "longDescription": "Writes durable Markdown handoffs and restores them by short id in another session.",
+    "longDescription": "Writes durable Markdown handoffs and restores them by short id in another session. The automatic /ahandoff loop is Claude Code only.",
     "developerName": "Krab00"
   }
 }

@@ -1,6 +1,27 @@
 {
   "name": "handoff",
-  "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes.",
-  "version": "0.0.4",
-  "author": { "name": "Krab00" }
+  "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /ahandoff does it automatically at a context threshold (handoff → /clear → /handon → continue).",
+  "version": "0.1.0",
+  "author": { "name": "Krab00" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "threshold": {
+      "type": "number",
+      "title": "ahandoff: context threshold (%)",
+      "description": "Past this context usage the auto handoff kicks in (handoff → /clear → /handon → continue).",
+      "default": 85
+    },
+    "checkEvery": {
+      "type": "number",
+      "title": "ahandoff: check every N tool calls",
+      "description": "How often, in tool calls, the context usage is read mid-turn.",
+      "default": 5
+    },
+    "autoOn": {
+      "type": "boolean",
+      "title": "ahandoff: on at session start",
+      "description": "Start every session with the auto handoff loop armed (continuation = the last prompt you typed).",
+      "default": false
+    }
+  }
 }

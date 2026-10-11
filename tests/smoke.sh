@@ -156,7 +156,7 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 10 ]
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 9 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
