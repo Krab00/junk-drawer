@@ -2,7 +2,7 @@
 
 A multi-host marketplace of independently installable plugins for **Claude Code, Codex, and Kimi
 Code CLI** — plus a skills-only install path for **OpenCode** and other agents. It contains small context utilities, durable handoffs with an automatic
-context-limit continuation (*handoff* / `/ahandoff`), and a project-agnostic task orchestrator (*orch*) that delegates implementation and
+context-limit continuation (*handoff* / `/handoff auto`), and a project-agnostic task orchestrator (*orch*) that delegates implementation and
 verification to subagents and gates acceptance criteria on real tool evidence.
 
 ## Install in Kimi Code CLI
@@ -143,7 +143,7 @@ Known limits of the skills-only install:
 | `statusline` | Claude custom line; Codex footer configuration; Kimi footer notes | `$statusline` / `/skill:statusline` |
 | `ctx-tokens` | Read context usage from Claude, Codex, or Kimi transcripts | `$ctx-tokens` / `/skill:ctx-tokens` |
 | `tldr` | Summarize on demand; optional persistent terse mode | `$tldr` / `/skill:tldr` |
-| `handoff` | Save or restore a durable handoff by id; `/ahandoff` auto-continues past a context threshold (Claude Code only) | `$handoff` / `/skill:handoff` |
+| `handoff` | Save or restore a durable handoff by id; `/handoff auto` continues past a context threshold, `/handoff panel` opens its pane (Claude Code only) | `$handoff` / `/skill:handoff` |
 | `ctx-limit` | Context threshold hook with block, warn, or command actions | `$ctx-limit` / `/skill:ctx-limit` |
 | `junk-drawer` | Runtime catalog of the marketplace | `$junk-drawer` / `/skill:junk-drawer` |
 | `orch` | Implementation and independent verification through subagents | `$orch-init`, then `$orch` / `/skill:orch-init`, then `/skill:orch` |

@@ -1,27 +1,46 @@
 {
   "name": "handoff",
-  "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /ahandoff does it automatically at a context threshold (handoff → /clear → /handon → continue).",
-  "version": "0.1.0",
+  "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /handoff auto hands off automatically at a context threshold (handoff → /clear → /handon → continue); /handoff panel opens the pane.",
+  "version": "0.2.0",
   "author": { "name": "Krab00" },
   "types": "./types/index.d.ts",
   "userConfig": {
     "threshold": {
       "type": "number",
-      "title": "ahandoff: context threshold (%)",
+      "title": "Auto handoff: context threshold (%)",
       "description": "Past this context usage the auto handoff kicks in (handoff → /clear → /handon → continue).",
       "default": 85
     },
     "checkEvery": {
       "type": "number",
-      "title": "ahandoff: check every N tool calls",
+      "title": "Auto handoff: check every N tool calls",
       "description": "How often, in tool calls, the context usage is read mid-turn.",
       "default": 5
     },
     "autoOn": {
       "type": "boolean",
-      "title": "ahandoff: on at session start",
-      "description": "Start every session with the auto handoff loop armed (continuation = the last prompt you typed).",
+      "title": "Auto handoff: armed at session start",
+      "description": "Start every session with the auto handoff loop armed.",
       "default": false
+    },
+    "continueWith": {
+      "type": "string",
+      "title": "Auto handoff: continue with",
+      "description": "What the fresh session is told after the handoff is restored: the last prompt you typed, or the fixed prompt set in the pane.",
+      "options": ["last prompt", "fixed"],
+      "default": "last prompt"
+    },
+    "staleDays": {
+      "type": "number",
+      "title": "Handoffs: mark stale after N days",
+      "description": "Handoffs older than this are drawn as stale in the pane and removed by Delete stale.",
+      "default": 30
+    },
+    "segment": {
+      "type": "boolean",
+      "title": "Status line: show the 🪃 segment",
+      "description": "Show the context percentage segment in the prompt hint line; a click opens the pane.",
+      "default": true
     }
   }
 }
