@@ -84,7 +84,7 @@ function persist($: $) {
 
 // The continuation sent after a handoff is restored.
 const continuation = (id: string) => {
-  const p = S.prompt || S.lastPrompt
+  const p = S.prompt
   return `Continue the work from handoff ${id} without asking${p ? `: ${p}` : '.'}`
 }
 
@@ -139,7 +139,7 @@ async function auto($: $, prompt: string) {
   const opened = openPane($, 'auto')
   await arm($, prompt || null)
   await opened
-  return { text: `handoff auto on — threshold ${S.threshold}%, continue with: ${S.prompt || '(last prompt)'}` }
+  return { text: `handoff auto on — threshold ${S.threshold}%, continue with: ${S.prompt || '(continue the handoff)'}` }
 }
 async function off($: $) {
   await disarm($)
@@ -171,9 +171,7 @@ async function arm($: $, prompt?: string | null) {
   S.phase = 'idle'
   S.calls = 0
   S.armedAt = Date.now()
-  // ponytail: no prompt given = follow the last typed one live (continuation() reads S.lastPrompt); only an explicit prompt is fixed.
   if (prompt) S.prompt = prompt
-  else if (S.continueWith === 'last prompt') S.prompt = null
   await persist($)
   await sync($)
 }
@@ -205,7 +203,7 @@ async function setOption($: $, field: Parameters<Api['set']>[0], raw: string | n
       return redraw($)
     }
   } else if (field === 'autoOn' || field === 'segment') value = raw === true || raw === 'true' || raw === 'on'
-  else value = raw === 'fixed' ? 'fixed' : 'last prompt'
+  else return redraw($)
   const { deny } = await $.config.set({ key: `handoff.${field}`, value })
   if (deny) {
     S.note = `✗ ${deny}`
@@ -216,7 +214,6 @@ async function setOption($: $, field: Parameters<Api['set']>[0], raw: string | n
   else if (field === 'staleDays') { S.staleDays = value as number; S.entries = null; void load($) }
   else if (field === 'segment') S.segment = value as boolean
   else if (field === 'autoOn') S.autoOn = value as boolean
-  else if (field === 'continueWith') S.continueWith = value as 'last prompt' | 'fixed'
   S.note = `✓ ${field} = ${String(value)}`
   await sync($)
 }
@@ -281,7 +278,7 @@ export const register: Register = (on, options) => {
     })
     const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string } } | undefined
     if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /handoff:handon ${saved.pending.id}`)
-    if (saved?.prompt && (S.armed || S.continueWith === 'fixed')) S.prompt = saved.prompt
+    if (saved?.prompt && S.armed) S.prompt = saved.prompt
     await sync($)
     return next(e)
   })
@@ -301,11 +298,6 @@ export const register: Register = (on, options) => {
     if (args === 'panel') return panel($)
     if (args === 'off') return off($)
     return auto($, args)
-  })
-
-  on('prompt.submit', ($, e, next) => {
-    if (e.origin.kind !== 'plugin' && !/^\/a?handoff\b/.test(e.text.trim())) S.lastPrompt = e.text
-    return next(e)
   })
 
   on('tool.call', async ($, e, next) => {

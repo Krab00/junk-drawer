@@ -13,8 +13,7 @@ export type Entry = { id: string; path: string; mtimeMs: number; title: string; 
 export const S = {
   armed: false,
   phase: 'idle' as Phase,
-  prompt: null as string | null, // continuation; null = the last typed prompt
-  lastPrompt: null as string | null,
+  prompt: null as string | null, // extra continuation text; null = just continue the handoff
   written: null as string | null, // handoff file written this cycle
   calls: 0,
   count: 0,
@@ -22,7 +21,6 @@ export const S = {
   fresh: false, // right after /clear: usage() still reports the old window until the first response
   threshold: 85,
   checkEvery: 5,
-  continueWith: 'last prompt' as 'last prompt' | 'fixed',
   staleDays: 30,
   segment: true,
   autoOn: false,
@@ -50,7 +48,6 @@ export function loadOptions(options: Record<string, unknown>): void {
   S.checkEvery = Math.max(1, Math.round(num(options.checkEvery ?? 5, 5)))
   S.autoOn = S.armed = Boolean(options.autoOn)
   if (S.armed) S.armedAt ??= Date.now()
-  S.continueWith = options.continueWith === 'fixed' ? 'fixed' : 'last prompt'
   S.staleDays = num(options.staleDays ?? 30, 30)
   S.segment = options.segment === undefined ? true : Boolean(options.segment)
 }

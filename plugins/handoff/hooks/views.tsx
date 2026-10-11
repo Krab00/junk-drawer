@@ -55,7 +55,7 @@ const auto: View = (c) => {
   const at = (window * S.threshold) / 100
   const next = S.checkEvery - (S.calls % S.checkEvery)
   // what continuation() in register.tsx will actually send
-  const cont = S.prompt ? `fixed · ${S.prompt}` : S.lastPrompt ? `last prompt · ${S.lastPrompt}` : 'last prompt (none typed yet)'
+  const cont = S.prompt ?? 'continue the handoff'
   const last = S.lastId ? byId(S.lastId) : undefined
   return {
     body: (
@@ -97,10 +97,9 @@ const auto: View = (c) => {
           </Row>
           <Row c={c} label="Continue with"><Text wrap="truncate">{line(cont)}</Text></Row>
           <Box paddingLeft={16} flexDirection="column">
-            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="fixed text sent after each /handon · empty = last typed prompt" placeholder="e.g. /orch:orch all"
+            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="sent after each /handon · empty = just continue" placeholder="e.g. /orch:orch all"
               value={draft.prompt ?? S.prompt ?? ''} set={(v) => { draft.prompt = v }}
-              onSubmit={(v) => { S.prompt = v.trim() || null; draft.prompt = null; say(c, S.prompt ? '✓ prompt set' : '✓ continues with the last prompt') }} />
-            <Button key="last" plain dimColor hotkey="l" label="Use last" onPress={() => { S.prompt = null; draft.prompt = null; say(c, '✓ continues with the last prompt') }} />
+              onSubmit={(v) => { S.prompt = v.trim() || null; draft.prompt = null; say(c, S.prompt ? '✓ prompt set' : '✓ continues the handoff') }} />
           </Box>
           <Row c={c} label="Last handoff">
             <Text>{S.lastId ?? '—'}{last ? <Text color={P.secondary}>{` ${hhmm(last.mtimeMs)}`}</Text> : null}</Text>
@@ -126,7 +125,7 @@ const auto: View = (c) => {
         </Box>
       </Box>
     ),
-    note: S.armed ? `✓ armed · threshold ${S.threshold}% · continues with the ${S.prompt ? 'set prompt' : 'last prompt'}` : 'off · a arms the loop',
+    note: S.armed ? `✓ armed · threshold ${S.threshold}% · continues with ${S.prompt ? 'the set prompt' : 'the handoff'}` : 'off · a arms the loop',
     keys: [['tab', 'move'], [S.armed ? 'o' : 'a', S.armed ? 'off' : 'arm'], ['n', 'handoff now'], ['r', 'resume'], ['p', 'prompt'], ['l', 'use last']],
   }
 }
@@ -300,11 +299,6 @@ const settings: View = (c) => {
           <Row c={c} w={22} label="Arm at session start">
             <Switch c={c} k="auto-on" hotkey="s" on={autoOn()} flip={() => void c.api.set('autoOn', !autoOn())} />
           </Row>
-          <Row c={c} w={22} label="Continue with">
-            <Pick c={c} k="continue" hotkey="w" now={S.continueWith} other={S.continueWith === 'fixed' ? 'last prompt' : 'fixed'}
-              flip={() => void c.api.set('continueWith', S.continueWith === 'fixed' ? 'last prompt' : 'fixed')} />
-          </Row>
-          <Row c={c} w={22}><Text color={P.secondary}>fixed: the prompt set on the Auto tab (p)</Text></Row>
         </Box>
         <Box flexDirection="column">
           <Title c={c} text="Handoff" sub="/handoff and /handon" />
