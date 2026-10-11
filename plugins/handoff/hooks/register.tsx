@@ -2,7 +2,7 @@ import { atom, update } from 'claude-code'
 import type { RenderSurface, Register } from 'claude-code'
 
 import type { Ahandoff } from '../types'
-import { DAY, DEFAULT_PROMPT, S, idOf, loadOptions, type $, type Entry, type Route } from './lib'
+import { DAY, DEFAULT_PROMPT, S, idOf, limit, loadOptions, type $, type Entry, type Route } from './lib'
 import { Footer, P, Rule, Tabs, fields, type Api, type Ctx, type Elements } from './ui'
 import { VIEWS } from './views'
 
@@ -322,7 +322,7 @@ export const register: Register = (on, options) => {
       const { context } = await $.session.usage()
       S.tokens = context.tokens ?? S.tokens
       const percent = context.percent ?? 0
-      if (percent >= S.threshold) S.phase = 'handoff'
+      if (percent >= limit()) S.phase = 'handoff'
       await sync($, percent)
     }
     if (S.phase !== 'handoff') return next(e)
@@ -344,7 +344,7 @@ export const register: Register = (on, options) => {
       // nothing: the first measurement of the new window decides (session.measure)
     } else if (S.phase === 'handoff' && !S.written) {
       queueHandoff($) // model never wrote it mid-turn: ask /handoff as the next turn
-    } else if (S.phase === 'idle' && percent >= S.threshold) {
+    } else if (S.phase === 'idle' && percent >= limit()) {
       S.phase = 'handoff'
       queueHandoff($)
     } else if (S.phase === 'handoff' && S.written) {
@@ -364,14 +364,19 @@ export const register: Register = (on, options) => {
     if (e.changed.includes('context')) {
       S.tokens = e.context.tokens ?? S.tokens
       const percent = e.context.percent ?? S.percent
-      if (S.armed && S.fresh && e.context.percent !== undefined) {
-        S.fresh = false
-        if (percent >= S.threshold) {
-          // ponytail: a fresh window already over the limit would loop forever — disarm instead.
-          S.armed = false
-          S.phase = 'idle'
-          await persist($)
-          $.ui.toast(`handoff: fresh session already at ${percent}% ≥ ${S.threshold}% — auto disarmed`)
+      if (e.context.percent !== undefined && (S.fresh || !S.base)) {
+        S.base = percent
+        if (S.armed && S.fresh) {
+          S.fresh = false
+          if (limit() >= 100) {
+            // ponytail: a limit no window can reach would never hand off — disarm instead.
+            S.armed = false
+            S.phase = 'idle'
+            await persist($)
+            $.ui.toast(`handoff: fresh window at ${percent}%, ${S.threshold} more points can't fit — auto disarmed`)
+          } else if (S.threshold <= S.base) {
+            $.ui.toast(`handoff: fresh window at ${percent}%, next handoff at ${limit()}%`)
+          }
         }
       }
       await sync($, percent)
@@ -400,7 +405,7 @@ export const register: Register = (on, options) => {
       : S.phase === 'handoff' ? '🪃 handoff…' : S.phase === 'idle' ? `🪃 ${S.percent}%` : '🪃 resume…'
     const color = !S.armed || S.phase !== 'idle'
       ? P.secondary
-      : S.percent >= S.threshold ? P.bad : S.percent >= S.threshold - 10 ? P.warn : P.ok
+      : S.percent >= limit() ? P.bad : S.percent >= limit() - 10 ? P.warn : P.ok
     return (
       <Button key="handoff-segment" plain label={label} onPress={() => void toggle($)}>
         <Text color={color}>{label}</Text>

@@ -35,7 +35,7 @@ Loop: every `checkEvery` tool calls the hook reads context usage. Past `threshol
 except the handoff itself and tells the model to write one. When that turn ends it runs `/clear`, then
 `/handon <id>`, then sends the continuation prompt — `Continue after the handoff` unless you change it
 with `p` on the Auto tab (a `/command` runs as a command). It repeats until `/handoff off`. A fresh window
-that is already over the threshold disarms the loop instead of looping.
+that already starts at or over the threshold hands off again after that many more points of growth.
 
 ### Status line segment
 

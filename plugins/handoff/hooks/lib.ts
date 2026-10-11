@@ -22,6 +22,7 @@ export const S = {
   lastId: null as string | null,
   fresh: false, // right after /clear: usage() still reports the old window until the first response
   threshold: 85,
+  base: 0, // usage on the first measurement of the window (system prompt + handon); 0 = not measured yet
   checkEvery: 5,
   staleDays: 30,
   segment: true,
@@ -53,6 +54,10 @@ export function loadOptions(options: Record<string, unknown>): void {
   S.staleDays = num(options.staleDays ?? 30, 30)
   S.segment = options.segment === undefined ? true : Boolean(options.segment)
 }
+
+// The usage that triggers a handoff: the threshold, or — when the window already starts at or above it —
+// threshold points of growth above the window's baseline.
+export const limit = (): number => (S.threshold > S.base ? S.threshold : S.base + S.threshold)
 
 export const DAY = 86_400_000
 
