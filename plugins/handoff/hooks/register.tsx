@@ -84,8 +84,8 @@ function persist($: $) {
 
 // The continuation sent after a handoff is restored.
 const continuation = (id: string) => {
-  const p = S.prompt
-  return `Continue the work from handoff ${id} without asking${p ? `: ${p}` : '.'}`
+  const base = `Handoff ${id} is loaded. This is an automatic continuation, so do not wait for confirmation: pick up at the first unfinished item of its "next" section, keep its decisions and constraints, and work until that list is done or you are blocked on something only the user can answer.`
+  return S.prompt ? `${base} Then: ${S.prompt}` : base
 }
 
 // A handoff file written this session: its id becomes the last one, the list is read again.
