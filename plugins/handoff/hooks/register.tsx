@@ -171,8 +171,9 @@ async function arm($: $, prompt?: string | null) {
   S.phase = 'idle'
   S.calls = 0
   S.armedAt = Date.now()
+  // ponytail: no prompt given = follow the last typed one live (continuation() reads S.lastPrompt); only an explicit prompt is fixed.
   if (prompt) S.prompt = prompt
-  else if (S.continueWith === 'last prompt') S.prompt = S.lastPrompt
+  else if (S.continueWith === 'last prompt') S.prompt = null
   await persist($)
   await sync($)
 }
