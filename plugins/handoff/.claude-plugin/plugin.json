@@ -2,7 +2,9 @@
   "name": "handoff",
   "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /ahandoff [prompt] (= /handoff auto) hands off automatically at a context threshold (handoff → /clear → /handon → continue); /handoff panel opens the pane.",
   "version": "0.2.0",
-  "author": { "name": "Krab00" },
+  "author": {
+    "name": "Krab00"
+  },
   "types": "./types/index.d.ts",
   "userConfig": {
     "threshold": {
@@ -22,13 +24,6 @@
       "title": "Auto handoff: armed at session start",
       "description": "Start every session with the auto handoff loop armed.",
       "default": false
-    },
-    "continueWith": {
-      "type": "string",
-      "title": "Auto handoff: continue with",
-      "description": "What the fresh session is told after the handoff is restored: the last prompt you typed, or the fixed prompt set in the pane.",
-      "options": ["last prompt", "fixed"],
-      "default": "last prompt"
     },
     "staleDays": {
       "type": "number",

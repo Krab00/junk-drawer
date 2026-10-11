@@ -25,7 +25,7 @@ argument still saves a handoff as above. Plugin commands are namespaced, so the 
 `/handoff:handoff`; `/handoff` works when no other command claims the name.
 
 - **`/handoff auto [prompt]`**: arm the loop and open the pane on the Auto tab. The optional prompt is
-  re-sent after each handoff; without one the loop re-sends the last prompt you typed (e.g. `/orch:orch all`).
+  re-sent after each handoff; without one the fresh session is just told to continue the handoff.
 - **`/handoff off`**: disarm the loop.
 - **`/handoff panel`**: open the pane, or close it when it is open.
 - **`/ahandoff [prompt] | off | panel`**: the short form of the three above (`/ahandoff /orch:orch all`).
@@ -47,7 +47,7 @@ Tabs switch with `1`, `2` and `3`. `q` closes the pane.
 
 | Tab | Shows | Keys |
 |---|---|---|
-| 1 Auto | Armed or off, a context bar against the threshold, the continuation prompt, the last handoff and this session's handoffs | `a` arm or `o` off, `p` set prompt, `l` use last prompt, `n` handoff now, `r` resume last |
+| 1 Auto | Armed or off, a context bar against the threshold, the continuation prompt, the last handoff and this session's handoffs | `a` arm or `o` off, `p` set prompt, `n` handoff now, `r` resume last |
 | 2 Handoffs | Every file in `~/.claude/handoffs`, newest first, with id, time and title; stale ones in yellow | `j`/`k` move, `enter` handon, `v` view (`b` back), `c` copy id, `x` delete (press twice), `f` filter, `m` show more, `n` save now |
 | 3 Settings | The settings below, the handoffs folder and its file count, the version | `t` threshold, `e` check every, `s` arm at start, `w` continue with, `a` stale days, `d` delete stale, `o` open folder, `g` segment |
 
@@ -60,7 +60,6 @@ Set them in the Settings tab or in `/config` under plugin `handoff`.
 | `threshold` | 85 | Context usage in percent that triggers the handoff |
 | `checkEvery` | 5 | How often, in tool calls, usage is read mid-turn |
 | `autoOn` | off | Arm the loop at every session start |
-| `continueWith` | `last prompt` | Re-send the last prompt you typed, or a `fixed` one set with `p` |
 | `staleDays` | 30 | Handoffs older than this are marked stale and removed by `d` |
 | `segment` | on | Show the `🪃` segment in the prompt line |
 
