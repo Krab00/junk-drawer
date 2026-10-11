@@ -171,7 +171,7 @@ async function arm($: $, prompt?: string | null) {
   S.phase = 'idle'
   S.calls = 0
   S.armedAt = Date.now()
-  if (prompt) S.prompt = prompt
+  S.prompt = prompt || null // no argument = the plain handoff continuation
   await persist($)
   await sync($)
 }
@@ -278,7 +278,6 @@ export const register: Register = (on, options) => {
     })
     const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string } } | undefined
     if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /handoff:handon ${saved.pending.id}`)
-    if (saved?.prompt && S.armed) S.prompt = saved.prompt
     await sync($)
     return next(e)
   })

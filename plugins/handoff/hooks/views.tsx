@@ -55,7 +55,7 @@ const auto: View = (c) => {
   const at = (window * S.threshold) / 100
   const next = S.checkEvery - (S.calls % S.checkEvery)
   // what continuation() in register.tsx will actually send
-  const cont = S.prompt ?? 'continue the handoff'
+  const cont = S.prompt ? `handoff prompt, then: ${S.prompt}` : 'handoff prompt'
   const last = S.lastId ? byId(S.lastId) : undefined
   return {
     body: (
@@ -97,7 +97,7 @@ const auto: View = (c) => {
           </Row>
           <Row c={c} label="Continue with"><Text wrap="truncate">{line(cont)}</Text></Row>
           <Box paddingLeft={16} flexDirection="column">
-            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="sent after each /handon · empty = just continue" placeholder="e.g. /orch:orch all"
+            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="added after the handoff prompt · empty = none" placeholder="e.g. /orch:orch all"
               value={draft.prompt ?? S.prompt ?? ''} set={(v) => { draft.prompt = v }}
               onSubmit={(v) => { S.prompt = v.trim() || null; draft.prompt = null; say(c, S.prompt ? '✓ prompt set' : '✓ continues the handoff') }} />
           </Box>
@@ -125,7 +125,7 @@ const auto: View = (c) => {
         </Box>
       </Box>
     ),
-    note: S.armed ? `✓ armed · threshold ${S.threshold}% · continues with ${S.prompt ? 'the set prompt' : 'the handoff'}` : 'off · a arms the loop',
+    note: S.armed ? `✓ armed · threshold ${S.threshold}% · continues with the handoff prompt${S.prompt ? ' + yours' : ''}` : 'off · a arms the loop',
     keys: [['tab', 'move'], [S.armed ? 'o' : 'a', S.armed ? 'off' : 'arm'], ['n', 'handoff now'], ['r', 'resume'], ['p', 'prompt'], ['l', 'use last']],
   }
 }
