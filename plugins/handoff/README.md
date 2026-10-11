@@ -20,7 +20,7 @@ Install: `/plugin install handoff --marketplace Krab00/junk-drawer`.
 
 ## Auto handoff and panel (Claude Code only)
 
-The hooks module (`hooks/register.tsx`) adds three arguments to `/handoff`. Bare `/handoff` with no
+The hooks module (`hooks/register.tsx`) adds three arguments to `/handoff` and, while the loop is armed, resumes a turn that died on the 5h rate limit (below). Bare `/handoff` with no
 argument still saves a handoff as above. Plugin commands are namespaced, so the full form is
 `/handoff:handoff`; `/handoff` works when no other command claims the name.
 
@@ -37,6 +37,16 @@ except the handoff itself and tells the model to write one. When that turn ends 
 with `p` on the Auto tab (a `/command` runs as a command). It repeats until `/handoff off`. A fresh window
 that already starts at or over the threshold hands off again after that many more points of growth.
 
+### Resume after the 5h rate limit
+
+An armed loop also survives the 5-hour rate limit. When a turn dies with the window at 100%, the mod
+sets one timer for 2 minutes after the window resets (the host reports the reset time with every
+measurement) and sends the continuation prompt then — your `/ahandoff` prompt, or `Continue where
+the rate limit stopped you`. No handoff is needed: the session keeps its context. The segment shows
+`🪃 limit → 14:32` meanwhile. There is no recurring timer: the next limit hit schedules the next
+resume. `/ahandoff off` or the `resumeAfterLimit` setting (`l` on the Settings tab) turns it off. The
+timer lives in the running session; after a restart you only get a toast that a resume was pending.
+
 ### Status line segment
 
 The prompt line shows `🪃 72%`: context usage, green below the threshold, yellow within 10 points of
@@ -51,7 +61,7 @@ Tabs switch with `1`, `2` and `3`. `q` closes the pane.
 |---|---|---|
 | 1 Auto | Armed or off, a context bar against the threshold, the continuation prompt, the last handoff and this session's handoffs | `a` arm or `o` off, `p` set prompt, `n` handoff now, `r` resume last |
 | 2 Handoffs | Every file in `~/.claude/handoffs`, newest first, with id, time and title; stale ones in yellow | `j`/`k` move, `enter` handon, `v` view (`b` back), `c` copy id, `x` delete (press twice), `f` filter, `m` show more, `n` save now |
-| 3 Settings | The settings below, the handoffs folder and its file count, the version | `t` threshold, `e` check every, `s` arm at start, `w` continue with, `a` stale days, `d` delete stale, `o` open folder, `g` segment |
+| 3 Settings | The settings below, the handoffs folder and its file count, the version | `t` threshold, `e` check every, `s` arm at start, `l` resume after 5h limit, `a` stale days, `d` delete stale, `o` open folder, `g` segment |
 
 ### Settings
 
@@ -62,6 +72,7 @@ Set them in the Settings tab or in `/config` under plugin `handoff`.
 | `threshold` | 85 | Context usage in percent that triggers the handoff |
 | `checkEvery` | 5 | How often, in tool calls, usage is read mid-turn |
 | `autoOn` | off | Arm the loop at every session start |
+| `resumeAfterLimit` | on | Send the continuation prompt 2 minutes after the 5h window resets when a turn died on the limit |
 | `staleDays` | 30 | Handoffs older than this are marked stale and removed by `d` |
 | `segment` | on | Show the `🪃` segment in the prompt line |
 
