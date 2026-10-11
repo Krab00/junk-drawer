@@ -125,6 +125,18 @@ test('off disarms: tools pass again past the threshold', OPTIONS, async ($, on) 
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
 })
 
+test('/ahandoff <prompt> | off is the short form', OPTIONS, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const run = (args: string) =>
+    $.command.run({ command: 'ahandoff', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  await run('/orch:orch all')
+  rec.percent = 90
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+  await run('off')
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
+})
+
 test('the written handoff ends the turn into clear → handon <id> → continue', OPTIONS, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)

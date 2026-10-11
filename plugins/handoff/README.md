@@ -28,6 +28,7 @@ argument still saves a handoff as above. Plugin commands are namespaced, so the 
   re-sent after each handoff; without one the loop re-sends the last prompt you typed (e.g. `/orch:orch all`).
 - **`/handoff off`**: disarm the loop.
 - **`/handoff panel`**: open the pane, or close it when it is open.
+- **`/ahandoff [prompt] | off | panel`**: the short form of the three above (`/ahandoff /orch:orch all`).
 
 Loop: every `checkEvery` tool calls the hook reads context usage. Past `threshold` it denies every tool
 except the handoff itself and tells the model to write one. When that turn ends it runs `/clear`, then

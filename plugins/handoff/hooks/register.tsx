@@ -130,6 +130,22 @@ function continueFrom($: $, id: string) {
   })
 }
 
+async function panel($: $) {
+  await toggle($)
+  return {}
+}
+async function auto($: $, prompt: string) {
+  // the pane opens first: only an open made while the command runs is placed at any width
+  const opened = openPane($, 'auto')
+  await arm($, prompt || null)
+  await opened
+  return { text: `handoff auto on — threshold ${S.threshold}%, continue with: ${S.prompt || '(last prompt)'}` }
+}
+async function off($: $) {
+  await disarm($)
+  return { text: 'handoff auto off.' }
+}
+
 // `$.ui.open` before any await: only an open made while the press or command runs counts as asked.
 async function openPane($: $, route?: Route) {
   const opened = $.ui.open({ id: PANE, title: 'handoff', focus: true })
@@ -257,6 +273,11 @@ export const register: Register = (on, options) => {
   loadOptions(options)
 
   on('session.start', async ($, e, next) => {
+    await $.command.register({
+      name: 'ahandoff',
+      description: 'Auto handoff at a context threshold: handoff → /clear → /handon → continue. off stops, panel toggles the pane.',
+      argumentHint: '[prompt] | off | panel',
+    })
     const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string } } | undefined
     if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /handoff:handon ${saved.pending.id}`)
     if (saved?.prompt && (S.armed || S.continueWith === 'fixed')) S.prompt = saved.prompt
@@ -267,26 +288,22 @@ export const register: Register = (on, options) => {
   // /handoff panel | auto [prompt] | off — anything else is the plain /handoff.
   on('command.run', { command: 'handoff:handoff' }, async ($, e, next) => {
     const [sub = '', ...rest] = e.args.trim().split(/\s+/)
-    if (sub === 'panel') {
-      await toggle($)
-      return {}
-    }
-    if (sub === 'auto') {
-      // the pane opens first: only an open made while the command runs is placed at any width
-      const opened = openPane($, 'auto')
-      await arm($, rest.join(' ') || null)
-      await opened
-      return { text: `handoff auto on — threshold ${S.threshold}%, continue with: ${S.prompt || '(last prompt)'}` }
-    }
-    if (sub === 'off') {
-      await disarm($)
-      return { text: 'handoff auto off.' }
-    }
+    if (sub === 'panel') return panel($)
+    if (sub === 'auto') return auto($, rest.join(' '))
+    if (sub === 'off') return off($)
     return next(e)
   })
 
+  // /ahandoff [prompt] | off | panel — the short form: anything else is the prompt.
+  on('command.run', { command: 'ahandoff' }, async ($, e) => {
+    const args = e.args.trim()
+    if (args === 'panel') return panel($)
+    if (args === 'off') return off($)
+    return auto($, args)
+  })
+
   on('prompt.submit', ($, e, next) => {
-    if (e.origin.kind !== 'plugin' && !/^\/handoff\b/.test(e.text.trim())) S.lastPrompt = e.text
+    if (e.origin.kind !== 'plugin' && !/^\/a?handoff\b/.test(e.text.trim())) S.lastPrompt = e.text
     return next(e)
   })
 
