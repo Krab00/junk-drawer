@@ -18,14 +18,14 @@ thr=$(cat "$thrf"); case "$thr" in ''|*[!0-9]*) exit 0 ;; esac
 
 input=$(cat)
 # ponytail: escape hatches — let control/handoff commands through even over the limit, else block
-# could lock you out (can't /ctx-limit off or /molt to recover). Slash commands arrive in .prompt
+# could lock you out (can't /ctx-limit off or /handoff to recover). Slash commands arrive in .prompt
 # as "/<plugin>:<command> [args]" (e.g. /ctx-limit:ctx-limit 300k). Match complete
 # command/skill names so lookalikes such as /ctx-limiter or $ctx-limiter cannot bypass the guard.
 p=$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)
 p="${p#"${p%%[![:space:]]*}"}"   # trim leading whitespace
-if [[ "$p" =~ ^(/ctx-limit(:ctx-limit)?|/molt(:molt)?|/handoff(:handoff)?|/handon|/handoff:handon|/clear|/skill:(ctx-limit|molt|handoff))([[:space:]]|$) ]] ||
-   [[ "$p" =~ ^(\$ctx-limit|\$molt|\$handoff)([[:space:]]|$) ]] ||
-   [[ "$p" =~ ^Use[[:space:]]+(\$ctx-limit|\$molt|\$handoff)([[:space:]]|$) ]]; then
+if [[ "$p" =~ ^(/ctx-limit(:ctx-limit)?|/handoff(:handoff)?|/handon|/handoff:handon|/clear|/skill:(ctx-limit|handoff))([[:space:]]|$) ]] ||
+   [[ "$p" =~ ^(\$ctx-limit|\$handoff)([[:space:]]|$) ]] ||
+   [[ "$p" =~ ^Use[[:space:]]+(\$ctx-limit|\$handoff)([[:space:]]|$) ]]; then
     exit 0
 fi
 tp=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
@@ -61,9 +61,9 @@ action=$(cat "$cfg/ctx-limit-action" 2>/dev/null); action=${action:-block}
 case "$action" in
     warn)
         if [ -n "${PLUGIN_ROOT:-}" ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
-            echo "ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider compaction or invoke the molt skill."
+            echo "ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider compaction or invoke the handoff skill."
         else
-            echo "ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider /clear or /molt."
+            echo "ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider /handoff then /clear."
         fi
         ;;
     cmd)
@@ -71,7 +71,7 @@ case "$action" in
         [ -n "$c" ] && CTX_TOKENS="$ctx" CTX_LIMIT="$thr" bash -c "$c" >/dev/null 2>&1
         ;;
     *)
-        msg="ctx-limit reached: ${ctx} >= ${thr} tokens. Use molt to prepare a fresh continuation, compact, or disable ctx-limit."
+        msg="ctx-limit reached: ${ctx} >= ${thr} tokens. Use /handoff to prepare a fresh continuation, compact, or disable ctx-limit."
         if [ -n "${PLUGIN_ROOT:-}" ]; then
             jq -cn --arg msg "$msg" '{continue:false, stopReason:$msg, systemMessage:$msg}'
         else
