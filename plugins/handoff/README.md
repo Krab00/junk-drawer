@@ -25,16 +25,16 @@ argument still saves a handoff as above. Plugin commands are namespaced, so the 
 `/handoff:handoff`; `/handoff` works when no other command claims the name.
 
 - **`/handoff auto [prompt]`**: arm the loop and open the pane on the Auto tab. The optional prompt is
-  run immediately and re-sent after each handoff; without one the loop is only armed and the fresh
-  session is just told to continue the handoff.
+  the task to run right now (`/orch:orch all` runs as a command); without one the loop is only armed.
 - **`/handoff off`**: disarm the loop.
 - **`/handoff panel`**: open the pane, or close it when it is open.
 - **`/ahandoff [prompt] | off | panel`**: the short form of the three above, without the pane
-  (`/ahandoff /orch:orch all` arms the loop, runs the prompt now and re-sends it after each handoff).
+  (`/ahandoff /orch:orch all` arms the loop and runs the command).
 
 Loop: every `checkEvery` tool calls the hook reads context usage. Past `threshold` it denies every tool
 except the handoff itself and tells the model to write one. When that turn ends it runs `/clear`, then
-`/handon <id>`, then re-submits the continuation prompt. It repeats until `/handoff off`. A fresh window
+`/handon <id>`, then sends the continuation prompt — `Continue after the handoff` unless you change it
+with `p` on the Auto tab (a `/command` runs as a command). It repeats until `/handoff off`. A fresh window
 that is already over the threshold disarms the loop instead of looping.
 
 ### Status line segment

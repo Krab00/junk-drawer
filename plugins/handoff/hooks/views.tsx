@@ -1,6 +1,6 @@
 // The panel's three tabs (Auto, Handoffs, Settings) as `View`s: each reads `S` and calls
 // `c.api`, register.tsx draws the tabs, the rule and the footer around what they return.
-import { S, type Entry, type Route } from './lib'
+import { DEFAULT_PROMPT, S, type Entry, type Route } from './lib'
 import { Chosen, Field, Filled, Hidden, P, Rule, Spacer, fit, line, when, type Ctx, type View } from './ui'
 
 const DIR = '~/.claude/handoffs' // ponytail: the folder is fixed by the contract, drawn as is
@@ -55,7 +55,7 @@ const auto: View = (c) => {
   const at = (window * S.threshold) / 100
   const next = S.checkEvery - (S.calls % S.checkEvery)
   // what continuation() in register.tsx will actually send
-  const cont = S.prompt ? `handoff prompt, then: ${S.prompt}` : 'handoff prompt'
+  const cont = S.prompt
   const last = S.lastId ? byId(S.lastId) : undefined
   return {
     body: (
@@ -97,9 +97,9 @@ const auto: View = (c) => {
           </Row>
           <Row c={c} label="Continue with"><Text wrap="truncate">{line(cont)}</Text></Row>
           <Box paddingLeft={16} flexDirection="column">
-            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="added after the handoff prompt · empty = none" placeholder="e.g. /orch:orch all"
-              value={draft.prompt ?? S.prompt ?? ''} set={(v) => { draft.prompt = v }}
-              onSubmit={(v) => { S.prompt = v.trim() || null; draft.prompt = null; say(c, S.prompt ? '✓ prompt set' : '✓ continues the handoff') }} />
+            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="sent after each /handon · empty = default" placeholder="e.g. /orch:orch all"
+              value={draft.prompt ?? S.prompt} set={(v) => { draft.prompt = v }}
+              onSubmit={(v) => { S.prompt = v.trim() || DEFAULT_PROMPT; draft.prompt = null; say(c, '✓ prompt set') }} />
           </Box>
           <Row c={c} label="Last handoff">
             <Text>{S.lastId ?? '—'}{last ? <Text color={P.secondary}>{` ${hhmm(last.mtimeMs)}`}</Text> : null}</Text>
@@ -125,7 +125,7 @@ const auto: View = (c) => {
         </Box>
       </Box>
     ),
-    note: S.armed ? `✓ armed · threshold ${S.threshold}% · continues with the handoff prompt${S.prompt ? ' + yours' : ''}` : 'off · a arms the loop',
+    note: S.armed ? `✓ armed · threshold ${S.threshold}% · continues with: ${S.prompt}` : 'off · a arms the loop',
     keys: [['tab', 'move'], [S.armed ? 'o' : 'a', S.armed ? 'off' : 'arm'], ['n', 'handoff now'], ['r', 'resume'], ['p', 'prompt'], ['l', 'use last']],
   }
 }
