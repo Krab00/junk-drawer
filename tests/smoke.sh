@@ -97,12 +97,6 @@ set -e
 [ "$claude_status" -eq 2 ]
 rg -q 'ctx-limit reached' <<<"$claude_block"
 
-CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$root/plugins/molt/bin/molt-auto" on >/dev/null
-CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$root/plugins/molt/bin/molt-auto" limit 1 >/dev/null
-molt_hook=$(printf '{"transcript_path":"%s","stop_hook_active":false}' "$tmp/codex.jsonl" |
-    CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/molt" "$root/plugins/molt/bin/molt-stop")
-printf '%s\n' "$molt_hook" | jq -e '.continue == true and (.systemMessage | contains("Molt recommended"))' >/dev/null
-
 CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$root/plugins/tldr/bin/tldr-flag" on >/dev/null
 tldr_hook=$(CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/tldr" "$root/plugins/tldr/bin/tldr-hook")
 rg -q 'TL;DR MODE ON' <<<"$tldr_hook"
@@ -156,7 +150,7 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 10 ]
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 9 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
@@ -182,7 +176,7 @@ for skill_md in "$installed"/*/SKILL.md; do
 done
 
 # Helpers must actually execute from the installed layout, not merely exist.
-[ -x "$installed/molt/bin/molt-path" ]
+[ -x "$installed/handoff/bin/handoff-path" ]
 home="$tmp/home"
 mkdir -p "$home/.claude"
 (cd "$installed/tldr" && [ "$(HOME=$home CLAUDE_CONFIG_DIR=$home/.claude ./bin/tldr-flag status)" = "TL;DR mode: OFF" ])

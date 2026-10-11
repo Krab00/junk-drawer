@@ -20,17 +20,12 @@
     {
       "name": "handoff",
       "source": "./plugins/handoff",
-      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>)."
+      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>); /ahandoff automates handoff → /clear → /handon past a context threshold."
     },
     {
       "name": "ctx-limit",
       "source": "./plugins/ctx-limit",
-      "description": "Per-session context-size limit: past the threshold a hook blocks the prompt, warns, or runs a command. Pairs with molt. Run /ctx-limit."
-    },
-    {
-      "name": "molt",
-      "source": "./plugins/molt",
-      "description": "Context-limit orchestrator: shed a full context into a handoff and continue in a fresh session via /clear + auto-restore. Run /molt."
+      "description": "Per-session context-size limit: past the threshold a hook blocks the prompt, warns, or runs a command. Pairs with handoff. Run /ctx-limit."
     },
     {
       "name": "junk-drawer",
