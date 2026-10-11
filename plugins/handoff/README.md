@@ -20,7 +20,7 @@ Install: `/plugin install handoff --marketplace Krab00/junk-drawer`.
 
 ## Auto handoff and panel (Claude Code only)
 
-The hooks module (`hooks/register.tsx`) adds three arguments to `/handoff`. Bare `/handoff` with no
+The hooks module (`hooks/register.tsx`) adds three arguments to `/handoff` and, while the loop is armed, resumes a turn that died on the 5h rate limit (below). Bare `/handoff` with no
 argument still saves a handoff as above. Plugin commands are namespaced, so the full form is
 `/handoff:handoff`; `/handoff` works when no other command claims the name.
 
