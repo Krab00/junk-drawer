@@ -126,7 +126,7 @@ const auto: View = (c) => {
       </Box>
     ),
     note: S.armed ? `✓ armed · threshold ${S.threshold}% · continues with: ${S.prompt}` : 'off · a arms the loop',
-    keys: [['tab', 'move'], [S.armed ? 'o' : 'a', S.armed ? 'off' : 'arm'], ['n', 'handoff now'], ['r', 'resume'], ['p', 'prompt'], ['l', 'use last']],
+    keys: [['tab', 'move'], [S.armed ? 'o' : 'a', S.armed ? 'off' : 'arm'], ['n', 'handoff now'], ['r', 'resume'], ['p', 'prompt']],
   }
 }
 
