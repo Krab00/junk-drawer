@@ -111,8 +111,10 @@ function queueHandoff($: $) {
 }
 
 // /clear → /handon <id> → the continuation prompt, detached like queueHandoff.
+// A slash prompt cannot ride along as text (the host refuses it and the model would only read it),
+// so it runs as the command itself right after /handon.
 function continueFrom($: $, id: string) {
-  const text = continuation(id)
+  const text = S.prompt?.startsWith('/') ? S.prompt : continuation(id)
   void $.clock.sleep(0).then(async () => {
     S.fresh = S.armed // the guard is the loop's: a manual resume while off needs none
     S.phase = 'clear'
@@ -126,8 +128,19 @@ function continueFrom($: $, id: string) {
     S.phase = 'idle'
     await persist($)
     await sync($, 0)
-    await $.prompt.submit({ text })
+    await sendPrompt($, text)
   })
+}
+
+// Runs the armed prompt as the next turn, detached like queueHandoff ($.prompt.submit is refused
+// inside a hook the turn waits on). The host refuses a submitted text starting with /, so a slash
+// command goes through $.command.run instead.
+function runPrompt($: $, text: string) {
+  void $.clock.sleep(0).then(() => sendPrompt($, text))
+}
+async function sendPrompt($: $, text: string) {
+  const [, command, args = ''] = /^\/(\S+)\s*([\s\S]*)$/.exec(text) ?? []
+  await (command ? $.command.run({ command, args }) : $.prompt.submit({ text }))
 }
 
 async function panel($: $) {
@@ -139,7 +152,9 @@ async function auto($: $, prompt: string, pane = true) {
   const opened = pane ? openPane($, 'auto') : undefined
   await arm($, prompt || null)
   await opened
-  return { text: `handoff auto on — threshold ${S.threshold}%, continue with: ${S.prompt || '(continue the handoff)'}` }
+  if (!prompt) return { text: `handoff auto on — threshold ${S.threshold}%, continue with: (continue the handoff)` }
+  runPrompt($, prompt)
+  return { text: `handoff auto on — threshold ${S.threshold}% — running: ${prompt}` }
 }
 async function off($: $) {
   await disarm($)
@@ -296,7 +311,7 @@ export const register: Register = (on, options) => {
     const args = e.args.trim()
     if (args === 'panel') return panel($)
     if (args === 'off') return off($)
-    return auto($, args, false) // ponytail: the short form arms only; the pane is /ahandoff panel
+    return auto($, args, false) // ponytail: the short form arms and runs the prompt; the pane is /ahandoff panel
   })
 
   on('tool.call', async ($, e, next) => {

@@ -25,10 +25,12 @@ argument still saves a handoff as above. Plugin commands are namespaced, so the 
 `/handoff:handoff`; `/handoff` works when no other command claims the name.
 
 - **`/handoff auto [prompt]`**: arm the loop and open the pane on the Auto tab. The optional prompt is
-  re-sent after each handoff; without one the fresh session is just told to continue the handoff.
+  run immediately and re-sent after each handoff; without one the loop is only armed and the fresh
+  session is just told to continue the handoff.
 - **`/handoff off`**: disarm the loop.
 - **`/handoff panel`**: open the pane, or close it when it is open.
-- **`/ahandoff [prompt] | off | panel`**: the short form of the three above (`/ahandoff /orch:orch all`).
+- **`/ahandoff [prompt] | off | panel`**: the short form of the three above, without the pane
+  (`/ahandoff /orch:orch all` arms the loop, runs the prompt now and re-sends it after each handoff).
 
 Loop: every `checkEvery` tool calls the hook reads context usage. Past `threshold` it denies every tool
 except the handoff itself and tells the model to write one. When that turn ends it runs `/clear`, then
