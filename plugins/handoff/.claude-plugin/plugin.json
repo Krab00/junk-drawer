@@ -1,6 +1,6 @@
 {
   "name": "handoff",
-  "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /handoff auto hands off automatically at a context threshold (handoff → /clear → /handon → continue); /handoff panel opens the pane.",
+  "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /ahandoff [prompt] (= /handoff auto) hands off automatically at a context threshold (handoff → /clear → /handon → continue); /handoff panel opens the pane.",
   "version": "0.2.0",
   "author": { "name": "Krab00" },
   "types": "./types/index.d.ts",
