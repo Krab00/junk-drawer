@@ -118,7 +118,7 @@ export const register: Register = (on, options) => {
       S.phase = 'resume'
       await persist($)
       const id = S.lastId
-      const text = `Kontynuuj pracę wg handoffu ${id}, bez pytań: ${S.prompt || S.lastPrompt}`
+      const text = `Continue the work from handoff ${id} without asking: ${S.prompt || S.lastPrompt}`
       // ponytail: detached chain — $.command.run is refused inside a hook the turn waits on.
       void $.clock.sleep(0).then(async () => {
         S.fresh = true
