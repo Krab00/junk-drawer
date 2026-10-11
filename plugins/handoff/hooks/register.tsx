@@ -134,9 +134,9 @@ async function panel($: $) {
   await toggle($)
   return {}
 }
-async function auto($: $, prompt: string) {
+async function auto($: $, prompt: string, pane = true) {
   // the pane opens first: only an open made while the command runs is placed at any width
-  const opened = openPane($, 'auto')
+  const opened = pane ? openPane($, 'auto') : undefined
   await arm($, prompt || null)
   await opened
   return { text: `handoff auto on — threshold ${S.threshold}%, continue with: ${S.prompt || '(continue the handoff)'}` }
@@ -296,7 +296,7 @@ export const register: Register = (on, options) => {
     const args = e.args.trim()
     if (args === 'panel') return panel($)
     if (args === 'off') return off($)
-    return auto($, args)
+    return auto($, args, false) // ponytail: the short form arms only; the pane is /ahandoff panel
   })
 
   on('tool.call', async ($, e, next) => {
