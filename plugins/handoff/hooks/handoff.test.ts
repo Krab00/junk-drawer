@@ -104,8 +104,11 @@ const texts = async (ui: Mounted<Surface, 'Pane'>) => (await ui.findAll({ type: 
 
 test('auto arms, denies tools past the threshold, lets the handoff through', OPTIONS, async ($, on) => {
   const rec = world(on)
+  const clock = mock.clock(on)
   await start($)
   await handoff($, 'auto do X')
+  await clock.advance(1)
+  expect(rec.prompts.at(-1)).toBe('do X')
 
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
 
@@ -117,8 +120,10 @@ test('auto arms, denies tools past the threshold, lets the handoff through', OPT
 
 test('off disarms: tools pass again past the threshold', OPTIONS, async ($, on) => {
   const rec = world(on)
+  const clock = mock.clock(on)
   await start($)
   await handoff($, 'auto do X')
+  await clock.advance(1)
   rec.percent = 90
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
   await handoff($, 'off')
@@ -127,10 +132,16 @@ test('off disarms: tools pass again past the threshold', OPTIONS, async ($, on) 
 
 test('/ahandoff <prompt> | off is the short form', OPTIONS, async ($, on) => {
   const rec = world(on)
+  const clock = mock.clock(on)
   await start($)
   const run = (args: string) =>
     $.command.run({ command: 'ahandoff', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
   await run('/orch:orch all')
+  await clock.advance(1)
+  expect(rec.commands.at(-1)).toBe('orch:orch all') // a slash prompt runs as the command
+  await run('fix the flaky test')
+  await clock.advance(1)
+  expect(rec.prompts.at(-1)).toBe('fix the flaky test')
   rec.percent = 90
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
   await run('off')
@@ -155,6 +166,27 @@ test('the written handoff ends the turn into clear → handon <id> → continue'
   expect(rec.prompts.at(-1)).toContain('do X')
 })
 
+test('a slash prompt runs as the command after clear → handon <id>', OPTIONS, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await handoff($, 'auto /orch:orch all')
+  await clock.advance(1)
+  rec.percent = 90
+  const before = rec.commands.length
+
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const prompts = rec.prompts.length
+  await clock.advance(1)
+
+  const chain = rec.commands.slice(before)
+  const handon = chain.indexOf('handoff:handon abcdef12')
+  expect(handon).toBeGreaterThan(chain.indexOf('clear'))
+  expect(chain.indexOf('orch:orch all')).toBeGreaterThan(handon)
+  expect(rec.prompts.length).toBe(prompts) // no continuation text submitted
+})
+
 test('panel toggles the pane; no argument goes on to /handoff', async ($, on) => {
   const rec = world(on)
   await start($)
@@ -171,6 +203,7 @@ test('panel toggles the pane; no argument goes on to /handoff', async ($, on) =>
 
 test('the 🪃 segment shows usage or off, and a press opens the pane', OPTIONS, async ($, on) => {
   const rec = world(on)
+  const clock = mock.clock(on)
   await start($)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'handoff', surface, ...HINT })
@@ -179,6 +212,7 @@ test('the 🪃 segment shows usage or off, and a press opens the pane', OPTIONS,
   }
 
   await handoff($, 'auto do X')
+  await clock.advance(1)
   await handoff($, 'panel') // auto opened it; close it so the press below opens it again
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'handoff', surface, ...HINT })
