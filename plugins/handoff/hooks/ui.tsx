@@ -19,7 +19,7 @@ export type Screen = { body: JSX.Element; note: string; keys: Hint[] }
 
 export type Api = {
   go(route: Route): void
-  arm(prompt?: string | null): Promise<void>
+  arm(): Promise<void>
   disarm(): void
   handoffNow(): Promise<void>
   resume(id: string): Promise<void> // /clear → handon → continue-prompt (as the loop)

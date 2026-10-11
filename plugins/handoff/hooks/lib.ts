@@ -10,10 +10,12 @@ export type Entry = { id: string; path: string; mtimeMs: number; title: string; 
 // every helper that takes `$` (findCommand, homeDir, handoffDir, listHandoffs, sync, persist) lives in register.tsx.
 
 // ponytail: runtime state in a module object — it survives /clear (no reload); $.state is only a mirror.
+export const DEFAULT_PROMPT = 'Continue after the handoff'
+
 export const S = {
   armed: false,
   phase: 'idle' as Phase,
-  prompt: null as string | null, // extra continuation text; null = just continue the handoff
+  prompt: DEFAULT_PROMPT, // what the fresh session is told after /handon; `p` in the pane changes it
   written: null as string | null, // handoff file written this cycle
   calls: 0,
   count: 0,

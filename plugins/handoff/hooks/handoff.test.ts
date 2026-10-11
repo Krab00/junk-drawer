@@ -162,11 +162,10 @@ test('the written handoff ends the turn into clear → handon <id> → continue'
   const clear = rec.commands.indexOf('clear')
   expect(clear).toBeGreaterThanOrEqual(0)
   expect(rec.commands.indexOf('handoff:handon abcdef12')).toBeGreaterThan(clear)
-  expect(rec.prompts.at(-1)).toContain('abcdef12')
-  expect(rec.prompts.at(-1)).toContain('do X')
+  expect(rec.prompts.at(-1)).toBe('Continue after the handoff') // the task text is not the continuation
 })
 
-test('a slash prompt runs as the command after clear → handon <id>', OPTIONS, async ($, on) => {
+test('a slash task runs now; after clear → handon the default continuation is sent', OPTIONS, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)
   await start($)
@@ -183,8 +182,9 @@ test('a slash prompt runs as the command after clear → handon <id>', OPTIONS, 
   const chain = rec.commands.slice(before)
   const handon = chain.indexOf('handoff:handon abcdef12')
   expect(handon).toBeGreaterThan(chain.indexOf('clear'))
-  expect(chain.indexOf('orch:orch all')).toBeGreaterThan(handon)
-  expect(rec.prompts.length).toBe(prompts) // no continuation text submitted
+  expect(chain.includes('orch:orch all')).toBe(false) // the task ran once, at arm time
+  expect(rec.prompts.length).toBe(prompts + 1)
+  expect(rec.prompts.at(-1)).toBe('Continue after the handoff')
 })
 
 test('panel toggles the pane; no argument goes on to /handoff', async ($, on) => {

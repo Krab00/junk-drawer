@@ -2,7 +2,7 @@ import { atom, update } from 'claude-code'
 import type { RenderSurface, Register } from 'claude-code'
 
 import type { Ahandoff } from '../types'
-import { DAY, S, idOf, loadOptions, type $, type Entry, type Route } from './lib'
+import { DAY, DEFAULT_PROMPT, S, idOf, loadOptions, type $, type Entry, type Route } from './lib'
 import { Footer, P, Rule, Tabs, fields, type Api, type Ctx, type Elements } from './ui'
 import { VIEWS } from './views'
 
@@ -70,7 +70,7 @@ function sync($: $, percent?: number) {
   if (percent !== undefined) S.percent = percent
   $.ui.invalidate('ui.render')
   return update($, view, v => ({
-    ...v, on: S.armed, phase: S.phase, prompt: S.prompt ?? '', lastId: S.lastId ?? '', count: S.count,
+    ...v, on: S.armed, phase: S.phase, prompt: S.prompt, lastId: S.lastId ?? '', count: S.count,
     threshold: S.threshold, checkEvery: S.checkEvery, percent: S.percent, route: S.route, paneOpen: S.paneOpen,
   }))
 }
@@ -82,11 +82,6 @@ function persist($: $) {
   })
 }
 
-// The continuation sent after a handoff is restored.
-const continuation = (id: string) => {
-  const base = `Handoff ${id} is loaded. This is an automatic continuation, so do not wait for confirmation: pick up at the first unfinished item of its "next" section, keep its decisions and constraints, and work until that list is done or you are blocked on something only the user can answer.`
-  return S.prompt ? `${base} Then: ${S.prompt}` : base
-}
 
 // A handoff file written this session: its id becomes the last one, the list is read again.
 function record(path: string) {
@@ -114,7 +109,7 @@ function queueHandoff($: $) {
 // A slash prompt cannot ride along as text (the host refuses it and the model would only read it),
 // so it runs as the command itself right after /handon.
 function continueFrom($: $, id: string) {
-  const text = S.prompt?.startsWith('/') ? S.prompt : continuation(id)
+  const text = S.prompt || DEFAULT_PROMPT
   void $.clock.sleep(0).then(async () => {
     S.fresh = S.armed // the guard is the loop's: a manual resume while off needs none
     S.phase = 'clear'
@@ -150,9 +145,9 @@ async function panel($: $) {
 async function auto($: $, prompt: string, pane = true) {
   // the pane opens first: only an open made while the command runs is placed at any width
   const opened = pane ? openPane($, 'auto') : undefined
-  await arm($, prompt || null)
+  await arm($)
   await opened
-  if (!prompt) return { text: `handoff auto on — threshold ${S.threshold}%, continue with: (continue the handoff)` }
+  if (!prompt) return { text: `handoff auto on — threshold ${S.threshold}%` }
   runPrompt($, prompt)
   return { text: `handoff auto on — threshold ${S.threshold}% — running: ${prompt}` }
 }
@@ -181,12 +176,11 @@ function toggle($: $, route?: Route) {
   return S.paneOpen ? closePane($) : openPane($, route)
 }
 
-async function arm($: $, prompt?: string | null) {
+async function arm($: $) {
   S.armed = true
   S.phase = 'idle'
   S.calls = 0
   S.armedAt = Date.now()
-  S.prompt = prompt || null // no argument = the plain handoff continuation
   await persist($)
   await sync($)
 }
@@ -243,7 +237,7 @@ function api($: $): Api {
       void sync($)
       void load($)
     },
-    arm: prompt => arm($, prompt),
+    arm: () => arm($),
     disarm: () => void disarm($),
     handoffNow: async () => {
       if (S.armed) S.phase = 'handoff'
