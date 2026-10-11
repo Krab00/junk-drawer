@@ -2,7 +2,7 @@ import { atom, update } from 'claude-code'
 import type { RenderSurface, Register } from 'claude-code'
 
 import type { Ahandoff } from '../types'
-import { DAY, DEFAULT_PROMPT, S, idOf, limit, loadOptions, type $, type Entry, type Route } from './lib'
+import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, idOf, limit, loadOptions, type $, type Entry, type Route } from './lib'
 import { Footer, P, Rule, Tabs, fields, type Api, type Ctx, type Elements } from './ui'
 import { VIEWS } from './views'
 
@@ -79,8 +79,40 @@ function persist($: $) {
   return $.store.set(STORE, {
     on: S.armed, prompt: S.prompt,
     pending: S.phase === 'resume' && S.lastId ? { id: S.lastId, prompt: S.prompt } : undefined,
+    resumeAt: S.blocked ? S.resumeAt : undefined,
   })
 }
+
+// A turn died on the 5h limit: one timer to 2 min past the window's reset, then the continuation prompt.
+// ponytail: no 5h interval — the next limit hit schedules the next timer. The timer lives in this
+// process only; after a restart session.start just tells you it was pending.
+let limitTimer: { cancel(): void } | null = null
+async function scheduleResume($: $) {
+  if (S.blocked || !S.resetsAt) return
+  S.blocked = true
+  S.resumeAt = Date.parse(S.resetsAt) + LIMIT_GRACE
+  const delay = Math.max(0, S.resumeAt - (await $.clock.now()))
+  limitTimer = $.clock.after(delay, () => void resumeAfterLimit($))
+  await persist($)
+  $.ui.toast(`handoff: 5h limit hit — resuming at ${hhmm(S.resumeAt)}`)
+  await sync($)
+}
+async function resumeAfterLimit($: $) {
+  limitTimer = null
+  if (!S.blocked) return
+  S.blocked = false
+  S.resumeAt = null
+  await persist($)
+  await sync($)
+  if (S.armed) await sendPrompt($, S.prompt === DEFAULT_PROMPT ? LIMIT_PROMPT : S.prompt)
+}
+function cancelResume() {
+  limitTimer?.cancel()
+  limitTimer = null
+  S.blocked = false
+  S.resumeAt = null
+}
+const hhmm = (ms: number) => new Date(ms).toTimeString().slice(0, 5)
 
 
 // A handoff file written this session: its id becomes the last one, the list is read again.
@@ -187,6 +219,7 @@ async function arm($: $) {
 
 async function disarm($: $) {
   S.armed = false
+  cancelResume()
   S.phase = 'idle'
   S.armedAt = null
   await persist($)
@@ -211,7 +244,7 @@ async function setOption($: $, field: Parameters<Api['set']>[0], raw: string | n
       S.note = `✗ ${String(raw)} is not a valid ${field}`
       return redraw($)
     }
-  } else if (field === 'autoOn' || field === 'segment') value = raw === true || raw === 'true' || raw === 'on'
+  } else if (field === 'autoOn' || field === 'segment' || field === 'resumeAfterLimit') value = raw === true || raw === 'true' || raw === 'on'
   else return redraw($)
   const { deny } = await $.config.set({ key: `handoff.${field}`, value })
   if (deny) {
@@ -223,6 +256,7 @@ async function setOption($: $, field: Parameters<Api['set']>[0], raw: string | n
   else if (field === 'staleDays') { S.staleDays = value as number; S.entries = null; void load($) }
   else if (field === 'segment') S.segment = value as boolean
   else if (field === 'autoOn') S.autoOn = value as boolean
+  else if (field === 'resumeAfterLimit') { S.resumeAfterLimit = value as boolean; if (!value) cancelResume() }
   S.note = `✓ ${field} = ${String(value)}`
   await sync($)
 }
@@ -285,8 +319,10 @@ export const register: Register = (on, options) => {
       description: 'Auto handoff at a context threshold: handoff → /clear → /handon → continue. off stops, panel toggles the pane.',
       argumentHint: '[prompt] | off | panel',
     })
-    const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string } } | undefined
+    const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string }; resumeAt?: number } | undefined
     if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /handoff:handon ${saved.pending.id}`)
+    if (saved?.resumeAt && saved.resumeAt > Date.now()) $.ui.toast(`handoff: a 5h-limit resume was due at ${hhmm(saved.resumeAt)} — re-arm with /ahandoff`)
+    if (saved?.resumeAt) await $.store.set(STORE, { ...saved, resumeAt: undefined })
     await sync($)
     return next(e)
   })
@@ -337,6 +373,11 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     if (!S.armed || e.agentId) return next(e)
+    // ponytail: the host names no error kind here — an error with the 5h window at 99%+ is the limit.
+    if (e.reason === 'error' && S.resumeAfterLimit && S.fiveHour >= 99) {
+      await scheduleResume($)
+      return next(e)
+    }
     const { context } = await $.session.usage()
     S.tokens = context.tokens ?? S.tokens
     const percent = context.percent ?? 0
@@ -361,6 +402,11 @@ export const register: Register = (on, options) => {
   })
 
   on('session.measure', async ($, e, next) => {
+    const fiveHour = e.rateLimits.find(r => r.kind === 'five_hour')
+    if (fiveHour) {
+      S.fiveHour = fiveHour.percentUsed
+      S.resetsAt = fiveHour.resetsAt ?? S.resetsAt
+    }
     if (e.changed.includes('context')) {
       S.tokens = e.context.tokens ?? S.tokens
       const percent = e.context.percent ?? S.percent
@@ -402,9 +448,11 @@ export const register: Register = (on, options) => {
     const { Button, Text } = $.ui.resolve(e)
     const label = !S.armed
       ? '🪃 off'
+      : S.blocked && S.resumeAt ? `🪃 limit → ${hhmm(S.resumeAt)}`
       : S.phase === 'handoff' ? '🪃 handoff…' : S.phase === 'idle' ? `🪃 ${S.percent}%` : '🪃 resume…'
     const color = !S.armed || S.phase !== 'idle'
       ? P.secondary
+      : S.blocked ? P.warn
       : S.percent >= limit() ? P.bad : S.percent >= limit() - 10 ? P.warn : P.ok
     return (
       <Button key="handoff-segment" plain label={label} onPress={() => void toggle($)}>

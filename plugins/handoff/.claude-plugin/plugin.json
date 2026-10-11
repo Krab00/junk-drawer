@@ -25,6 +25,12 @@
       "description": "Start every session with the auto handoff loop armed.",
       "default": false
     },
+    "resumeAfterLimit": {
+      "type": "boolean",
+      "title": "Auto handoff: resume after the 5h rate limit",
+      "description": "When an armed loop's turn dies on the 5-hour limit, send the continuation prompt 2 minutes after the window resets.",
+      "default": true
+    },
     "staleDays": {
       "type": "number",
       "title": "Handoffs: mark stale after N days",
