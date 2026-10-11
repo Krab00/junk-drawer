@@ -28,7 +28,7 @@ export type Api = {
   remove(id: string): Promise<void>
   deleteStale(): Promise<void>
   openFolder(): Promise<void>
-  set(field: 'threshold' | 'checkEvery' | 'autoOn' | 'staleDays' | 'segment', value: string | number | boolean): Promise<void>
+  set(field: 'threshold' | 'checkEvery' | 'autoOn' | 'staleDays' | 'segment' | 'resumeAfterLimit', value: string | number | boolean): Promise<void>
   refresh(): void
 }
 

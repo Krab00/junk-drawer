@@ -101,6 +101,11 @@ const auto: View = (c) => {
               value={draft.prompt ?? S.prompt} set={(v) => { draft.prompt = v }}
               onSubmit={(v) => { S.prompt = v.trim() || DEFAULT_PROMPT; draft.prompt = null; say(c, '✓ prompt set') }} />
           </Box>
+          <Row c={c} label="5h limit">
+            <Text>{S.blocked && S.resumeAt
+              ? <Text color={P.warn}>{`hit · resuming at ${hhmm(S.resumeAt)}`}</Text>
+              : <Text color={P.secondary}>{S.resumeAfterLimit ? `${S.fiveHour}% used · resumes 2 min after reset` : 'resume off'}</Text>}</Text>
+          </Row>
           <Row c={c} label="Last handoff">
             <Text>{S.lastId ?? '—'}{last ? <Text color={P.secondary}>{` ${hhmm(last.mtimeMs)}`}</Text> : null}</Text>
           </Row>
@@ -299,6 +304,10 @@ const settings: View = (c) => {
           <Row c={c} w={22} label="Arm at session start">
             <Switch c={c} k="auto-on" hotkey="s" on={autoOn()} flip={() => void c.api.set('autoOn', !autoOn())} />
           </Row>
+          <Row c={c} w={22} label="Resume after 5h limit">
+            <Switch c={c} k="resume-limit" hotkey="l" on={S.resumeAfterLimit} flip={() => void c.api.set('resumeAfterLimit', !S.resumeAfterLimit)} />
+            <Text color={P.secondary}> 2 min after the window resets</Text>
+          </Row>
         </Box>
         <Box flexDirection="column">
           <Title c={c} text="Handoff" sub="/handoff and /handon" />
@@ -325,7 +334,7 @@ const settings: View = (c) => {
       </Box>
     ),
     note: 'enter in a field saves it',
-    keys: [['tab', 'move'], ['enter', 'save field'], ['t', 'threshold'], ['e', 'every'], ['s', 'arm at start'], ['w', 'continue with'], ['a', 'stale days'], ['d', 'delete stale'], ['o', 'open folder'], ['g', 'segment']],
+    keys: [['tab', 'move'], ['enter', 'save field'], ['t', 'threshold'], ['e', 'every'], ['s', 'arm at start'], ['l', '5h resume'], ['a', 'stale days'], ['d', 'delete stale'], ['o', 'open folder'], ['g', 'segment']],
   }
 }
 

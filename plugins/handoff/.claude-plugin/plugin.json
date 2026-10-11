@@ -1,6 +1,6 @@
 {
   "name": "handoff",
-  "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /ahandoff [prompt] (= /handoff auto) hands off automatically at a context threshold (handoff → /clear → /handon → continue); /handoff panel opens the pane.",
+  "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /ahandoff [prompt] (= /handoff auto) hands off automatically at a context threshold (handoff → /clear → /handon → continue) and resumes a turn that died on the 5h rate limit 2 minutes after the window resets; /handoff panel opens the pane.",
   "version": "0.2.0",
   "author": {
     "name": "Krab00"
@@ -24,6 +24,12 @@
       "title": "Auto handoff: armed at session start",
       "description": "Start every session with the auto handoff loop armed.",
       "default": false
+    },
+    "resumeAfterLimit": {
+      "type": "boolean",
+      "title": "Auto handoff: resume after the 5h rate limit",
+      "description": "When an armed loop's turn dies on the 5-hour limit, send the continuation prompt 2 minutes after the window resets.",
+      "default": true
     },
     "staleDays": {
       "type": "number",

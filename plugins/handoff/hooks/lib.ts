@@ -27,6 +27,11 @@ export const S = {
   staleDays: 30,
   segment: true,
   autoOn: false,
+  resumeAfterLimit: true, // 5h rate limit: resume the stopped turn 2 min after the window resets
+  fiveHour: 0, // percent of the 5h window used, from the last session.measure
+  resetsAt: null as string | null, // when the 5h window resets (ISO)
+  blocked: false, // a turn died on the 5h limit; a resume is scheduled
+  resumeAt: null as number | null,
   percent: 0,
   tokens: 0,
   armedAt: null as number | null,
@@ -53,7 +58,11 @@ export function loadOptions(options: Record<string, unknown>): void {
   if (S.armed) S.armedAt ??= Date.now()
   S.staleDays = num(options.staleDays ?? 30, 30)
   S.segment = options.segment === undefined ? true : Boolean(options.segment)
+  S.resumeAfterLimit = options.resumeAfterLimit === undefined ? true : Boolean(options.resumeAfterLimit)
 }
+
+export const LIMIT_PROMPT = 'Continue where the rate limit stopped you'
+export const LIMIT_GRACE = 120_000 // 2 min after the window resets
 
 // The usage that triggers a handoff: the threshold, or — when the window already starts at or above it —
 // threshold points of growth above the window's baseline.

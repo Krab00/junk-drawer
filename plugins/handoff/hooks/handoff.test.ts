@@ -288,3 +288,34 @@ test('Settings tab: threshold field writes handoff.threshold', async ($, on) => 
     await ui.unmount()
   }
 })
+
+test('a turn that dies on the 5h limit resumes 2 min after the reset; the setting turns it off', OPTIONS, async ($, on) => {
+  const rec = world(on)
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const clock = mock.clock(on)
+  await start($)
+  await handoff($, 'auto')
+  const hour = 3_600_000
+  const fiveHour = { kind: 'five_hour', percentUsed: 100, resetsAt: new Date(hour).toISOString() }
+  await $.session.measure({ context: usage(10).context, rateLimits: [fiveHour], changed: ['rateLimits'] })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'error' })
+
+  const surface = 'terminal' as Surface
+  const hint = await $.ui.mount({ plugin: 'handoff', surface, ...HINT })
+  expect((await hint.findAll({ type: 'Text' })).map(t => t.text).join('')).toMatch(/limit → \d\d:\d\d/)
+
+  await clock.advance(hour + 60_000)
+  expect(rec.prompts).toEqual([]) // not yet: 2 min grace
+  await clock.advance(60_000)
+  expect(rec.prompts).toEqual(['Continue where the rate limit stopped you'])
+
+  // off in Settings: the next limit death schedules nothing
+  await handoff($, 'panel')
+  const ui = await $.ui.mount({ plugin: 'handoff', surface, ...PANE })
+  await hotkey(ui, '3')
+  await hotkey(ui, 'l')
+  expect(rec.config).toContainEqual({ key: 'handoff.resumeAfterLimit', value: false })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'error' })
+  await clock.advance(hour * 2)
+  expect(rec.prompts.length).toBe(1)
+})
