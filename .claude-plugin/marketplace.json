@@ -20,7 +20,7 @@
     {
       "name": "handoff",
       "source": "./plugins/handoff",
-      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>); /ahandoff automates handoff → /clear → /handon past a context threshold."
+      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>); /ahandoff automates handoff → /clear → /handon past a context threshold and resumes after the 5h rate limit."
     },
     {
       "name": "ctx-limit",
