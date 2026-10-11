@@ -1,6 +1,6 @@
 // The panel's three tabs (Auto, Handoffs, Settings) as `View`s: each reads `S` and calls
 // `c.api`, register.tsx draws the tabs, the rule and the footer around what they return.
-import { DEFAULT_PROMPT, S, type Entry, type Route } from './lib'
+import { DEFAULT_PROMPT, S, limit, type Entry, type Route } from './lib'
 import { Chosen, Field, Filled, Hidden, P, Rule, Spacer, fit, line, when, type Ctx, type View } from './ui'
 
 const DIR = '~/.claude/handoffs' // ponytail: the folder is fixed by the contract, drawn as is
@@ -43,7 +43,7 @@ const Switch = ({ c, k, hotkey, on, flip }: { c: Ctx; k: string; hotkey: string;
 // ------------------------------------------------------------------ Auto
 
 // The bar's colour as the segment's: ok, warn within 10 points of the threshold, bad over it.
-const level = () => (S.percent >= S.threshold ? P.bad : S.percent >= S.threshold - 10 ? P.warn : P.ok)
+const level = () => (S.percent >= limit() ? P.bad : S.percent >= limit() - 10 ? P.warn : P.ok)
 
 const PHASE: Record<string, string> = { idle: 'idle, watching', handoff: 'writing the handoff…', clear: 'clearing…', resume: 'resuming…' }
 
@@ -52,7 +52,7 @@ const auto: View = (c) => {
   const width = Math.max(10, S.cols - 20) // ponytail: 2 indent + ` 100% / 85%` + the pane's edges
   const full = Math.min(width, Math.round((width * S.percent) / 100))
   const window = S.percent > 0 ? (S.tokens * 100) / S.percent : 0
-  const at = (window * S.threshold) / 100
+  const at = (window * limit()) / 100
   const next = S.checkEvery - (S.calls % S.checkEvery)
   // what continuation() in register.tsx will actually send
   const cont = S.prompt
@@ -79,7 +79,7 @@ const auto: View = (c) => {
             <Text color={level()}>{'█'.repeat(full)}</Text>
             <Text color={P.dim}>{'█'.repeat(width - full)}</Text>
             <Text>{` ${S.percent}%`}</Text>
-            <Text color={P.secondary}>{` / ${S.threshold}%`}</Text>
+            <Text color={P.secondary}>{` / ${limit()}%`}</Text>
           </Box>
           <Box paddingLeft={2}>
             <Text color={P.secondary} wrap="truncate">

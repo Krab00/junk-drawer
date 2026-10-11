@@ -165,6 +165,29 @@ test('the written handoff ends the turn into clear → handon <id> → continue'
   expect(rec.prompts.at(-1)).toBe('Continue after the handoff') // the task text is not the continuation
 })
 
+test('a fresh window over the threshold keeps the loop armed with a raised limit', { options: { threshold: 10, checkEvery: 1 } }, async ($, on) => {
+  const rec = world(on)
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const clock = mock.clock(on)
+  await start($)
+  await handoff($, 'auto do X')
+  await clock.advance(1)
+  rec.percent = 12
+
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(1)
+  expect(rec.commands.includes('handoff:handon abcdef12')).toBe(true)
+
+  // the new window starts at 13% (system prompt + handon), over the 10% threshold
+  rec.percent = 13
+  await $.session.measure({ context: usage(13).context, rateLimits: [], changed: ['context'] })
+  rec.percent = 15
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
+  rec.percent = 23 // 10 points above the 13% baseline
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+})
+
 test('a slash task runs now; after clear → handon the default continuation is sent', OPTIONS, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)
