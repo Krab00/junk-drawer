@@ -31,6 +31,7 @@ const FAKE_HANDOFF: Plugin = {
       ...(await next(e)),
       handoff: {
         schema: async () => [
+          { key: 'enabled', type: 'boolean', title: 'Auto handoff: enabled', default: true, main: true },
           { key: 'threshold', type: 'number', title: 'Auto handoff: context threshold (%)', default: 85, main: true },
           { key: 'checkEvery', type: 'number', title: 'Auto handoff: check every N tool calls', default: 5, main: false },
           { key: 'autoOn', type: 'boolean', title: 'Auto handoff: armed at session start', default: false, main: true },
@@ -38,7 +39,7 @@ const FAKE_HANDOFF: Plugin = {
           { key: 'staleDays', type: 'number', title: 'Handoffs: mark stale after N days', default: 30, main: false },
           { key: 'segment', type: 'boolean', title: 'Status line: show the 🪃 segment', default: true, main: true },
         ],
-        get: async (key: string) => ({ threshold: 70, checkEvery: 5, autoOn: false, resumeAfterLimit: true, staleDays: 30, segment: true } as Record<string, number | boolean>)[key]!,
+        get: async (key: string) => ({ enabled: true, threshold: 70, checkEvery: 5, autoOn: false, resumeAfterLimit: true, staleDays: 30, segment: true } as Record<string, number | boolean>)[key]!,
         set: async () => { throw new Error('handoff: the hooks module did not answer') },
         open: async () => { throw new Error('handoff: the hooks module did not answer') },
         show: async () => { throw new Error('handoff: the hooks module did not answer') },
@@ -792,14 +793,15 @@ test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flip
   const rows = (await pane.findAll({ type: 'Box' })).map(b => b.key).filter(k => k?.startsWith('setting:'))
   expect(rows).toEqual([
     'setting:tldr:terse', 'setting:tldr:sentences',
-    'setting:handoff:threshold', 'setting:handoff:autoOn', 'setting:handoff:resumeAfterLimit', 'setting:handoff:segment',
+    'setting:handoff:enabled', 'setting:handoff:threshold', 'setting:handoff:autoOn', 'setting:handoff:resumeAfterLimit', 'setting:handoff:segment',
     'setting:orch:guard', 'setting:orch:allow_fable_agents', 'setting:orch:implementer_ctx_k',
   ])
   expect((await pane.find({ type: 'Text', text: 'Auto handoff: context threshold (%)' }))?.text).toBe('Auto handoff: context threshold (%)')
   expect((await pane.find({ type: 'Text', text: 'Sentences in a summary' }))?.text).toBe('Sentences in a summary')
-  // The switches, a-e in drawn order, each showing the value get answered.
-  const switches = ['tldr:terse', 'handoff:autoOn', 'handoff:resumeAfterLimit', 'handoff:segment', 'orch:allow_fable_agents']
-  for (const [i, k] of switches.entries()) expect((await pane.find({ type: 'Button', key: `set:${k}` }))?.props.hotkey, k).toBe('abcde'[i])
+  // The switches, a-f in drawn order, each showing the value get answered.
+  const switches = ['tldr:terse', 'handoff:enabled', 'handoff:autoOn', 'handoff:resumeAfterLimit', 'handoff:segment', 'orch:allow_fable_agents']
+  for (const [i, k] of switches.entries()) expect((await pane.find({ type: 'Button', key: `set:${k}` }))?.props.hotkey, k).toBe('abcdef'[i])
+  expect((await pane.find({ type: 'Button', key: 'set:handoff:enabled' }))?.text).toBe('off') // on now: the button turns it off
   expect((await pane.find({ type: 'Button', key: 'set:handoff:autoOn' }))?.text).toBe('on') // off now: the button turns it on
   expect((await pane.find({ type: 'Button', key: 'set:handoff:segment' }))?.text).toBe('off')
   expect((await pane.find({ type: 'Input', key: 'set:handoff:threshold' }))?.props.value).toBe('70') // get's value, not the default 85
@@ -811,10 +813,11 @@ test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flip
   expect((await pane.find({ key: 'set:orch:guard=fable' }))?.text).toBe(' fable ')
   expect(await pane.find({ type: 'Button', key: 'set:orch:guard=fable' })).toBeUndefined()
   expect((await pane.find({ type: 'Button', key: 'set:orch:guard=always' }))?.text).toBe('always')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-e setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-f setting  tab move  q close')
 
   // Each write goes to the right plugin's set with the right key: a flip sends the other state, a number as typed
   // (the plugin coerces and validates), a choice its option.
+  await pane.press({ key: 'set:handoff:enabled' })
   await pane.press({ key: 'set:handoff:autoOn' })
   await pane.press({ key: 'set:handoff:segment' })
   await pane.press({ key: 'set:orch:allow_fable_agents' })
@@ -823,6 +826,7 @@ test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flip
   await pane.input({ key: 'set:tldr:sentences', text: '5' })
   await pane.press({ key: 'set:orch:guard=always' })
   expect(rec.calls.filter(c => c.method === 'set')).toEqual([
+    { noun: 'handoff', method: 'set', input: { key: 'enabled', value: false } },
     { noun: 'handoff', method: 'set', input: { key: 'autoOn', value: true } },
     { noun: 'handoff', method: 'set', input: { key: 'segment', value: false } },
     { noun: 'orch', method: 'set', input: { key: 'allow_fable_agents', value: false } },
@@ -1064,7 +1068,7 @@ test('AC3: two setting presses at once draw each section once, with no render er
   expect(await keysOf(pane, 'group:')).toEqual(['group:tldr', 'group:handoff', 'group:orch'])
   expect(await keysOf(pane, 'setting:')).toEqual([
     'setting:tldr:terse', 'setting:tldr:sentences',
-    'setting:handoff:threshold', 'setting:handoff:autoOn', 'setting:handoff:resumeAfterLimit', 'setting:handoff:segment',
+    'setting:handoff:enabled', 'setting:handoff:threshold', 'setting:handoff:autoOn', 'setting:handoff:resumeAfterLimit', 'setting:handoff:segment',
     'setting:orch:guard', 'setting:orch:allow_fable_agents', 'setting:orch:implementer_ctx_k',
   ])
   expect(rec.calls.filter(c => c.method === 'set')).toHaveLength(2)
