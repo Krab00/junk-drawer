@@ -146,6 +146,24 @@ for cfgjson in '{"junkd@junk-drawer": {"options": {"output_style": "ste"}}}' '{"
     [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "pluginConfigs $cfgjson: outputStyle not set"
     [ "$(jq -c .pluginConfigs "$settings")" = "$(jq -c . <<<"$cfgjson")" ] || fail "pluginConfigs $cfgjson: pluginConfigs changed"
 done
+# the setting in settings.json wins over the flag file, which only stands in where settings.json names none: a
+# hand edit off -> ste applies at once, though the flag the last session left is still there; an entry with no
+# output_style leaves the flag in charge
+reset
+mkdir -p "$(dirname "$flag")" && : > "$flag"
+printf '{"theme": "dark", "pluginConfigs": {"junkd@junk-drawer": {"options": {"output_style": "ste"}}}}\n' > "$settings"
+out=$(main) || fail "flag + setting ste: hook exited non-zero"
+rg -q '^junkd: ' <<<"$out" || fail "flag + setting ste: expected the junkd: line, got: $out"
+[ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "flag + setting ste: outputStyle not set"
+[ -e "$stamp" ] || fail "flag + setting ste: not stamped"
+reset
+mkdir -p "$(dirname "$flag")" && : > "$flag"
+printf '{"theme": "dark", "pluginConfigs": {"junkd@junk-drawer": {"options": {}}}}\n' > "$settings"
+before=$(cat "$settings")
+out=$(main) || fail "flag + no setting: hook exited non-zero"
+[ -z "$out" ] || fail "flag + no setting: hook printed output: $out"
+[ "$(cat "$settings")" = "$before" ] || fail "flag + no setting: settings.json changed"
+[ ! -e "$stamp" ] || fail "flag + no setting: stamped although skipped"
 # neither CLAUDE_CONFIG_DIR nor HOME: nothing to do, exit 0, silent
 out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR -u HOME "$hook" 2>&1) || fail "no HOME: hook exited non-zero"
 [ -z "$out" ] || fail "no HOME: hook printed output: $out"

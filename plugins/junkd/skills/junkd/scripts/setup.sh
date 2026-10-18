@@ -8,8 +8,8 @@
 # is there, set or found, so each version looks once. No stamp while the step is off or while settings.json is
 # refused: the step applies once that changes. Off is the `output_style` setting at `off`, read from settings.json
 # itself (pluginConfigs["junkd@<marketplace>"].options.output_style: a shell hook reads no plugin setting, and this
-# hook runs before the hooks module does at a session start) or the flag file .../junkd/output-style-off the
-# hooks module mirrors the setting into (the row's truth between session starts).
+# hook runs before the hooks module does at a session start), which wins whenever it names a value; only where it
+# names none, the flag file .../junkd/output-style-off the hooks module mirrors the setting into.
 # Never into a subagent: skipped when CLAUDE_AGENT_ID is set or the hook input carries an agent_id. Skipped on a
 # /clear or compaction too: that session runs with the plugin version it started with and would stamp an old one.
 # Output: one `junkd: ...` line when the key was set, nothing otherwise. Always exits 0: a failing SessionStart
@@ -34,7 +34,6 @@ re='"source"[[:space:]]*:[[:space:]]*"(clear|compact)"'
 
 cfg="${CLAUDE_CONFIG_DIR:-${HOME:+$HOME/.claude}}"
 [ -n "$cfg" ] || exit 0
-[ ! -e "$cfg/junkd/output-style-off" ] || exit 0
 
 # cd -P: this script is reached through the plugin-root symlink scripts -> skills/junkd/scripts, and the manifest
 # sits beside the plugin root, not the skill.
@@ -49,13 +48,18 @@ stamp="$cfg/junkd/setup-$ver.stamp"
 [ ! -e "$stamp" ] || exit 0
 
 s="$cfg/settings.json"
+# The setting itself, as Claude Code stores it, is the truth: off under any marketplace's junkd entry skips (no
+# stamp), any other value applies. The flag file stands in only where settings.json names no output_style.
+style=$(jq -r '[.pluginConfigs? // {} | to_entries[] | select(.key | startswith("junkd@")) | .value.options?.output_style
+    | select(. != null)] | if index("off") != null then "off" elif length > 0 then "ste" else "" end' "$s" 2>/dev/null) || style=""
+case "$style" in
+    off) exit 0 ;;
+    "") [ ! -e "$cfg/junkd/output-style-off" ] || exit 0 ;;
+esac
 if [ ! -s "$s" ]; then
     mkdir -p "$cfg" 2>/dev/null && printf '{}\n' > "$s" 2>/dev/null || exit 0
 fi
 jq -e 'type == "object"' "$s" >/dev/null 2>&1 || exit 0
-# The setting itself, as Claude Code stores it: off under any marketplace's junkd entry skips, no stamp.
-jq -e '[.pluginConfigs? // {} | to_entries[] | select(.key | startswith("junkd@")) | .value.options?.output_style] | index("off") == null' \
-    "$s" >/dev/null 2>&1 || exit 0
 if jq -e 'has("outputStyle")' "$s" >/dev/null 2>&1; then
     { mkdir -p "$cfg/junkd" && : > "$stamp"; } 2>/dev/null
     exit 0
