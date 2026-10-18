@@ -265,6 +265,11 @@ test('SendMessage: reviewers are always fresh, an implementer over the cap is re
   }
   expect(orchGuard(send, st({ agent: { type: 'orch:implementer-x' } }), on_)).toBeUndefined() // no reviewer by its name
   expect(orchGuard(send, st({ agent: { type: 'orch:ui-reviewer-x' } }), on_)).toBeUndefined()
+  // test-planner and test-reviewer are reviewers too, bare and orch:-prefixed; their names inside another type are not
+  for (const type of ['test-planner', 'orch:test-planner', 'test-reviewer', 'orch:test-reviewer'])
+    expect(orchGuard(send, st({ agent: { type } }), on_), type).toMatch(new RegExp(`^${PREFIX.replace(/[()]/g, '\\$&')} ${type.replace(/^orch:/, '')} is a reviewer, and reviewers are always fresh`))
+  for (const type of ['orch:implementer', 'implementer', 'orch:test-reviewer-x', 'test-plannerx', 'xtest-planner', 'orch:test-runner', 'other:test-reviewer'])
+    expect(orchGuard(send, st({ agent: { type } }), on_), type).toBeUndefined()
   expect(orchGuard(send, st({ agent: { type: 'orch:implementer', tokens: 450_000 } }), on_)).toMatch(
     /implementer context 450k exceeds cap 400k: spawn a fresh implementer, hand it `git diff <base>...<branch>` and why previous rounds failed/,
   )
