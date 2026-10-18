@@ -372,7 +372,7 @@ function world(on: On) {
     links: {} as Record<string, string>, dangling: {} as Record<string, string[]>, nowhere: [] as string[], envFails: false,
     config: [] as { key: string; value: unknown }[], opened: [] as string[], focus: [] as (true | undefined)[], closed: [] as string[], runs: [] as string[][],
     existsFails: false, writeFails: false, notPlaced: false, dirs: [] as string[], // dirs: folders that exist (fs.exists true, stat kind dir)
-    cwd: '/tmp' as string, git: {} as Record<string, string>, gitFails: [] as string[] } // git: a cwd's `rev-parse --show-toplevel`; any other cwd is in no repo; gitFails: the cwds where it exits 128 with that stdout anyway
+    cwd: '/tmp' as string, cwdFails: false, git: {} as Record<string, string>, gitFails: [] as string[] } // git: a cwd's `rev-parse --show-toplevel`; any other cwd is in no repo; gitFails: the cwds where it exits 128 with that stdout anyway
   on('env.get', (_$, e) => {
     if (rec.envFails) throw new Error('env unavailable')
     return { value: env[e.name] }
@@ -396,7 +396,10 @@ function world(on: On) {
     return { value: rec.model }
   })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
-  on('session.cwd', () => ({ value: rec.cwd }))
+  on('session.cwd', () => {
+    if (rec.cwdFails) throw new Error('no cwd')
+    return { value: rec.cwd }
+  })
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('ui.open', (_$, e) => { rec.opened.push(e.id); rec.focus.push(e.focus); return { value: rec.notPlaced ? { isPlaced: false as const, reason: 'no room' } : { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); return { value: undefined } })
@@ -566,6 +569,22 @@ test("the task store: the session cwd's git toplevel is the repo whose .orch/ th
   rec.git['/work/broken'] = '/work/app'
   rec.gitFails.push('/work/broken')
   expect(denial(await read('/work/app/.orch/config.md'))).toMatch(/may not run Read/)
+})
+
+test('the task store: no cwd (empty, or session.cwd failing) is no repo, and git is never asked about it', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  rec.files['/work/app/.orch/config.md'] = '---\n---\n'
+  rec.git[''] = '/work/app' // what a `git -C ''` (git's own cwd) would answer
+  const read = () => $.tool.call({ tool: 'Read', file_path: '/work/app/.orch/config.md' })
+  const gitRuns = () => rec.runs.filter(r => r[0] === 'git')
+  rec.cwd = ''
+  expect(denial(await read())).toMatch(/may not run Read/)
+  expect(gitRuns()).toEqual([])
+  rec.cwd = '/work/app'
+  rec.cwdFails = true
+  expect(denial(await read())).toMatch(/may not run Read/)
+  expect(gitRuns()).toEqual([])
 })
 
 test("AC8: another plugin's $.tool.call and $.agent.spawn pass on a guarded Fable main loop; the engine's own are denied", WITH_FRAME, async ($, on) => {

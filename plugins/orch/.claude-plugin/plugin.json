@@ -1,7 +1,7 @@
 {
   "name": "orch",
   "description": "Project-agnostic orchestration loop: pick tasks from a canonical task store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, and open draft PRs. Config-driven via .orch/config.md. Run /orch (or /orch:init first). The hooks module guards the main loop on Fable (tool.call), opens a settings pane (/orch panel) and exports $.orch.",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "author": {
     "name": "Krab00"
   },
