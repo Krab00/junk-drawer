@@ -40,7 +40,7 @@ project doesn't declare is silently skipped — never invent a check for a layer
 exist. The mechanics live in three zero-dep scripts you drive (never hand-edit frontmatter
 or reinvent their logic):
 
-- `${CLAUDE_PLUGIN_ROOT}/bin/orch-state list | set <id> <status> | reset-stale | new <id> [title] | settings`
+- `${CLAUDE_PLUGIN_ROOT}/bin/orch-state list | set <id> <status> | reset-stale [--blocked] | new <id> [title] | settings`
   — the canonical task store. Status is frontmatter; this is the only writer of it.
 - `${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree add <id> <branch> [base] | remove <id> | slot <id>`
   — per-task worktrees under `.worktrees/`; prints `dir=`, `slot=`, and `web_port=`/`api_port=`
@@ -96,8 +96,9 @@ files + git; the loop keys off the final `BACKLOG:` line and stops on `DRAINED` 
 
 1. `orch-sync pull` — refresh the store from the backend (no-op for `adhoc`/`manifest`; for
    `linear-mcp` do the pull yourself via the Linear MCP; `github-issues` uses `gh`).
-2. `orch-state reset-stale` — any `in_progress`/`blocked` task (leftover from a killed run, or
-   escalated last run — `blocked` means "redo with fresh rounds") returns to `todo`.
+2. `orch-state reset-stale` — any `in_progress` task (leftover from a killed run) returns to
+   `todo`. A `blocked` task stays blocked: it needs a human. Only when the user asks for a retry,
+   run `orch-state reset-stale --blocked` (every `blocked` task back to `todo`, fresh rounds).
 3. Selectable pool = `orch-state list` rows with `status: todo`. A task is **eligible** when
    every id in its `deps` is `done` (or completed earlier this run); a `deps` entry that is not
    a known task id is a human prerequisite → list it in the summary, don't auto-run it.
@@ -248,5 +249,5 @@ BACKLOG: BLOCKED — remaining tasks need a human: <ids + one-line reasons>
 
 `BLOCKED` (not `REMAINING`) when every remaining non-`done` task is ineligible for human reasons
 — `blocked` after the round cap, or a non-task-id `deps` prerequisite. A `/loop` driver must STOP
-on both `DRAINED` and `BLOCKED`; a human may re-run manually (the §1 `reset-stale` turns `blocked`
-back to `todo` for another attempt).
+on both `DRAINED` and `BLOCKED`; a human may ask for a retry (then §1 runs `reset-stale --blocked`,
+which turns `blocked` back to `todo` for another attempt).
