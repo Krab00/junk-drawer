@@ -409,7 +409,10 @@ export const register: Register = (on, options) => {
     })
     const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string }; resumeAt?: number } | undefined
     if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /handoff:handon ${saved.pending.id}`)
-    if (saved?.resumeAt && saved.resumeAt > Date.now()) $.ui.toast(`handoff: a 5h-limit resume was due at ${hhmm(saved.resumeAt)} — re-arm with /ahandoff`)
+    if (saved?.resumeAt && saved.resumeAt > Date.now()) {
+      const how = S.enabled ? 're-arm with /ahandoff' : 'auto handoff is disabled: turn the enabled setting on (/config, or the pane\'s Settings tab), then /ahandoff'
+      $.ui.toast(`handoff: a 5h-limit resume was due at ${hhmm(saved.resumeAt)} — ${how}`)
+    }
     if (saved?.resumeAt) await $.store.set(STORE, { ...saved, resumeAt: undefined })
     await sync($)
     return next(e)

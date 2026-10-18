@@ -897,6 +897,26 @@ test('a refused write of handoff.enabled (menu or set) leaves the loop armed', {
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
 })
 
+// A 5h-limit resume a previous session left scheduled: the startup notice says how to get it back.
+for (const enabled of [true, false]) {
+  test(`the startup notice of a lost 5h-limit resume, enabled ${enabled}: ${enabled ? 're-arm with /ahandoff' : 'names the enabled setting'}`, { options: { enabled } }, async ($, on) => {
+    on('store.get', { key: 'ahandoff' }, () => ({ value: { on: true, resumeAt: Date.now() + 3_600_000 } }))
+    const toasts: string[] = []
+    on('ui.toast', { text: /^handoff: / }, (_$, e) => { toasts.push(e.text); return { value: undefined } })
+    world(on)
+    await start($)
+    const notice = toasts.find(t => /5h-limit resume was due/.test(t))
+    expect(notice, toasts.join(' | ')).toBeDefined()
+    if (enabled) {
+      expect(notice).toMatch(/re-arm with \/ahandoff$/)
+      expect(notice).not.toMatch(/disabled/)
+    } else {
+      expect(notice).toMatch(/auto handoff is disabled: turn the enabled setting on \(\/config, or the pane's Settings tab\), then \/ahandoff$/)
+      expect(notice).not.toMatch(/re-arm with/)
+    }
+  })
+}
+
 test('Settings tab: the Enabled switch (u) writes handoff.enabled and the Auto tab then says disabled', OPTIONS, async ($, on) => {
   const rec = world(on)
   await start($)
