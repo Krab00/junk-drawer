@@ -12,7 +12,7 @@ export type Ahandoff = {
 }
 
 // What `$.handoff` offers other plugins (a frame plugin shows the `main` settings and jumps into the pane).
-export type HandoffField = 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
+export type HandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
 export type HandoffSchemaEntry = { key: HandoffField; type: 'number' | 'boolean'; title: string; default: number | boolean; main: boolean }
 export type HandoffRoute = 'auto' | 'handoffs' | 'settings'
 export type HandoffStatus = { armed: boolean; percent: number; phase: 'idle' | 'handoff' | 'clear' | 'resume' }

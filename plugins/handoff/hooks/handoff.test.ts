@@ -136,6 +136,8 @@ const FRAME: Plugin = {
         if (method === 'open') return { text: JSON.stringify({ ok: await $.handoff.open(input) }) }
         if (method === 'show') return { text: JSON.stringify({ ok: await $.handoff.show(input) }) }
         if (method === 'hide') return { text: JSON.stringify({ ok: await $.handoff.hide(input) }) }
+        // The /config menu's write, as another plugin makes it: it reaches handoff's config.set hooks.
+        if (method === 'config') return { text: JSON.stringify({ ok: await $.config.set(input) }) }
         return { text: JSON.stringify({ error: `no method ${method}` }) }
       } catch (err) {
         return { text: JSON.stringify({ error: String((err as Error).message ?? err) }) }
@@ -374,9 +376,9 @@ test('a turn that dies on the 5h limit resumes 2 min after the reset; the settin
 // The manifest's userConfig keys. A test cannot import plugin.json (only code files load), so the keys stand
 // here and the defaults come from the engine: with no test options, get() answers the manifest's defaults.
 // tests/smoke.sh checks each entry's type, title and default against the manifest itself.
-const MANIFEST_KEYS = ['threshold', 'checkEvery', 'autoOn', 'resumeAfterLimit', 'staleDays', 'segment']
+const MANIFEST_KEYS = ['enabled', 'threshold', 'checkEvery', 'autoOn', 'resumeAfterLimit', 'staleDays', 'segment']
 
-test('$.handoff: the seven calls exist; schema mirrors the manifest with main on the four frame fields', WITH_FRAME, async ($, on) => {
+test('$.handoff: the seven calls exist; schema mirrors the manifest with main on the five frame fields, enabled first', WITH_FRAME, async ($, on) => {
   world(on)
   await start($)
   expect(await frame($, 'members')).toEqual(['schema', 'get', 'set', 'open', 'show', 'hide', 'status'])
@@ -388,7 +390,8 @@ test('$.handoff: the seven calls exist; schema mirrors the manifest with main on
     expect(f.title, f.key).toMatch(/\S/)
     expect(await frame($, 'get', f.key), `get(${f.key}) is the manifest default`).toBe(f.default)
   }
-  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['threshold', 'autoOn', 'resumeAfterLimit', 'segment'])
+  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['enabled', 'threshold', 'autoOn', 'resumeAfterLimit', 'segment'])
+  expect(schema[0]).toEqual({ key: 'enabled', type: 'boolean', title: 'Auto handoff: enabled', default: true, main: true })
 })
 
 test('$.handoff.set writes handoff.<key> through $.config and get reads it back; a bad value or scope is refused', WITH_FRAME, async ($, on) => {
@@ -560,4 +563,163 @@ test('$.handoff.status mirrors armed, percent and phase', { ...WITH_FRAME, ...OP
 
   await handoff($, 'off')
   expect((await frame($, 'status') as { armed: boolean; phase: string })).toMatchObject({ armed: false, phase: 'idle' })
+})
+
+// ------------------------------------------------------------------ enabled
+
+const DISABLED = { options: { threshold: 80, checkEvery: 1, enabled: false, autoOn: true } }
+const ahandoff = ($: Engine, args: string) =>
+  $.command.run({ command: 'ahandoff', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+const text = (r: unknown) => (r as { text?: string }).text ?? ''
+const hint = async ($: Engine) => {
+  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...HINT })
+  const t = await texts(ui as unknown as Mounted<Surface, 'Pane'>)
+  await ui.unmount()
+  return t
+}
+const DIED = (turnId: string) => ({ answer: '', durationMs: 1, isAborted: false, turnId, reason: 'error' as const })
+
+test('enabled false: autoOn arms nothing, auto refuses, no deny past the threshold, no 🪃 segment, no 5h resume', { ...WITH_FRAME, ...DISABLED }, async ($, on) => {
+  const rec = world(on)
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const clock = mock.clock(on)
+  await start($)
+  expect(await frame($, 'get', 'enabled')).toBe(false)
+  expect(await frame($, 'status')).toMatchObject({ armed: false }) // autoOn: true does not arm a disabled loop
+
+  expect(text(await handoff($, 'auto do X'))).toMatch(/auto handoff is disabled/)
+  expect(text(await ahandoff($, 'do Y'))).toMatch(/auto handoff is disabled/)
+  await clock.advance(1)
+  expect(rec.prompts).toEqual([]) // neither prompt ran
+  expect(rec.opened).toEqual([]) // `auto` opens no pane while disabled
+  expect(await frame($, 'status')).toMatchObject({ armed: false })
+
+  rec.percent = 95
+  for (let i = 0; i < 3; i++) expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't0', reason: 'done' })
+  await clock.advance(1)
+  expect(rec.commands.filter(c => c.startsWith('handoff:handoff'))).toEqual([]) // no handoff queued at the threshold
+
+  const hour = 3_600_000
+  const fiveHour = { kind: 'five_hour', percentUsed: 100, resetsAt: new Date(hour).toISOString() }
+  await $.session.measure({ context: usage(10).context, rateLimits: [fiveHour], changed: ['rateLimits'] })
+  await $.turn.complete(DIED('t1'))
+  await clock.advance(hour * 2)
+  expect(rec.prompts).toEqual([]) // no 5h-limit resume
+
+  expect(await hint($)).not.toMatch(/🪃/)
+})
+
+test('enabled false: /handoff, /handon, the pane and a handoff write still work; the Auto tab offers no Arm', DISABLED, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  expect(text(await handoff($, ''))).toBe('downstream handoff:handoff') // the plain /handoff goes on
+  expect(rec.commands).toContain('handoff:handoff')
+  const r = await $.command.run({ command: 'handoff:handon', args: 'aaaaaaaa', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  expect(text(r)).toBe('downstream handoff:handon')
+  expect(denial(await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-03-03T00-00_cccccccc.md`, content: '# h' }))).toBeUndefined()
+
+  await handoff($, 'panel')
+  expect(rec.opened).toEqual(['ahandoff'])
+  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+  expect(await texts(ui)).toMatch(/disabled/)
+  expect((await ui.findAll({ type: 'Button' })).some(b => b.props.hotkey === 'a'), 'no Arm button').toBe(false)
+  expect(await texts(ui)).toMatch(/cccccccc/) // the write was recorded as the last handoff
+  await handoff($, 'panel')
+  expect(rec.closed).toEqual(['ahandoff'])
+})
+
+test('$.handoff.set enabled flips it live: off disarms and drops a pending 5h resume, on re-arms nothing; every spelling', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const clock = mock.clock(on)
+  await start($)
+  await handoff($, 'auto')
+  expect(await frame($, 'set', { key: 'enabled', value: true })).toBe(true) // on while on: stays armed
+  expect(await frame($, 'status')).toMatchObject({ armed: true })
+  rec.percent = 90
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+
+  expect(await frame($, 'set', { key: 'enabled', value: false })).toBe(false)
+  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: false })
+  expect(await frame($, 'get', 'enabled')).toBe(false)
+  expect(await frame($, 'status')).toEqual({ armed: false, percent: 90, phase: 'idle' })
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
+  expect(await hint($)).not.toMatch(/🪃/)
+
+  expect(await frame($, 'set', { key: 'enabled', value: true })).toBe(true)
+  expect(await frame($, 'status')).toMatchObject({ armed: false }) // on arms nothing
+  expect(await hint($)).toMatch(/🪃 off/)
+  await handoff($, 'auto')
+  expect(await frame($, 'status')).toMatchObject({ armed: true })
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i) // re-armed at once
+  await handoff($, 'off')
+
+  // a 5h-limit resume already scheduled is dropped by enabled off
+  await handoff($, 'auto')
+  rec.prompts.length = 0
+  const hour = 3_600_000
+  await $.session.measure({ context: usage(10).context, rateLimits: [{ kind: 'five_hour', percentUsed: 100, resetsAt: new Date(hour).toISOString() }], changed: ['rateLimits'] })
+  await $.turn.complete(DIED('t1'))
+  expect(await hint($)).toMatch(/limit → /)
+  await frame($, 'set', { key: 'enabled', value: false })
+  await clock.advance(hour * 2)
+  expect(rec.prompts).toEqual([])
+
+  // one assertion per spelling: true, 'true', 'on' are on; false, 'false', 'off' are off
+  for (const [value, want] of [[true, true], [false, false], ['true', true], ['false', false], ['on', true], ['off', false]] as const) {
+    expect(await frame($, 'set', { key: 'enabled', value }), String(value)).toBe(want)
+    expect(await frame($, 'get', 'enabled'), String(value)).toBe(want)
+  }
+})
+
+test('the /config menu write of handoff.enabled lands live too, read as set reads it', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await handoff($, 'auto')
+  rec.percent = 90
+  await frame($, 'config', { key: 'handoff.enabled', value: 'off' })
+  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: false }) // stored as the boolean
+  expect(await frame($, 'get', 'enabled')).toBe(false)
+  expect(await frame($, 'status')).toMatchObject({ armed: false })
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
+
+  await frame($, 'config', { key: 'handoff.enabled', value: 'on' })
+  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: true })
+  expect(await frame($, 'get', 'enabled')).toBe(true)
+  await handoff($, 'auto')
+  expect(await frame($, 'status')).toMatchObject({ armed: true })
+})
+
+test('a refused write of handoff.enabled (menu or set) leaves the loop armed', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  on('config.set', { key: 'handoff.enabled' }, () => ({ deny: 'locked' }))
+  const rec = world(on)
+  await start($)
+  await handoff($, 'auto')
+  rec.percent = 90
+  expect(await frame($, 'config', { key: 'handoff.enabled', value: false })).toEqual({ deny: 'locked' }) // $.config.set answers a deny
+  await expect(frame($, 'set', { key: 'enabled', value: false })).rejects.toThrow(/locked/)
+  expect(await frame($, 'get', 'enabled')).toBe(true)
+  expect(await frame($, 'status')).toMatchObject({ armed: true })
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+})
+
+test('Settings tab: the Enabled switch (u) writes handoff.enabled and the Auto tab then says disabled', OPTIONS, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await handoff($, 'auto')
+  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+  await hotkey(ui, '3')
+  await hotkey(ui, 'u')
+  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: false })
+  await hotkey(ui, '1')
+  expect(await texts(ui)).toMatch(/disabled/)
+  expect((await ui.findAll({ type: 'Button' })).some(b => b.props.hotkey === 'o' || b.props.hotkey === 'a'), 'neither Off nor Arm').toBe(false)
+  await hotkey(ui, '3')
+  await hotkey(ui, 'u')
+  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: true })
+  await hotkey(ui, '1')
+  await hotkey(ui, 'a')
+  expect(rec.config.length).toBe(2)
+  expect(await texts(ui)).toMatch(/armed/)
 })
