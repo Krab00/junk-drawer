@@ -459,15 +459,15 @@ rg -q 'no-op' <<<"$("$bin/orch-sync" pull)" || fail "orch-sync pull (adhoc) is n
 rg -q '^  orch-sync pull \[id\.\.\.\]' <<<"$("$bin/orch-sync" --help)" || fail "orch-sync --help: no usage"
 rg -q 'no-op' <<<"$("$bin/orch-sync" push)" || fail "orch-sync push (adhoc) is not a no-op"
 
-# tasks_dir steers where the scripts write, so it must stay inside the project: relative, no `..` segment, its real
-# path (symlinks resolved, from the nearest existing folder) under the project's and outside .git/
+# tasks_dir steers where the scripts write, so it must be a folder under the project's .orch/: relative, no `..`
+# segment, its real path (symlinks resolved, from the nearest existing folder) below .orch/, never .orch/ itself
 fence="$tmp/fence"; mkdir -p "$fence/.orch/tasks" "$tmp/outside"
 fence=$(cd -P "$fence" && pwd)
 git -C "$fence" init -q
 ln -s "$tmp/outside" "$fence/.orch/link"
 ln -s "$tmp/outside" "$fence/linked"
 fence_cfg() { printf -- '---\nbackend: adhoc\ntasks_dir: %s\n---\n' "$1" > "$fence/.orch/config.md"; }
-for bad in '../outside' '/tmp/x' '.orch/nope/../../../outside' '.orch/../../outside' '.orch/tasks/../../../outside' '.orch/link' '.orch/link/new/deep' 'linked' '.git' '.git/tasks' '"../outside"'; do
+for bad in '../outside' '/tmp/x' '/.orch/tasks' '.orch/nope/../../../outside' '.orch/../../outside' '.orch/tasks/../../../outside' '.orch/link' '.orch/link/new/deep' 'linked' '.git' '.git/tasks' '"../outside"' 'tasks' '.' '.orch' '.orch/' './.orch' '.orchard/tasks' 'x.orch/tasks'; do
     fence_cfg "$bad"
     for cmd in "orch-state list" "orch-state tasks-dir" "orch-state new T-9" "orch-state reset-stale" "orch-sync pull"; do
         if out=$(cd "$fence" && $bin/$cmd 2>&1); then fail "tasks_dir $bad: $cmd ran: $out"; fi
@@ -475,8 +475,8 @@ for bad in '../outside' '/tmp/x' '.orch/nope/../../../outside' '.orch/../../outs
     done
     [ -z "$(ls -A "$tmp/outside")" ] || fail "tasks_dir $bad: something was written outside the project"
 done
-# inside: the usual dir, a quoted one, one not created yet, the project root's own subfolder
-for good in '.orch/tasks' '".orch/tasks"' '.orch/new/deep' 'tasks' './.orch/tasks'; do
+# under .orch/: the usual dir, a quoted one, one not created yet, a ./ spelling
+for good in '.orch/tasks' '".orch/tasks"' '.orch/new/deep' './.orch/tasks'; do
     fence_cfg "$good"
     out=$(cd "$fence" && "$bin/orch-state" tasks-dir) || fail "tasks_dir $good refused: $out"
     want=${good//\"/}; [ "$out" = "$fence/$want" ] || fail "tasks_dir $good: printed $out"
