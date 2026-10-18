@@ -67,16 +67,19 @@ Tabs switch with `1`, `2` and `3`. `q` closes the pane.
 
 Set them in the Settings tab or in `/config` under plugin `handoff`.
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `threshold` | 85 | Context usage in percent that triggers the handoff |
-| `checkEvery` | 5 | How often, in tool calls, usage is read mid-turn |
-| `autoOn` | off | Arm the loop at every session start |
-| `resumeAfterLimit` | on | Send the continuation prompt 2 minutes after the 5h window resets when a turn died on the limit |
-| `staleDays` | 30 | Handoffs older than this are marked stale and removed by `d` |
-| `segment` | on | Show the `🪃` segment in the prompt line |
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `threshold` | number | `85` | Context usage in percent that triggers the handoff |
+| `checkEvery` | number | `5` | How often, in tool calls, usage is read mid-turn |
+| `autoOn` | boolean | `false` | Arm the loop at every session start |
+| `resumeAfterLimit` | boolean | `true` | Send the continuation prompt 2 minutes after the 5h window resets when a turn died on the limit |
+| `staleDays` | number | `30` | Handoffs older than this are marked stale and removed by `d` |
+| `segment` | boolean | `true` | Show the `🪃` segment in the prompt line |
 
-`ctx-limit` stays a separate, manual safeguard.
+Scope: user-global; project/session overrides: planned.
+
+`ctx-limit` stays a separate, manual safeguard. The [junkd](../junkd/README.md) frame shows the main
+rows of this table in its own pane through `$.handoff` (below); it is optional, handoff works without it.
 
 ### API for other plugins
 
