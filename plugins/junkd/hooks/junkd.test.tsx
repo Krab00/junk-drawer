@@ -282,9 +282,9 @@ type Call = { noun: string; method: string; input: unknown }
 // fails the load); `env` replaces the config-dir variables; `checkout` answers the checkout's marketplace.json
 // (whatever the engine resolves `<root>/../..` to); `panes` is what session.start finds open; `mvExit`/`mvErr`
 // fail the rename; `realPath` resolves a symlinked path; `listThrows` and `hintThrows` fail $.command.list and
-// the prompt hint beneath; `sha` is what `git rev-parse --short HEAD` prints (absent: git exits 128, no checkout),
+// the prompt hint beneath; `shHome` is what `sh -c 'echo $HOME'` prints (default /fake/h2); `sha` is what `git rev-parse --short HEAD` prints (absent: git exits 128, no checkout),
 // `gitThrows` fails the run itself (no git binary).
-type Opts = { tldrPane?: boolean; nouns?: boolean | string[]; env?: Record<string, string>; checkout?: string; panes?: { id: string }[]; mvExit?: number; mvErr?: string; realPath?: Record<string, string>; listThrows?: boolean; hintThrows?: boolean; sha?: string; gitThrows?: boolean }
+type Opts = { shHome?: string; tldrPane?: boolean; nouns?: boolean | string[]; env?: Record<string, string>; checkout?: string; panes?: { id: string }[]; mvExit?: number; mvErr?: string; realPath?: Record<string, string>; listThrows?: boolean; hintThrows?: boolean; sha?: string; gitThrows?: boolean }
 function world(on: On, files: Record<string, string>, o: Opts = {}) {
   const env = o.env ?? { CLAUDE_CONFIG_DIR: CFG, HOME: '/fake/home' }
   const rec = { files, reads: [] as string[], writes: [] as string[], mvs: [] as string[][], rms: [] as string[][], config: [] as { key: string; value: unknown }[], toasts: [] as string[], opens: [] as Open[], closed: [] as string[], calls: [] as Call[],
@@ -308,7 +308,7 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   })
   on('fs.write', (_$, e) => { rec.writes.push(e.path); files[e.path] = e.text; return { value: undefined } })
   on('process.run', (_$, e) => {
-    if (e.argv[0] === 'sh') return { value: { exitCode: 0, stdout: '/fake/h2\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (e.argv[0] === 'sh') return { value: { exitCode: 0, stdout: `${o.shHome ?? '/fake/h2'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (e.argv[0] === 'git') {
       rec.gits.push([...e.argv])
       if (o.gitThrows) throw new Error('spawn git ENOENT')
@@ -598,6 +598,15 @@ test('AC5: the Plugins title names the settings file: ~ for a CLAUDE_CONFIG_DIR 
   world(on, { ...at('/fake/home/cc'), ...at('/fake/homeX/cc') }, { env: { HOME: '/fake/home', CLAUDE_CONFIG_DIR: '/fake/home/cc' } })
   const pane = await openPane($)
   expect((await pane.find({ type: 'Text', text: /^user scope/ }))?.text).toBe('user scope, ~/cc/settings.json')
+})
+
+test('AC5: no HOME at all (sh prints nothing) -> the config dir is /.claude, named in full, no ~', async ($, on) => {
+  world(on, {
+    ['/.claude/plugins/marketplaces/junk-drawer/.claude-plugin/marketplace.json']: JSON.stringify({ name: 'junk-drawer', plugins: [entry('p1', 'x')] }),
+    ['/.claude/settings.json']: JSON.stringify({ enabledPlugins: {} }),
+  }, { env: {}, shHome: '' })
+  const pane = await openPane($)
+  expect((await pane.find({ type: 'Text', text: /^user scope/ }))?.text).toBe('user scope, /.claude/settings.json')
 })
 
 test('AC5: a CLAUDE_CONFIG_DIR whose name only starts like HOME keeps its full path', async ($, on) => {
