@@ -467,13 +467,16 @@ git -C "$fence" init -q
 ln -s "$tmp/outside" "$fence/.orch/link"
 ln -s "$tmp/outside" "$fence/linked"
 fence_cfg() { printf -- '---\nbackend: adhoc\ntasks_dir: %s\n---\n' "$1" > "$fence/.orch/config.md"; }
-for bad in '../outside' '/tmp/x' '/.orch/tasks' '.orch/nope/../../../outside' '.orch/../../outside' '.orch/tasks/../../../outside' '.orch/link' '.orch/link/new/deep' 'linked' '.git' '.git/tasks' '"../outside"' 'tasks' '.' '.orch' '.orch/' './.orch' '.orchard/tasks' 'x.orch/tasks'; do
+for bad in '../outside' '/tmp/x' '/.orch/tasks' '.orch/a/../../src' '.orch/nope/../../../outside' '.orch/../../outside' '.orch/tasks/../../../outside' '.orch/link' '.orch/link/new/deep' 'linked' '.git' '.git/tasks' '"../outside"' 'tasks' '.' '.orch' '.orch/' './.orch' '.orchard/tasks' 'x.orch/tasks'; do
     fence_cfg "$bad"
     for cmd in "orch-state list" "orch-state tasks-dir" "orch-state new T-9" "orch-state reset-stale" "orch-sync pull"; do
         if out=$(cd "$fence" && $bin/$cmd 2>&1); then fail "tasks_dir $bad: $cmd ran: $out"; fi
         rg -q '^orch: tasks_dir ' <<<"$out" || fail "tasks_dir $bad: $cmd stopped for another reason: $out"
     done
     [ -z "$(ls -A "$tmp/outside")" ] || fail "tasks_dir $bad: something was written outside the project"
+    [ ! -e "$fence/src" ] && [ ! -e "$fence/.orch/a" ] || fail "tasks_dir $bad: something was written outside .orch/ (src/ or .orch/a/)"
+    rc=0; (cd "$fence" && "$bin/orch-state" new X1 >/dev/null 2>&1) || rc=$?
+    [ $rc = 2 ] || fail "tasks_dir $bad: orch-state new exited $rc, expected 2"
 done
 # under .orch/: the usual dir, a quoted one, one not created yet, a ./ spelling
 for good in '.orch/tasks' '".orch/tasks"' '.orch/new/deep' './.orch/tasks'; do
