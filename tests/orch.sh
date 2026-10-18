@@ -178,8 +178,14 @@ out=$("$bin/orch-worktree" add T-1 task/T-1-first)
 rg -q '^slot=0$' <<<"$out" || fail "worktree add after remove: slot 0 was freed and is the lowest free index; got: $out"
 rg -q '^T-2 1$' .worktrees/.orch-slots || fail "re-adding T-1 disturbed T-2's slot"
 if "$bin/orch-worktree" add T-3 main 2>/dev/null; then fail "worktree add accepted the default base as a task branch"; fi
-if "$bin/orch-worktree" add T-3 '-x' 2>/dev/null; then fail "worktree add accepted a bad branch name"; fi
-if "$bin/orch-worktree" add T-3 b b 2>/dev/null; then fail "worktree add accepted branch == base"; fi
+# a bad branch name is refused by orch-worktree itself (its own message), before git sees it
+err=$("$bin/orch-worktree" add T-3 '-x' 2>&1 && echo ACCEPTED || true)
+rg -q "^orch: bad branch name '-x'$" <<<"$err" || fail "worktree add: bad branch name not refused by the guard: $err"
+[ ! -d .worktrees/T-3 ] || fail "worktree add: bad branch name created a worktree"
+# branch == base with an EXISTING base: without the guard git would happily attach detached at it
+git -C "$project" branch feat
+if "$bin/orch-worktree" add T-3 feat feat 2>/dev/null; then fail "worktree add accepted branch == base"; fi
+[ ! -d .worktrees/T-3 ] || fail "worktree add: branch == base created a worktree"
 if "$bin/orch-worktree" add _t b 2>/dev/null; then fail "worktree add accepted a _ id"; fi
 "$bin/orch-worktree" remove T-1 >/dev/null
 [ ! -d .worktrees/T-1 ] || fail "worktree remove left the directory"
