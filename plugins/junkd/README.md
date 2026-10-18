@@ -104,7 +104,9 @@ key that exists, whatever its value, and `/output-style` changes it any time, `j
 **Turn the step off.** Set `output_style` to `off` in `/config` (the junkd row; `ste` is the default). The
 shell hook reads the row where Claude Code stores it (`pluginConfigs` in `settings.json`), and the hooks
 module also mirrors it into the flag file `~/.claude/junkd/output-style-off`, at every write of the row and at
-session start, so the step is off from the first session on. While it is off no stamp is written, so `ste`
+session start, so the step is off from the first session on. The row in `settings.json` wins when it names a
+value (a hand edit from `off` to `ste` applies at the next session start); the flag file only stands in where
+it names none. While it is off no stamp is written, so `ste`
 again applies the step at the next session start. The step needs `jq`; without it nothing is written and
 nothing is stamped. Removing the plugin stops the
 step too; a `junkd:STE` already in `settings.json` then names a style that is gone, so pick another with
