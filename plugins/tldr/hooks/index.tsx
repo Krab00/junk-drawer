@@ -61,11 +61,15 @@ export const register: Register = (on, options) => {
     if (e.scope !== undefined && e.scope !== 'user') return { deny: `tldr: scope ${String(e.scope)} is not supported yet` }
     const c = coerce(e.key, e.value)
     if (c.error !== undefined) return { deny: c.error }
+    // The host sends this write through the other plugins' hooks and skips ours below, so the value is applied here.
     const { deny } = await $.config.set({ key: `tldr.${e.key}`, value: c.value })
-    return deny !== undefined ? { deny } : { value: c.value }
+    if (deny !== undefined) return { deny }
+    if (e.key === 'terse') await writeFlag($, c.value === true)
+    else S.sentences = c.value as number
+    return { value: c.value }
   })
 
-  // Every write to a tldr row, ours or the /config menu's, lands here once the row took it.
+  // The /config menu's own writes to a tldr row land here (a hook never sees its plugin's own `$.config.set`).
   on('config.set', { key: 'tldr.terse' }, async ($, e, next) => {
     const r = await next(e)
     if (r.deny === undefined) await writeFlag($, e.value === true)
