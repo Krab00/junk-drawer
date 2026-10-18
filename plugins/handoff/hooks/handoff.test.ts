@@ -528,6 +528,20 @@ test('$.handoff.hide with an owner closes only the pane that owner showed, while
   expect(rec.closed).toHaveLength(4)
 })
 
+test('$.handoff.hide on a pane never opened: no error, nothing closed, and /handoff panel still opens it', WITH_FRAME, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  // No owner: the close goes out (a pane opened but not placed is open too); for an id not open the engine leaves
+  // it alone. With an owner the pane never had: nothing at all.
+  await frame($, 'hide')
+  expect(rec.closed).toEqual(['ahandoff'])
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toEqual(['ahandoff'])
+  expect(rec.opened).toEqual([])
+  await handoff($, 'panel')
+  expect(rec.opened).toEqual(['ahandoff'])
+})
+
 test('$.handoff.status mirrors armed, percent and phase', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)
