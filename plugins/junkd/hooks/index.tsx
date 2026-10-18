@@ -217,8 +217,8 @@ const openSettings = async ($: $, plugin: string) => {
 }
 
 export const register: Register = (on, options) => {
-  // A value the manifest's options do not name (an edit of the file by hand) is the default.
-  styleIsOff = coerceStyle(options.output_style ?? 'ste').value === 'off'
+  // A value the manifest's options do not name (an edit of the file by hand) is the default, ste.
+  styleIsOff = coerceStyle(options.output_style).value === 'off'
 
   on('session.start', async ($, e, next) => {
     await writeStyleFlag($).catch(() => undefined)
