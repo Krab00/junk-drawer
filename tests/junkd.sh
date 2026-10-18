@@ -166,16 +166,35 @@ rg -q '^junkd: ' <<<"$out" || fail "symlink: expected the junkd: line, got: $out
 [ -z "$(ls "$tmp/dotfiles" | rg -v '^settings\.json$')" ] || fail "symlink: a temp file was left beside the target: $(ls "$tmp/dotfiles")"
 
 # ---------------------------------------------------------------- a read-only settings.json stays, no stamp, exit 0
+# The file read-only (the temp copy takes its mode, so the jq write into it fails): the failure branch, silent,
+# the temp file removed. The dir read-only too: no temp file can be made at all.
+if [ "$(id -u)" != 0 ]; then
+    reset
+    printf '{"theme": "dark"}\n' > "$settings"
+    chmod 444 "$settings"
+    out=$(main) || fail "read-only file: hook exited non-zero"
+    [ -z "$out" ] || fail "read-only file: hook printed output: $out"
+    [ "$(cat "$settings")" = '{"theme": "dark"}' ] || fail "read-only file: settings.json changed"
+    [ ! -e "$stamp" ] || fail "read-only file: stamped"
+    [ -z "$(ls "$CLAUDE_CONFIG_DIR" | rg -v '^settings\.json$')" ] || fail "read-only file: a temp file was left: $(ls "$CLAUDE_CONFIG_DIR")"
+    chmod 555 "$CLAUDE_CONFIG_DIR"
+    out=$(main) || fail "read-only dir: hook exited non-zero"
+    chmod 755 "$CLAUDE_CONFIG_DIR"
+    [ -z "$out" ] || fail "read-only dir: hook printed output: $out"
+    [ "$(cat "$settings")" = '{"theme": "dark"}' ] || fail "read-only dir: settings.json changed"
+    [ ! -e "$stamp" ] || fail "read-only dir: stamped"
+    chmod 644 "$settings"
+fi
+
+# ---------------------------------------------------------------- a manifest without a version: nothing done
+cp -R "$plugin/." "$tmp/nover"
+jq 'del(.version)' "$plugin/.claude-plugin/plugin.json" > "$tmp/nover/.claude-plugin/plugin.json"
 reset
 printf '{"theme": "dark"}\n' > "$settings"
-chmod 444 "$settings"
-chmod 555 "$CLAUDE_CONFIG_DIR"
-out=$(main) || fail "read-only: hook exited non-zero"
-chmod 755 "$CLAUDE_CONFIG_DIR"
-[ -z "$out" ] || fail "read-only: hook printed output: $out"
-[ "$(cat "$settings")" = '{"theme": "dark"}' ] || fail "read-only: settings.json changed"
-[ ! -e "$stamp" ] || fail "read-only: stamped"
-chmod 644 "$settings"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID "$tmp/nover/scripts/setup.sh" 2>&1) || fail "no version: hook exited non-zero"
+[ -z "$out" ] || fail "no version: hook printed output: $out"
+[ "$(cat "$settings")" = '{"theme": "dark"}' ] || fail "no version: settings.json changed"
+[ -z "$(ls "$CLAUDE_CONFIG_DIR" | rg -v '^settings\.json$')" ] || fail "no version: something written: $(ls "$CLAUDE_CONFIG_DIR")"
 
 # ---------------------------------------------------------------- without jq: nothing touched, nothing stamped, exit 0
 reset
@@ -186,5 +205,9 @@ out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" HOME="$tmp/nohome" "$
 [ -z "$out" ] || fail "no jq: hook printed output: $out"
 [ "$(cat "$settings")" = '{"theme": "dark"}' ] || fail "no jq: settings.json changed"
 [ ! -e "$stamp" ] || fail "no jq: stamped"
+reset   # and a missing settings.json is not even created without jq
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" HOME="$tmp/nohome" "$hook") || fail "no jq, no file: hook exited non-zero"
+[ -z "$out" ] || fail "no jq, no file: hook printed output: $out"
+[ ! -e "$settings" ] || fail "no jq, no file: settings.json was created"
 
 echo "junkd tests passed"

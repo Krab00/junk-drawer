@@ -57,7 +57,8 @@ fi
 real=$(readlink -f "$s" 2>/dev/null) || real="$s"
 tmp=$(mktemp "$real.XXXXXX" 2>/dev/null) || exit 0
 cp -p "$real" "$tmp" 2>/dev/null # the file's mode: a read-only settings.json fails the write below and stays
-if jq '.outputStyle = "junkd:STE"' "$real" > "$tmp" 2>/dev/null && mv -f "$tmp" "$real" 2>/dev/null; then
+# The group's redirect also hides bash's own note on a redirect into a file it cannot write.
+if { jq '.outputStyle = "junkd:STE"' "$real" > "$tmp" && mv -f "$tmp" "$real"; } 2>/dev/null; then
     mkdir -p "$cfg/junkd" && : > "$stamp"
     echo "junkd: outputStyle set to junkd:STE in $s (new sessions; /output-style picks another)"
 else
