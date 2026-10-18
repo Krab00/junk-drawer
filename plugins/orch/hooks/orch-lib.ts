@@ -92,7 +92,7 @@ const NEVER_WRITE =
   /\/\.claude\/settings[^/]*\.json$|\/plugins\/(.*\/)?(agents|commands|skills|hooks|rules|output-styles)\/|\/\.claude-plugin\/|(^|\/)(CLAUDE|CLAUDE\.local|AGENTS|SKILL)\.md$/i
 const DOT_CLAUDE = /\/\.claude\//i
 const LOADED = /\/(agents|commands|skills|hooks|rules|output-styles)\//i
-const SCRIPT = /^([A-Za-z0-9][A-Za-z0-9._-]*)([\s\S]*)$/ // a file right in bin/: no slash, so no way out of it
+const SCRIPT = /^([A-Za-z0-9][A-Za-z0-9._-]*)([\s\S]*)$/ // a file right in bin/: no slash, so no `..` can lead out of it
 const ARGS = /^( [A-Za-z0-9 _./:=@+-]*)?$/ // plain words: no quote, $, `, ;, &, |, <, >, newline
 
 export const PREFIX = 'Orchestrator mode (orch):'
@@ -135,7 +135,7 @@ function isBinCall(command: string, binDir: string): boolean {
   rest = rest.slice(quote.length)
   if (!rest.startsWith(binDir)) return false
   const m = SCRIPT.exec(rest.slice(binDir.length))
-  if (!m || m[1]!.includes('..')) return false
+  if (!m) return false
   let args = m[2]!
   if (quote) {
     if (args[0] !== quote) return false

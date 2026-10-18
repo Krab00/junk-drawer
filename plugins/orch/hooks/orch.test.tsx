@@ -150,7 +150,7 @@ test("Bash and Monitor: only the plugin's own bin/ scripts with plain arguments"
   }
   const escapes = ['git status', '/other/bin/orch-state', `${BIN}orch-state; git push`, `${BIN}orch-state $(rm -rf x)`, `${BIN}x && y`,
     `${BIN}../../../../usr/bin/git push --force origin main`, `${BIN}../../../../bin/sh -c 'git commit -am x'`,
-    `${BIN}x/../../sh`, `${BIN}orch-state 'list'`, `"${BIN}orch-state list`, `${BIN}orch-state list\ngit push`, `${BIN}orch-state list | sh`,
+    `${BIN}x/../../sh`, `${BIN}orch-state 'list'`, `"${BIN}orch-state list`, `"${BIN}orch-state  list`, `${BIN}orch-state list\ngit push`, `${BIN}orch-state list | sh`,
     `${BIN}orch-state list > /etc/x`, `${BIN}orch-state \`id\``, `${BIN}.hidden`, `${BIN}`]
   for (const c of escapes) {
     expect(orchGuard(main('Bash', { command: c }), st(), on_), c).toMatch(/may not run Bash/)
@@ -447,6 +447,11 @@ test('SendMessage target from the agent list or the SubagentStop record (type an
   expect(denial(await send('small'))).toBeUndefined()
   await $.classic.SubagentStop({ agent_id: 'noread', agent_type: 'orch:implementer', agent_transcript_path: '/t/none.jsonl', stop_hook_active: false })
   expect(denial(await send('noread'))).toBeUndefined() // an unreadable transcript: tokens unknown, the type known
+  // an agent that stopped before the list named it: its record is by id, the list's name leads to it
+  rec.files['/t/late.jsonl'] = usage(330_000)
+  await $.classic.SubagentStop({ agent_id: 'late', agent_type: 'orch:implementer', agent_transcript_path: '/t/late.jsonl', stop_hook_active: false })
+  rec.agents.push({ id: 'late', type: 'orch:implementer', name: 'latename' })
+  expect(denial(await send('latename'))).toMatch(/exceeds cap 300k/)
   expect(denial(await send('nobody'))).toMatch(/no agent "nobody" is known/)
   expect(denial(await send('../../x'))).toMatch(/no agent/) // never read as a path
   await frame($, 'set', { key: 'implementer_ctx_k', value: 400 })
@@ -461,6 +466,14 @@ test('an unreadable model toasts once and the fable guard passes', async ($, on)
   expect(denial(await fetch($))).toBeUndefined()
   expect(denial(await fetch($))).toBeUndefined()
   expect(rec.toasts).toEqual(['orch: the main-loop model could not be read, so the fable guard is off this session'])
+})
+
+test('guard always needs no model: an unreadable one still denies and nothing is toasted', { options: { guard: 'always' } }, async ($, on) => {
+  const rec = world(on)
+  rec.model = undefined
+  await start($)
+  expect(denial(await fetch($))).toMatch(/may not run WebFetch/)
+  expect(rec.toasts).toEqual([])
 })
 
 test('a Read or Write is placed first; through a link into loaded config, or unplaceable, it is denied', async ($, on) => {
