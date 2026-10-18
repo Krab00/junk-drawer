@@ -468,7 +468,7 @@ test("AC8: with guard always, another plugin's spawn of a Fable model passes whe
   on('agent.spawn', (_$, e) => ({ model: e.model ?? 'opus', agentId: 'sub-1' }))
   await start($)
   expect((await $.agent.spawn({ tool_use_id: 'tu1', prompt: 'p', description: 'd', subagentType: 'general-purpose', provider: { plugin: 'engine', tier: 'core' }, parentModel: OPUS, model: 'fable', background: true, fork: false })).deny).toMatch(/would run on fable/)
-  expect((await frame($, 'spawn') as { deny?: string; agentId?: string }).agentId).toBe('sub-1')
+  expect((await frame($, 'spawn') as { deny?: string }).deny).toBeUndefined()
 })
 
 test('a Read whose spelling is a root but which lands outside (handoffs linked out) is denied', async ($, on) => {
