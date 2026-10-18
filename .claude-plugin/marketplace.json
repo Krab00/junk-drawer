@@ -20,7 +20,7 @@
     {
       "name": "handoff",
       "source": "./plugins/handoff",
-      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>); /ahandoff automates handoff → /clear → /handon past a context threshold and resumes after the 5h rate limit. On Claude Code the hooks module exports $.handoff (schema/get/set/open/status) for other mods; the junkd frame is optional."
+      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>); /ahandoff automates handoff → /clear → /handon past a context threshold and resumes after the 5h rate limit. On Claude Code the hooks module exports $.handoff (schema/get/set/open/show/hide/status) for other mods; the junkd frame is optional."
     },
     {
       "name": "ctx-limit",
@@ -35,12 +35,12 @@
     {
       "name": "orch",
       "source": "./plugins/orch",
-      "description": "Project-agnostic orchestration loop: pick tasks from a canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Run /orch:init then /orch. On Claude Code the hooks module exports $.orch (schema/get/set/open/guardState) for other mods; the junkd frame is optional."
+      "description": "Project-agnostic orchestration loop: pick tasks from a canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Run /orch:init then /orch. On Claude Code the hooks module exports $.orch (schema/get/set/open/show/hide/guardState) for other mods; the junkd frame is optional."
     },
     {
       "name": "junkd",
       "source": "./plugins/junkd",
-      "description": "The frame over the marketplace (Claude Code mod): /junkd toggles one pane with every plugin on/off, the main settings of handoff, orch and tldr, and the enabled plugins' commands. Every feature plugin works without it."
+      "description": "The frame over the marketplace (Claude Code mod): /junkd opens and closes a set of tabs (junkd, handoff, orch); the junkd pane has every plugin on/off, the main settings of handoff, orch and tldr, and the enabled plugins' commands. Every feature plugin works without it."
     }
   ]
 }
