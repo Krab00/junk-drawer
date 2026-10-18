@@ -72,6 +72,70 @@ mkdir -p "$tmp/home/.claude/orch" && : > "$tmp/home/.claude/orch/rules-off"
 homeflag=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/home" ORCH_INJECT_RULES= "$hook")
 [ -z "$homeflag" ] || fail "rules-off flag under HOME/.claude: hook printed output, expected nothing"
 
+# the setting itself in settings.json (the hooks module writes the flag only at its own session start, after this
+# hook): true injects even past a stale flag, any other value skips; only without a value does the flag decide
+hsettings="$CLAUDE_CONFIG_DIR/settings.json"
+flag="$CLAUDE_CONFIG_DIR/orch/rules-off"
+hook_main() { printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook"; }
+# expect <sheet|none> <what>: the hook's output, exit 0
+expect() {
+    local out
+    out=$(hook_main) || fail "$2: hook exited non-zero"
+    if [ "$1" = sheet ]; then [ "$out" = "$(cat "$sheet")" ] || fail "$2: expected the sheet"
+    else [ -z "$out" ] || fail "$2: expected nothing, got $(wc -c <<<"$out") bytes"; fi
+}
+for key in 'orch@junk-drawer' 'orch@other'; do
+    for v in false null 0 '"true"'; do
+        rm -f "$flag"
+        printf '{"theme":"dark","pluginConfigs":{"%s":{"options":{"inject_rules":%s}}}}' "$key" "$v" > "$hsettings"
+        expect none "setting $key inject_rules=$v, no flag"
+    done
+    printf '{"pluginConfigs":{"%s":{"options":{"inject_rules":true}}}}' "$key" > "$hsettings"
+    : > "$flag"
+    expect sheet "setting $key inject_rules=true past a stale flag"
+done
+# the first orch@ entry decides
+printf '{"pluginConfigs":{"orch@a":{"options":{"inject_rules":true}},"orch@b":{"options":{"inject_rules":false}}}}' > "$hsettings"
+expect sheet "first orch@ entry true, flag present"
+# never into a subagent, whatever the setting says
+printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":true}}}}' > "$hsettings"
+sub=$(printf '{"agent_id":"a1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "subagent with setting true: exit non-zero"
+[ -z "$sub" ] || fail "subagent with setting true: hook printed output"
+# ORCH_INJECT_RULES=0 still wins over a true setting
+off=$(printf '{}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES=0 "$hook") || fail "ORCH_INJECT_RULES=0 with setting true: exit non-zero"
+[ -z "$off" ] || fail "ORCH_INJECT_RULES=0 with setting true: hook printed output"
+# no value: another plugin's entry, a name that only starts with orch, no options, no key, no pluginConfigs, a file
+# that does not parse or holds two values, no file: the flag decides, both ways
+for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"inject_rules":true}}}}' \
+    '{"pluginConfigs":{"orchard@x":{"options":{"inject_rules":true}}}}' '{"pluginConfigs":{"orch@junk-drawer":{}}}' \
+    '{"pluginConfigs":{"orch@junk-drawer":{"options":{"rounds":5}}}}' '{"theme":"dark"}' '{"pluginConfigs":' \
+    '{"pluginConfigs":{"orch@a":{"options":{"inject_rules":true}}}} {}' 'NOFILE'; do
+    if [ "$content" = NOFILE ]; then rm -f "$hsettings"; else printf '%s' "$content" > "$hsettings"; fi
+    : > "$flag"
+    expect none "settings $content with the flag"
+    rm -f "$flag"
+    expect sheet "settings $content without the flag"
+done
+# no jq on PATH (nothing added to it): the flag decides, a setting it cannot read does not
+mkdir -p "$tmp/nojq-hook"
+for t in bash cat dirname; do ln -sf "$(command -v "$t")" "$tmp/nojq-hook/$t"; done
+printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":true}}}}' > "$hsettings"
+: > "$flag"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/nojq-hook" ORCH_INJECT_RULES= "$hook") || fail "no jq: exit non-zero"
+[ -z "$out" ] || fail "no jq, flag present: expected nothing (the setting can't be read)"
+rm -f "$flag"
+printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":false}}}}' > "$hsettings"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/nojq-hook" ORCH_INJECT_RULES= "$hook") || fail "no jq: exit non-zero"
+[ "$out" = "$(cat "$sheet")" ] || fail "no jq, no flag: expected the sheet"
+rm -f "$hsettings"
+# with no CLAUDE_CONFIG_DIR the setting is read from $HOME/.claude/settings.json; with neither, exit 0 and the sheet
+mkdir -p "$tmp/hhome/.claude"
+printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":false}}}}' > "$tmp/hhome/.claude/settings.json"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/hhome" ORCH_INJECT_RULES= "$hook") || fail "HOME settings: exit non-zero"
+[ -z "$out" ] || fail "HOME settings inject_rules false: expected nothing"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR -u HOME ORCH_INJECT_RULES= "$hook") || fail "no HOME: exit non-zero"
+[ "$out" = "$(cat "$sheet")" ] || fail "no HOME: expected the sheet"
+
 # a missing sheet: empty output, still exit 0 (a failing SessionStart hook would block the session)
 mkdir -p "$tmp/nosheet/scripts"
 cp "$plugin/skills/orch/scripts/orch-context.sh" "$tmp/nosheet/scripts/"

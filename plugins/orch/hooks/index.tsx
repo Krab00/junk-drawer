@@ -121,8 +121,8 @@ let note = ''
 let paneOpen = false
 const redraw = ($: $) => $.ui.invalidate('ui.render')
 
-// inject_rules off is the flag file scripts/orch-context.sh checks (a shell hook reads no `$.config`): the row's
-// truth, written at every change of the row and at session start.
+// inject_rules off is the flag file scripts/orch-context.sh falls back to when settings.json holds no value it
+// can read (a shell hook reads no `$.config`), written at every change of the row and at session start.
 async function writeRulesFlag($: $): Promise<void> {
   const flag = `${await configDir($)}/orch/rules-off`
   if (O.inject_rules) await $.process.run(['rm', '-f', '--', flag])
