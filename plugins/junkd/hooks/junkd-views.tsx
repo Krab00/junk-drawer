@@ -64,14 +64,19 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
       <Text color={P.dim}>{'─'.repeat(400)}</Text>
     </Box>
   )
+  // The title never gives up a column to its subtitle (a long settings path is cut instead).
   const title = (text: string, sub: string) => (
     <Box flexDirection="row" columnGap={1}>
-      <Text bold color={P.accent}>
-        {text}
-      </Text>
-      <Text color={P.dim} wrap="truncate-end">
-        {sub}
-      </Text>
+      <Box key={`title:${text}`} flexShrink={0}>
+        <Text bold color={P.accent}>
+          {text}
+        </Text>
+      </Box>
+      <Box flexShrink={1} overflow="hidden">
+        <Text color={P.dim} wrap="truncate-end">
+          {sub}
+        </Text>
+      </Box>
     </Box>
   )
   // One line: indent, a fixed name column, the middle cut to fit, the controls on the right.

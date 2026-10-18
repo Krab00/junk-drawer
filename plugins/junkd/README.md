@@ -13,11 +13,11 @@ comes first. `q` or a second `/junkd` closes all three, but only a feature pane 
 you closed and opened again on your own (`/handoff panel`, `/orch panel`, `/ahandoff`, the 🪃 click) stays.
 A plugin that is off or not installed is left out of the set.
 
-Where the set sits depends on the layout. In the fullscreen layout (`"tui": "fullscreen"` in `settings.json`)
-from 110 terminal columns it docks beside the transcript; narrower, and always outside the fullscreen layout,
-it sits above the prompt. The feature panes are opened by their own plugins after junkd's: where the engine
-does not count those opens as yours, a narrow terminal leaves them waiting undrawn until you open them by hand
-or widen the terminal.
+Where the set sits depends on the layout. Only in the fullscreen layout (`"tui": "fullscreen"` in
+`settings.json`), from 110 terminal columns, it docks beside the transcript; narrower, and always on the main
+screen, it sits above the prompt. The feature panes are opened by their own plugins, and Claude Code does not
+count an open made through another plugin as yours: until you have opened that pane by hand once
+(`/handoff panel`, `/orch panel`), its tab waits undrawn below 144 columns. After that, 110 columns are enough.
 
 The header reads `✚ junkd  junk-drawer <sha>`: the short sha of the marketplace checkout (none where it is not
 a git checkout). The junkd pane has three sections, their titles in junk-drawer's orange (the theme's accent):
