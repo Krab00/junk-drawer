@@ -62,7 +62,7 @@ const auto: View = (c) => {
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" columnGap={2}>
           <Text bold>Auto handoff</Text>
-          {S.armed ? <Chosen c={c} text="armed" /> : <Text color={P.secondary}>off</Text>}
+          {S.armed ? <Chosen c={c} text="armed" /> : <Text color={P.secondary}>{S.enabled ? 'off' : 'disabled'}</Text>}
           <Text color={P.secondary} wrap="truncate">
             {line([S.armed && S.armedAt ? `since ${hhmm(S.armedAt)}` : '', `${S.count} handoff${S.count === 1 ? '' : 's'}`].filter(Boolean).join(' · '))}
           </Text>
@@ -70,7 +70,8 @@ const auto: View = (c) => {
           <Box flexShrink={0}>
             {S.armed
               ? <Button key="off" plain hotkey="o" label="Off" onPress={() => c.api.disarm()} />
-              : <Button key="arm" plain hotkey="a" label="Arm" onPress={() => void c.api.arm()} />}
+              : S.enabled ? <Button key="arm" plain hotkey="a" label="Arm" onPress={() => void c.api.arm()} />
+              : <Text color={P.secondary}>enabled is off · Settings</Text>}
           </Box>
         </Box>
         <Box flexDirection="column">
@@ -299,6 +300,10 @@ const settings: View = (c) => {
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="column">
           <Title c={c} text="Auto" sub="the loop: handoff → /clear → /handon → continue" />
+          <Row c={c} w={22} label="Enabled">
+            <Switch c={c} k="enabled" hotkey="u" on={S.enabled} flip={() => void c.api.set('enabled', !S.enabled)} />
+            <Text color={P.secondary}> off = manual /handoff only</Text>
+          </Row>
           <Num c={c} f="threshold" hotkey="t" label="Threshold" hint="% of the context window" />
           <Num c={c} f="checkEvery" hotkey="e" label="Check every" hint="tool calls" />
           <Row c={c} w={22} label="Arm at session start">
@@ -334,7 +339,7 @@ const settings: View = (c) => {
       </Box>
     ),
     note: 'enter in a field saves it',
-    keys: [['tab', 'move'], ['enter', 'save field'], ['t', 'threshold'], ['e', 'every'], ['s', 'arm at start'], ['l', '5h resume'], ['a', 'stale days'], ['d', 'delete stale'], ['o', 'open folder'], ['g', 'segment']],
+    keys: [['tab', 'move'], ['enter', 'save field'], ['u', 'enabled'], ['t', 'threshold'], ['e', 'every'], ['s', 'arm at start'], ['l', '5h resume'], ['a', 'stale days'], ['d', 'delete stale'], ['o', 'open folder'], ['g', 'segment']],
   }
 }
 
