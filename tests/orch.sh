@@ -434,7 +434,24 @@ printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"rounds":6}}}}' > "$set
 rm -f "$settings_json"
 
 # orch-sync on the adhoc backend is a no-op in both directions
+# orch-sync takes plain task ids only (they name task files and reach gh): an option, a path or a reserved id is
+# refused before any backend runs, in the project and in a project that is itself a worktree
+for dir in "$project" "$run"; do
+    for cmd in push pull; do
+        for bad in '../../x' '--web' '-R' 'a/b' 'a..b' '_lessons' '' 'GH-1;x'; do
+            err=$(cd "$dir" && "$bin/orch-sync" "$cmd" GH-1 "$bad" 2>&1 && echo ACCEPTED || true)
+            [ "$err" = "orch: bad task id '$bad' (letters, digits, . _ -; not starting with _)" ] ||
+                fail "orch-sync $cmd '$bad' in $dir: not refused: $err"
+        done
+        # the first id is checked too
+        err=$(cd "$dir" && "$bin/orch-sync" "$cmd" ../../x 2>&1 && echo ACCEPTED || true)
+        [ "$err" = "orch: bad task id '../../x' (letters, digits, . _ -; not starting with _)" ] || fail "orch-sync $cmd ../../x (first id) in $dir: $err"
+        rg -q 'no-op' <<<"$(cd "$dir" && "$bin/orch-sync" "$cmd" GH-1 T-1.x)" || fail "orch-sync $cmd with good ids in $dir: not a no-op"
+    done
+done
 rg -q 'no-op' <<<"$("$bin/orch-sync" pull)" || fail "orch-sync pull (adhoc) is not a no-op"
+# the command word is no id: --help still prints the usage
+rg -q '^  orch-sync pull \[id\.\.\.\]' <<<"$("$bin/orch-sync" --help)" || fail "orch-sync --help: no usage"
 rg -q 'no-op' <<<"$("$bin/orch-sync" push)" || fail "orch-sync push (adhoc) is not a no-op"
 
 echo "orch tests passed"

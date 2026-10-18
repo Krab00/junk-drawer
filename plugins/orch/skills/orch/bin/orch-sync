@@ -4,6 +4,7 @@
 #                            #   With ids: full fetch (body -> description + checklist criteria).
 #   orch-sync push [id...]   # task files -> backend. Posts the ## Verification section as a
 #                            #   status comment + PR link. Never closes an issue, never merges.
+# Each id is a plain task id (orch-state id), or the run stops before any backend call.
 # Backends: github-issues (gh CLI) | adhoc,manifest (no-op) | linear-mcp (in-conversation stub).
 set -euo pipefail
 
@@ -41,6 +42,10 @@ _criteria(){ awk '/^[ \t]*- \[[ xX]\]/{ line=$0; sub(/^[ \t]*- \[[ xX]\][ \t]*/,
 
 dir_missing_gh(){ command -v gh >/dev/null || { echo "orch-sync: gh CLI not found (backend github-issues needs it)" >&2; exit 1; }; }
 
+# Every id names a task file (push) or an issue (pull, GH-<n>) and reaches gh as an argument: a plain task id
+# (orch-state id), never an option or a path.
+for a in "${@:2}"; do "$state" id "$a" >/dev/null || exit 1; done
+
 case "${1:-pull}" in
   pull)
     shift || true
@@ -63,7 +68,7 @@ case "${1:-pull}" in
         else
           # full fetch: body -> description + checklist -> criteria, for the picked ids only.
           for arg in "$@"; do
-            n="${arg#GH-}"; n="${n#\#}"
+            n="${arg#GH-}"
             meta=$(gh issue view "$n" --json number,title,updatedAt,state --jq '[.number,.state,.updatedAt,.title]|@tsv') \
               || { echo "skip $arg (gh view failed)" >&2; continue; }
             IFS=$'\t' read -r num st upd title <<<"$meta"
