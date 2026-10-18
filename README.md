@@ -58,6 +58,7 @@ Invoke Codex workflows by mentioning their skill, for example `$orch-init`, `$or
 /plugin install ctx-limit@junk-drawer
 /plugin install junk-drawer@junk-drawer
 /plugin install orch@junk-drawer
+/plugin install junkd@junk-drawer
 ```
 
 After installing or updating: `/plugin marketplace update junk-drawer`, then `/reload-plugins`.
@@ -147,6 +148,7 @@ Known limits of the skills-only install:
 | `ctx-limit` | Context threshold hook with block, warn, or command actions | `$ctx-limit` / `/skill:ctx-limit` |
 | `junk-drawer` | Runtime catalog of the marketplace | `$junk-drawer` / `/skill:junk-drawer` |
 | `orch` | Implementation and independent verification through subagents | `$orch-init`, then `$orch` / `/skill:orch-init`, then `/skill:orch` |
+| `junkd` | The frame over the marketplace (Claude Code only): `/junkd` toggles one pane with every plugin on/off, the main settings of `handoff`, `orch` and `tldr`, and the enabled plugins' commands | — |
 
 ## Layout
 

@@ -36,6 +36,11 @@
       "name": "orch",
       "source": "./plugins/orch",
       "description": "Project-agnostic orchestration loop: pick tasks from a canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .claude/orch.config.md. Run /orch:init then /orch."
+    },
+    {
+      "name": "junkd",
+      "source": "./plugins/junkd",
+      "description": "The frame over the marketplace (Claude Code mod): /junkd toggles one pane with every plugin on/off, the main settings of handoff, orch and tldr, and the enabled plugins' commands. Every feature plugin works without it."
     }
   ]
 }
