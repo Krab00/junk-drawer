@@ -1,12 +1,15 @@
 ---
 description: "Project-agnostic orchestration loop: pick tasks from the canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Usage: /orch <free text> | <ID...> | batch [N] | chain [N] | all [--base <b>] [--rounds R] [--deep] [--single-pr[=<b>]]"
-argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
+argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
 ---
 
 # /orch — project-agnostic orchestration loop
 
 Arguments: `$ARGUMENTS`
+
+(`/orch panel` never reaches this text: on Claude Code the plugin's hooks module answers it by
+toggling the settings pane. On any other host, `panel` is not a mode.)
 
 You are the ORCHESTRATOR. You **never implement or verify code yourself** — implementation
 goes to an `implementer` (or `lead-implementer`) subagent, and the whole verification of a

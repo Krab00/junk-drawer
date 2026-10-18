@@ -10,6 +10,9 @@ hook="$plugin/scripts/orch-context.sh"
 sheet="$plugin/skills/orch/ORCHESTRATOR.md"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# The hook reads the inject_rules flag file under the config dir: point it at a fresh one so a real
+# ~/.claude/orch/rules-off never decides a test.
+export CLAUDE_CONFIG_DIR="$tmp/cfg"
 
 fail() { echo "orch tests: $*" >&2; exit 1; }
 
@@ -56,6 +59,18 @@ done
 # exit status is 0 in every case (a non-zero SessionStart hook would block the session)
 printf '{}' | CLAUDE_AGENT_ID=a "$hook" >/dev/null || fail "subagent path exited non-zero"
 printf '{}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES=0 "$hook" >/dev/null || fail "ORCH_INJECT_RULES=0 exited non-zero"
+
+# the flag file the hooks module writes for inject_rules off: nothing while it exists, the sheet once it is gone
+mkdir -p "$CLAUDE_CONFIG_DIR/orch" && : > "$CLAUDE_CONFIG_DIR/orch/rules-off"
+flagged=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "rules-off flag: hook exited non-zero"
+[ -z "$flagged" ] || fail "rules-off flag present: hook printed output, expected nothing"
+rm "$CLAUDE_CONFIG_DIR/orch/rules-off"
+unflagged=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook")
+[ "$unflagged" = "$(cat "$sheet")" ] || fail "rules-off flag removed: expected the sheet"
+# with no CLAUDE_CONFIG_DIR the flag is read under $HOME/.claude
+mkdir -p "$tmp/home/.claude/orch" && : > "$tmp/home/.claude/orch/rules-off"
+homeflag=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/home" ORCH_INJECT_RULES= "$hook")
+[ -z "$homeflag" ] || fail "rules-off flag under HOME/.claude: hook printed output, expected nothing"
 
 # a missing sheet: empty output, still exit 0 (a failing SessionStart hook would block the session)
 mkdir -p "$tmp/nosheet/scripts"

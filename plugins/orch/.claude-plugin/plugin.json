@@ -1,6 +1,52 @@
 {
   "name": "orch",
-  "description": "Project-agnostic orchestration loop: pick tasks from a canonical task store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, and open draft PRs. Config-driven via .claude/orch.config.md. Run /orch (or /orch:init first).",
-  "version": "0.2.0",
-  "author": { "name": "Krab00" }
+  "description": "Project-agnostic orchestration loop: pick tasks from a canonical task store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, and open draft PRs. Config-driven via .orch/config.md. Run /orch (or /orch:init first). The hooks module guards the main loop on Fable (tool.call), opens a settings pane (/orch panel) and exports $.orch.",
+  "version": "0.3.0",
+  "author": {
+    "name": "Krab00"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "guard": {
+      "type": "string",
+      "title": "Main-loop guard",
+      "description": "When the main loop is held to planning and delegating: on a Fable model, always, or never.",
+      "options": [
+        "fable",
+        "always",
+        "off"
+      ],
+      "default": "fable"
+    },
+    "allow_fable_agents": {
+      "type": "boolean",
+      "title": "Allow Fable subagents",
+      "description": "Let the main loop spawn a subagent on an explicit Fable model (the person asked for it).",
+      "default": false
+    },
+    "implementer_ctx_k": {
+      "type": "number",
+      "title": "Implementer context cap (k tokens)",
+      "description": "Reuse an implementer for a fix round only while its context is under this many thousand tokens.",
+      "default": 400
+    },
+    "ui_review": {
+      "type": "boolean",
+      "title": "UI review",
+      "description": "Run ui-reviewer without asking when the project config declares a web capability.",
+      "default": true
+    },
+    "inject_rules": {
+      "type": "boolean",
+      "title": "Inject orchestrator rules",
+      "description": "Print ORCHESTRATOR.md into the main session at session start (the SessionStart hook).",
+      "default": true
+    },
+    "rounds": {
+      "type": "number",
+      "title": "Fix rounds",
+      "description": "Fix rounds per task; --rounds overrides it for one run.",
+      "default": 3
+    }
+  }
 }

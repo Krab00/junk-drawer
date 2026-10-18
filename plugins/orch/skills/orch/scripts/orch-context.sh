@@ -2,8 +2,10 @@
 # SessionStart hook: prints the orchestrator rule sheet (ORCHESTRATOR.md next to this script's
 # skill dir) so it lands in the MAIN session's context. Plain stdout becomes context.
 # Never into a subagent: skipped when CLAUDE_AGENT_ID is set or the hook input carries an
-# agent_id. Off entirely with ORCH_INJECT_RULES=0. Always exits 0: a hook failure would block
-# the session for a sheet of advice.
+# agent_id. Off entirely with ORCH_INJECT_RULES=0, or while the flag file
+# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/orch/rules-off exists (the hooks module writes it when the
+# inject_rules setting is off; a shell hook reads no plugin setting). Always exits 0: a hook
+# failure would block the session for a sheet of advice.
 set -u
 
 input=""
@@ -15,6 +17,7 @@ re='"agent_id"[[:space:]]*:[[:space:]]*"'
 [[ "$input" =~ $re ]] && exit 0
 
 [ "${ORCH_INJECT_RULES:-1}" != 0 ] || exit 0
+[ ! -e "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/orch/rules-off" ] || exit 0
 
 # cd -P: this script is reached through the plugin-root symlink scripts -> skills/orch/scripts,
 # and the sheet sits next to the REAL scripts dir, not the symlink.
