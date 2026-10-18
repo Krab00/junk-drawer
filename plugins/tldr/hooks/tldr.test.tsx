@@ -59,7 +59,17 @@ const FRAME: Plugin = {
     })
   },
 }
-const WITH_FRAME = { plugins: [FRAME] }
+// The host's rule for a plugin's own write: `$.config.set` goes through the other plugins' hooks, the caller's own
+// skipped. The kit runs tldr's own config.set hooks on tldr's write, so this managed plugin above every tier sends
+// tldr's writes on past the user tier (tldr's hooks and the frame's) to the world beneath, as the host does.
+const HOST: Plugin = {
+  name: 'host',
+  tier: 'prepend',
+  register(on) {
+    on('config.set', (_$, e, next) => (next.origin.plugin === 'tldr' ? next.to(e, 'append') : next(e)))
+  },
+}
+const WITH_FRAME = { plugins: [HOST, FRAME] }
 // `frame <method> [input]` through the engine; resolves to the method's answer, rejects with its refusal.
 async function frame($: Engine, method: string, input?: unknown): Promise<unknown> {
   const args = input === undefined ? method : `${method} ${JSON.stringify(input)}`
@@ -207,4 +217,17 @@ test('a denied tldr.terse write leaves the flag file alone', WITH_FRAME, async (
   await expect(frame($, 'set', { key: 'terse', value: true })).rejects.toThrow(/locked/)
   expect(rec.files.size).toBe(0)
   expect(await frame($, 'get', { key: 'terse' })).toBe(false)
+})
+
+test('on the host tldr never sees its own config.set: set terse writes and removes the flag, set sentences is what get answers', WITH_FRAME, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  expect(await frame($, 'set', { key: 'terse', value: true })).toBe(true)
+  expect(rec.config).toEqual([{ key: 'tldr.terse', value: true }])
+  expect(rec.files.has(FLAG), 'set terse true writes the flag').toBe(true)
+  expect(await frame($, 'set', { key: 'terse', value: false })).toBe(false)
+  expect(rec.files.has(FLAG), 'set terse false removes it').toBe(false)
+  expect(await frame($, 'set', { key: 'sentences', value: 5 })).toBe(5)
+  expect(rec.config.at(-1)).toEqual({ key: 'tldr.sentences', value: 5 })
+  expect(await frame($, 'get', { key: 'sentences' })).toBe(5)
 })
