@@ -126,6 +126,9 @@ CONFIG
     rg -q 'TEST-1[[:space:]]+in_progress' <<<"$state_list"
 )
 
+# The orch plugin's own tests: the SessionStart rule-sheet hook, the agent roster, the bin scripts.
+bash "$root/tests/orch.sh" >/dev/null 2>&1 || { echo "tests/orch.sh failed; run it alone for the reason"; exit 1; }
+
 catalog=$(JUNK_DRAWER_RUNTIME=codex "$root/plugins/junk-drawer/bin/junk-drawer")
 rg -q '\$orch' <<<"$catalog"
 

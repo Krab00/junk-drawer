@@ -1,6 +1,6 @@
 {
   "name": "orch",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Drain a project backlog with implementation and independent verification subagents.",
   "author": { "name": "Krab00" },
   "homepage": "https://github.com/Krab00/junk-drawer",

@@ -1,6 +1,7 @@
 ---
 name: test-planner
 description: Reads the DIFF of one change and derives the MANDATORY test matrix — every code path that must be exercised (happy + edges/error/empty/boundary), each with a real induction recipe and a preferred E2E layer. Hands the matrix to verify-coordinator as binding rows; never runs the tests or edits code itself.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
