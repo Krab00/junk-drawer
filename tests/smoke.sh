@@ -162,6 +162,14 @@ schema_keys=$(rg -o "^  \{ key: '[A-Za-z]+'" "$handoff_lib" | rg -o "'[A-Za-z]+'
 [ "$schema_keys" = "$(jq -r '.userConfig | keys[]' "$handoff_manifest" | sort)" ] ||
     { echo "handoff SCHEMA keys differ from the manifest's userConfig"; exit 1; }
 
+# junkd's test fakes handoff's noun; its schema() must stay the real SCHEMA, entry for entry, or the pane's tests
+# draw a Settings section the real handoff never answers.
+junkd_test="$root/plugins/junkd/hooks/junkd.test.tsx"
+fake_schema=$(awk '/^const FAKE_HANDOFF: Plugin/ {f=1} f && /schema: async/ {s=1; next} s && /^ *\],?$/ {exit} s' "$junkd_test" | sed 's/^ *//')
+real_schema=$(awk '/^export const SCHEMA/ {s=1; next} s && /^\]/ {exit} s' "$handoff_lib" | sed 's/^ *//')
+[ -n "$real_schema" ] && [ "$fake_schema" = "$real_schema" ] ||
+    { echo "junkd.test.tsx: FAKE_HANDOFF's schema differs from handoff's SCHEMA (lib.ts)"; diff <(echo "$real_schema") <(echo "$fake_schema"); exit 1; }
+
 # The same for $.tldr.schema() and the tldr manifest (hooks/index.tsx).
 tldr_manifest="$root/plugins/tldr/.claude-plugin/plugin.json"
 tldr_mod="$root/plugins/tldr/hooks/index.tsx"
