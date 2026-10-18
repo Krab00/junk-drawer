@@ -77,8 +77,9 @@ Set them in the Settings tab or in `/config` under plugin `handoff`.
 | `staleDays` | number | `30` | Handoffs older than this are marked stale and removed by `d`; above 0 |
 | `segment` | boolean | `true` | Show the `🪃` segment in the prompt line |
 
-A value outside these is refused by `$.handoff.set` (the Settings tab is stricter still: whole numbers), and a
-refused option at load falls back to its default. Scope: user-global; project/session overrides: planned.
+A value outside these is refused by `$.handoff.set` and the `/config` menu alike (the Settings tab is stricter still:
+whole numbers); a write from either applies at once. A refused option at load falls back to its default.
+Scope: user-global; project/session overrides: planned.
 
 `ctx-limit` stays a separate, manual safeguard. The [junkd](../junkd/README.md) frame shows the main
 rows of this table in its own pane through `$.handoff` (below); it is optional, handoff works without it.

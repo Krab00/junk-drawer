@@ -265,6 +265,13 @@ async function setOption($: $, field: Field, raw: string | number | boolean) {
     redraw($)
     return { deny }
   }
+  S.note = `✓ ${field} = ${String(value)}`
+  await apply($, field, value)
+  return { value: current(field) } as const
+}
+
+// One field as its row took it, into S — the one place a write lands, from setOption or the /config menu's hook.
+async function apply($: $, field: Field, value: number | boolean) {
   if (field === 'threshold') S.threshold = value as number
   else if (field === 'checkEvery') S.checkEvery = value as number
   else if (field === 'staleDays') { S.staleDays = value as number; S.entries = null; void load($) }
@@ -272,9 +279,7 @@ async function setOption($: $, field: Field, raw: string | number | boolean) {
   else if (field === 'autoOn') S.autoOn = value as boolean
   else if (field === 'resumeAfterLimit') { S.resumeAfterLimit = value as boolean; if (!value) cancelResume() }
   else if (field === 'enabled') await applyEnabled($, value as boolean)
-  S.note = `✓ ${field} = ${String(value)}`
   await sync($)
-  return { value: current(field) } as const
 }
 
 // `enabled` as the row took it. Off disarms the loop (and drops a pending 5h-limit resume), and arm() refuses while
@@ -424,15 +429,15 @@ export const register: Register = (on, options) => {
     return auto($, args, false) // ponytail: the short form arms and runs the prompt; the pane is /ahandoff panel
   })
 
-  // The /config menu's own write to the enabled row passes here (a hook never sees its plugin's own `$.config.set`):
-  // read as `set` reads it, and applied once the row took it.
-  on('config.set', { key: 'handoff.enabled' }, async ($, e, next) => {
-    const value = coerce('enabled', e.value).value as boolean
-    const r = await next({ ...e, value })
-    if (r.deny === undefined) {
-      await applyEnabled($, value)
-      await sync($)
-    }
+  // The /config menu's own writes to every handoff row pass here (a hook never sees its plugin's own
+  // `$.config.set`): read as `set` reads it, refused where `set` refuses, and applied live once the row took it.
+  on('config.set', { key: /^handoff\./ }, async ($, e, next) => {
+    const field = e.key.slice('handoff.'.length)
+    if (!isField(field)) return next(e)
+    const c = coerce(field, e.value)
+    if (c.error !== undefined) return { deny: c.error }
+    const r = await next({ ...e, value: c.value })
+    if (r.deny === undefined) await apply($, field, c.value)
     return r
   })
 
