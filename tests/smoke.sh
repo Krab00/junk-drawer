@@ -12,6 +12,17 @@ for file in $(rg --files -uu "$root/.agents" "$root/plugins" | rg '\.json$'); do
     jq empty "$file"
 done
 
+# Every plugin a host's marketplace lists has that host's manifest, or its installer fails on the entry: Kimi
+# reads `.kimi-plugin/plugin.json` or `kimi.plugin.json`, Codex `.codex-plugin/plugin.json`.
+for src in $(jq -r '.plugins[].source' "$root/kimi-marketplace.json"); do
+    [ -f "$root/$src/.kimi-plugin/plugin.json" ] || [ -f "$root/$src/kimi.plugin.json" ] ||
+        { echo "kimi-marketplace.json lists $src, which has no .kimi-plugin/plugin.json or kimi.plugin.json"; exit 1; }
+done
+for src in $(jq -r '.plugins[].source.path' "$root/.agents/plugins/marketplace.json"); do
+    [ -f "$root/$src/.codex-plugin/plugin.json" ] ||
+        { echo ".agents/plugins/marketplace.json lists $src, which has no .codex-plugin/plugin.json"; exit 1; }
+done
+
 # A dangling link would make hooks and slash commands fail at runtime, and it hides from every
 # check below that resolves a path (`test -e` on a broken link is false).
 dangling=$(find "$root/plugins" -type l ! -exec test -e {} \; -print)
