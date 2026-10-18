@@ -108,7 +108,25 @@ test('set terse writes the tldr.terse row and the flag file; get reads the file;
 
   expect(await frame($, 'set', { key: 'terse', value: 'on' })).toBe(true) // the shell spelling is a true
   expect(rec.files.has(FLAG)).toBe(true)
+
+  // the string spellings: 'true' is a true, 'false', 'maybe' and 1 are a false
+  expect(await frame($, 'set', { key: 'terse', value: 'false' })).toBe(false)
+  expect(rec.files.has(FLAG)).toBe(false)
+  expect(await frame($, 'set', { key: 'terse', value: 'true' })).toBe(true)
+  expect(rec.files.has(FLAG)).toBe(true)
+  expect(await frame($, 'set', { key: 'terse', value: 'maybe' })).toBe(false)
+  expect(await frame($, 'set', { key: 'terse', value: 1 })).toBe(false)
+  expect(rec.files.has(FLAG)).toBe(false)
+  expect(rec.config.map(c => c.value)).toEqual([true, false, true, false, true, false, false])
 })
+
+for (const sentences of [0, 2.5]) {
+  test(`a sentences option of ${sentences} the engine hands at load falls back to 3`, { ...WITH_FRAME, options: { sentences } }, async ($, on) => {
+    world(on)
+    await start($)
+    expect(await frame($, 'get', { key: 'sentences' })).toBe(3)
+  })
+}
 
 test('the flag file follows CLAUDE_CONFIG_DIR, as the shell side does', WITH_FRAME, async ($, on) => {
   const rec = world(on, { HOME, CLAUDE_CONFIG_DIR: '/cfg' })
@@ -144,6 +162,15 @@ test('a write to the tldr.terse row by the /config menu, not $.tldr.set, writes 
   await frame($, 'config', { key: 'tldr.terse', value: false })
   expect(rec.files.has(FLAG)).toBe(false)
   await frame($, 'config', { key: 'tldr.sentences', value: 7 })
+  expect(await frame($, 'get', { key: 'sentences' })).toBe(7)
+
+  // the menu's write of a value set would refuse is refused the same way: the row stays, get stays
+  const rows = rec.config.length
+  for (const value of [0, 2.5, 'abc']) {
+    const r = (await frame($, 'config', { key: 'tldr.sentences', value })) as { deny?: string }
+    expect(r.deny, String(value)).toMatch(/not a valid sentences/)
+  }
+  expect(rec.config.length).toBe(rows)
   expect(await frame($, 'get', { key: 'sentences' })).toBe(7)
 })
 

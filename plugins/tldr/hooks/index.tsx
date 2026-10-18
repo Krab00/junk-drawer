@@ -71,9 +71,12 @@ export const register: Register = (on, options) => {
     if (r.deny === undefined) await writeFlag($, e.value === true)
     return r
   })
+  // The /config menu's own writes pass here too: a value `set` would refuse is refused the same way.
   on('config.set', { key: 'tldr.sentences' }, async (_$, e, next) => {
+    const c = coerce('sentences', e.value)
+    if (c.error !== undefined) return { deny: c.error }
     const r = await next(e)
-    if (r.deny === undefined) S.sentences = coerce('sentences', e.value).value ?? S.sentences
+    if (r.deny === undefined) S.sentences = c.value
     return r
   })
 }
