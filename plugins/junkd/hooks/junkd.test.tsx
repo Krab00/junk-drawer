@@ -20,7 +20,8 @@ const fixture = (enabledPlugins: Record<string, boolean> = ALL_ON): Record<strin
   [SETTINGS]: JSON.stringify({ theme: 'dark', enabledPlugins }),
 })
 
-// The three nouns as the real plugins declare them (their SCHEMA, `main` included); get answers fixed values, set
+// The three nouns as the real plugins declare them (their SCHEMA, `main` included); get answers fixed values (one
+// per noun away from its default, so a default drawn in a value's place shows), set
 // and open throw unless a hook answers (the test's own hooks beneath record the calls). An inline plugin closes
 // over nothing of this file, so each spells its own throw.
 const FAKE_HANDOFF: Plugin = {
@@ -37,7 +38,7 @@ const FAKE_HANDOFF: Plugin = {
           { key: 'staleDays', type: 'number', title: 'Handoffs: mark stale after N days', default: 30, main: false },
           { key: 'segment', type: 'boolean', title: 'Status line: show the 🪃 segment', default: true, main: true },
         ],
-        get: async (key: string) => ({ threshold: 85, checkEvery: 5, autoOn: false, resumeAfterLimit: true, staleDays: 30, segment: true } as Record<string, number | boolean>)[key]!,
+        get: async (key: string) => ({ threshold: 70, checkEvery: 5, autoOn: false, resumeAfterLimit: true, staleDays: 30, segment: true } as Record<string, number | boolean>)[key]!,
         set: async () => { throw new Error('handoff: the hooks module did not answer') },
         open: async () => { throw new Error('handoff: the hooks module did not answer') },
         status: async () => ({ armed: false, percent: 0, phase: 'idle' }),
@@ -59,7 +60,7 @@ const FAKE_ORCH: Plugin = {
           { key: 'inject_rules', type: 'boolean', title: 'Inject orchestrator rules', default: true, main: false },
           { key: 'rounds', type: 'number', title: 'Fix rounds', default: 3, main: false },
         ],
-        get: async (input: { key: string }) => ({ guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 } as Record<string, string | number | boolean>)[input.key]!,
+        get: async (input: { key: string }) => ({ guard: 'fable', allow_fable_agents: true, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 } as Record<string, string | number | boolean>)[input.key]!,
         set: async () => { throw new Error('orch: the hooks module did not answer') },
         open: async () => { throw new Error('orch: the hooks module did not answer') },
         guardState: async () => ({ active: false, model: 'x' }),
@@ -77,7 +78,7 @@ const FAKE_TLDR: Plugin = {
           { key: 'terse', type: 'boolean', title: 'Terse mode', default: false, main: true },
           { key: 'sentences', type: 'number', title: 'Sentences in a summary', default: 3, main: true },
         ],
-        get: async (input: { key: string }) => ({ terse: false, sentences: 3 } as Record<string, number | boolean>)[input.key]!,
+        get: async (input: { key: string }) => ({ terse: false, sentences: 4 } as Record<string, number | boolean>)[input.key]!,
         set: async () => { throw new Error('tldr: the hooks module did not answer') },
       },
     }))
@@ -91,7 +92,7 @@ type Call = { noun: string; method: string; input: unknown }
 // provides fails the load.
 function world(on: On, files: Record<string, string>, nouns = false) {
   const rec = { files, reads: [] as string[], toasts: [] as string[], opens: [] as Open[], closed: [] as string[], calls: [] as Call[],
-    commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], denyOrchOpen: '', beneath: '' }
+    commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], denyOrchOpen: '', beneath: '', merged: '' }
   on('env.get', (_$, e) => ({ value: ({ CLAUDE_CONFIG_DIR: CFG, HOME: '/fake/home' } as Record<string, string>)[e.name] }))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('fs.exists', (_$, e) => ({ value: e.path in files }))
@@ -112,7 +113,8 @@ function world(on: On, files: Record<string, string>, nouns = false) {
     delete files[from!]
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  on('settings.read', () => ({ value: JSON.parse(files[SETTINGS] ?? '{}') }))
+  // What the engine merged (user, project, local...): the user file alone unless `merged` says otherwise.
+  on('settings.read', () => ({ value: JSON.parse(rec.merged || files[SETTINGS] || '{}') }))
   on('ui.open', (_$, e) => { rec.opens.push({ id: e.id, title: e.title, focus: e.focus }); return { value: { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); return { value: undefined } })
   on('ui.panes', () => ({ value: [] }))
@@ -208,6 +210,7 @@ test('AC2: Plugins lists every marketplace plugin, on/off from user-scope settin
   // the plugin cache's copy under the config dir; the user-scope settings.json beside it.
   expect(rec.reads[0]).toMatch(/\/\.claude-plugin\/marketplace\.json$/)
   expect(rec.reads[0]).not.toBe(MARKETPLACE_JSON) // the engine resolves `<root>/../..`: this checkout's own root
+  expect(rec.reads[0]).not.toMatch(/\/plugins\//) // two levels up from plugins/junkd, not one
   expect(rec.reads[1]).toBe(MARKETPLACE_JSON)
   expect(rec.reads[2]).toBe(SETTINGS)
 
@@ -288,9 +291,10 @@ test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flip
   for (const [i, k] of switches.entries()) expect((await pane.find({ type: 'Button', key: `set:${k}` }))?.props.hotkey, k).toBe('abcde'[i])
   expect((await pane.find({ type: 'Button', key: 'set:handoff:autoOn' }))?.text).toBe('on') // off now: the button turns it on
   expect((await pane.find({ type: 'Button', key: 'set:handoff:segment' }))?.text).toBe('off')
-  expect((await pane.find({ type: 'Input', key: 'set:handoff:threshold' }))?.props.value).toBe('85')
+  expect((await pane.find({ type: 'Input', key: 'set:handoff:threshold' }))?.props.value).toBe('70') // get's value, not the default 85
   expect((await pane.find({ type: 'Input', key: 'set:orch:implementer_ctx_k' }))?.props.value).toBe('400')
-  expect((await pane.find({ type: 'Input', key: 'set:tldr:sentences' }))?.props.value).toBe('3')
+  expect((await pane.find({ type: 'Input', key: 'set:tldr:sentences' }))?.props.value).toBe('4') // not the default 3
+  expect((await pane.find({ type: 'Button', key: 'set:orch:allow_fable_agents' }))?.text).toBe('off') // on by get, off by default
   // The choice: the current option an inverse block, the others Buttons; no engine Select.
   expect(await pane.find({ type: 'Select' })).toBeUndefined()
   expect((await pane.find({ key: 'set:orch:guard=fable' }))?.text).toBe(' fable ')
@@ -310,7 +314,7 @@ test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flip
   expect(rec.calls).toEqual([
     { noun: 'handoff', method: 'set', input: { key: 'autoOn', value: true } },
     { noun: 'handoff', method: 'set', input: { key: 'segment', value: false } },
-    { noun: 'orch', method: 'set', input: { key: 'allow_fable_agents', value: true } },
+    { noun: 'orch', method: 'set', input: { key: 'allow_fable_agents', value: false } },
     { noun: 'tldr', method: 'set', input: { key: 'terse', value: true } },
     { noun: 'handoff', method: 'set', input: { key: 'threshold', value: '90' } },
     { noun: 'tldr', method: 'set', input: { key: 'sentences', value: '5' } },
@@ -334,14 +338,24 @@ test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flip
   expect(rec.closed).toEqual(['junkd', 'junkd'])
 })
 
-test('AC3: a noun whose plugin is off in settings.json shows no section, even while its hooks are loaded; a noun whose open is refused keeps the pane', WITH_NOUNS, async ($, on) => {
+test('AC3: a plugin on in the merged settings shows its section and is marked when off at user scope; one off in the merged settings shows none, even while its hooks are loaded; a refused open keeps the pane', WITH_NOUNS, async ($, on) => {
   const rec = world(on, fixture({ 'handoff@junk-drawer': true, 'orch@junk-drawer': true, 'tldr@junk-drawer': false }), true)
+  rec.merged = JSON.stringify({ enabledPlugins: { 'handoff@junk-drawer': true, 'orch@junk-drawer': false, 'tldr@junk-drawer': true } })
   rec.denyOrchOpen = 'orch: no room'
   const pane = await openPane($)
+  expect(await pane.find({ type: 'Box', key: 'group:tldr' })).toBeDefined() // on in this project
   expect(await pane.find({ type: 'Box', key: 'group:handoff' })).toBeDefined()
+  expect(await pane.find({ type: 'Box', key: 'group:orch' })).toBeUndefined() // off where it counts
+  expect(await pane.find({ key: 'set:orch:guard=fable' })).toBeUndefined()
+  expect((await pane.find({ type: 'Text', text: /on in this project/ }))?.text).toBe('(on in this project) Summarize')
+  expect((await pane.find({ type: 'Button', key: 'plugin:tldr' }))?.text).toBe('on') // the user-scope switch still says off
+  expect((await pane.find({ type: 'Button', key: 'plugin:orch' }))?.text).toBe('off')
+
+  rec.merged = ''
+  await pane.press({ key: 'plugin:tldr' }) // on at user scope too: the marker goes, the section stays
+  expect(await pane.find({ type: 'Text', text: /on in this project/ })).toBeUndefined()
+  expect(await pane.find({ type: 'Box', key: 'group:tldr' })).toBeDefined()
   expect(await pane.find({ type: 'Box', key: 'group:orch' })).toBeDefined()
-  expect(await pane.find({ type: 'Box', key: 'group:tldr' })).toBeUndefined()
-  expect(await pane.find({ key: 'set:tldr:terse' })).toBeUndefined()
   await pane.press({ key: 'pane:orch' })
   expect((await pane.find({ key: 'note' }))?.text).toBe('✗ orch: no room')
   expect(rec.closed).toEqual([])
