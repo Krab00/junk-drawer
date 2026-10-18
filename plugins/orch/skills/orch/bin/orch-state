@@ -9,6 +9,7 @@
 #                                   # in_progress -> todo (a crashed run); --blocked: blocked -> todo too
 #   orch-state new <id> [title...]  # write a skeleton task file (spec layout)
 #   orch-state cfg <key>            # print a top-level key of the config's frontmatter
+#   orch-state tasks-dir            # print the task dir (tasks_dir, checked to stay inside the project; orch-sync uses it)
 # tasks_dir is read from .orch/config.md (legacy fallback: .claude/orch.config.md).
 #   orch-state id <id>              # print <id> if it is a valid task id, else fail (orch-worktree uses it)
 #   orch-state root                 # print the project root the scripts use (see _root)
@@ -103,8 +104,22 @@ _fm_ok() {
   awk '{ sub(/\r$/, "") } NR == 1 { if (!/^---[ \t]*$/) exit 1; next } /^---[ \t]*$/ { ok = 1; exit } END { exit !ok }' "$1"
 }
 
-tasks_dir=$(_fm_get "$config" tasks_dir); tasks_dir="${tasks_dir:-.orch/tasks}"
-tasks_dir="$root/$tasks_dir"
+# _tasks_dir <value>: the config's tasks_dir as an absolute path, or a stop. The config steers where these scripts
+# write, so it must stay inside the project: relative, no `..` segment, and its real path (symlinks resolved from its
+# nearest existing folder) under the project's real path, outside .git/.
+_tasks_dir() {
+  local td="$1" up real top
+  case "$td" in ""|/*) echo "orch: tasks_dir '$td' must be a relative path inside the project" >&2; exit 2 ;; esac
+  case "/$td/" in */../*) echo "orch: tasks_dir '$td' has a .. segment" >&2; exit 2 ;; esac
+  up="$root/$td"
+  while [ ! -d "$up" ]; do up=$(dirname "$up"); done
+  real=$(cd -P "$up" && pwd); top=$(cd -P "$root" && pwd)
+  case "$real/" in "$top"/*) ;; *) echo "orch: tasks_dir '$td' lands outside the project ($real)" >&2; exit 2 ;; esac
+  case "$real/" in "$top/.git/"*) echo "orch: tasks_dir '$td' lands in .git/" >&2; exit 2 ;; esac
+  echo "$root/$td"
+}
+tasks_dir=$(_fm_get "$config" tasks_dir)
+tasks_dir=$(_tasks_dir "${tasks_dir:-.orch/tasks}")
 file_for(){ echo "$tasks_dir/$1.md"; }
 
 # _task_files -> the task files of tasks_dir: *.md minus the `_`-prefixed ones (_lessons.md).
@@ -122,6 +137,7 @@ case "$cmd" in
   cfg)
     _fm_get "$config" "${1:?usage: orch-state cfg <key>}"
     ;;
+  tasks-dir) echo "$tasks_dir" ;;
   list)
     printf '%-18s %-13s %s\n' ID STATUS DEPS
     while IFS= read -r f; do

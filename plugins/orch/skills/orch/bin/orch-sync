@@ -19,7 +19,7 @@ cfg(){ _fm_get "$config" "$1"; }
 _strip(){ local v="$1"; v="${v%\"}"; v="${v#\"}"; printf '%s' "$v"; }
 
 backend=$(cfg backend);   backend=$(_strip "${backend:-adhoc}")
-tdir=$(cfg tasks_dir);    tdir=$(_strip "${tdir:-.orch/tasks}"); dir="$root/$tdir"; mkdir -p "$dir"
+dir=$("$state" tasks-dir); mkdir -p "$dir"   # tasks_dir, checked to stay inside the project
 
 # label from `github: { label: "orch" }`
 _gh_label(){ awk '/^github:/{ if(match($0,/label:[ \t]*"[^"]*"/)){s=substr($0,RSTART,RLENGTH);sub(/label:[ \t]*"/,"",s);sub(/"$/,"",s);print s;exit} }' "$config"; }
