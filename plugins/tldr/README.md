@@ -19,7 +19,7 @@ Two things in one command:
 
 ```
 /tldr 2      # last message in ≤2 sentences
-/tldr        # last message in ≤3 sentences
+/tldr        # last message in ≤3 sentences (the `sentences` setting on Claude Code)
 /tldr on     # terse mode ON — every reply, all sessions
 /tldr off    # back to normal
 /tldr status # is terse mode currently on or off
@@ -43,6 +43,9 @@ Two rows in `/config` on Claude Code (`userConfig` in the manifest):
 | `sentences` | number | `3` | How many sentences a `/tldr` without a number may use |
 
 Scope: user-global; project/session overrides: planned.
+
+`sentences` applies on Claude Code through the hooks module: a `/tldr` with no argument reaches the command
+with the setting as its number. Other hosts run the markdown alone and keep its default of 3.
 
 The [junkd](../junkd/README.md) frame shows both rows in its own pane through `$.tldr` (below); it is
 optional, tldr works without it.
