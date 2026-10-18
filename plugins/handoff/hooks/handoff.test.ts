@@ -744,6 +744,103 @@ test('the /config menu write of handoff.enabled lands live too, read as set read
   expect(await frame($, 'status')).toMatchObject({ armed: true })
 })
 
+// The /config menu's writes, through the frame's `config` (another plugin's $.config.set reaches handoff's hooks).
+const menu = ($: Engine, key: string, value: unknown) => frame($, 'config', { key: `handoff.${key}`, value }) as Promise<{ value?: unknown; deny?: string }>
+
+test('the /config menu refuses what set refuses: threshold 150, checkEvery 2.6 and the rest; the row and get stay', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  for (const [key, value, holds] of [
+    ['threshold', 150, 80], ['threshold', 101, 80], ['threshold', 0, 80], ['threshold', 'abc', 80],
+    ['checkEvery', 2.6, 1], ['checkEvery', 0, 1], ['staleDays', 0, 30], ['staleDays', -1, 30],
+  ] as const) {
+    const writes = rec.config.length
+    expect((await menu($, key, value)).deny, `${key} ${value}`).toMatch(new RegExp(`not a valid ${key}`))
+    expect(rec.config.length, `${key} ${value} reached the row`).toBe(writes)
+    expect(await frame($, 'get', key), `${key} ${value}`).toBe(holds)
+  }
+  // the bounds themselves go through
+  expect(await menu($, 'threshold', 100)).toEqual({ value: 100 })
+  expect(await menu($, 'checkEvery', 1)).toEqual({ value: 1 })
+  // a handoff row the module has no field for is left to the host
+  expect(await menu($, 'nope', 3)).toEqual({ value: 3 })
+})
+
+test('a /config menu write of every field lands live: get answers it at once', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  for (const [key, value] of [
+    ['threshold', 70], ['checkEvery', 3], ['staleDays', 7], ['autoOn', true], ['resumeAfterLimit', false], ['segment', false], ['enabled', false],
+  ] as const) {
+    expect(await menu($, key, value), key).toEqual({ value })
+    expect(rec.config.at(-1), key).toEqual({ key: `handoff.${key}`, value })
+    expect(await frame($, 'get', key), key).toBe(value)
+  }
+  expect(await menu($, 'threshold', '55')).toEqual({ value: 55 }) // a typed number is stored as the number
+  expect(await frame($, 'get', 'threshold')).toBe(55)
+})
+
+test('a /config menu threshold acts at once: the next check denies past it', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await handoff($, 'auto')
+  rec.percent = 60
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
+  await menu($, 'threshold', 50)
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+})
+
+test('segment off in the /config menu hides the 🪃 segment; on brings it back', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  world(on)
+  await start($)
+  expect(await hint($)).toMatch(/🪃/)
+  await menu($, 'segment', false)
+  expect(await hint($)).not.toMatch(/🪃/)
+  await menu($, 'segment', 'on')
+  expect(await hint($)).toMatch(/🪃/)
+  // a prompt line already drawn is drawn again: the write asks for the redraw
+  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...HINT })
+  expect(await texts(ui as unknown as Mounted<Surface, 'Pane'>)).toMatch(/🪃/)
+  await menu($, 'segment', false)
+  expect(await texts(ui as unknown as Mounted<Surface, 'Pane'>)).not.toMatch(/🪃/)
+  await ui.unmount()
+})
+
+test('resumeAfterLimit off in the /config menu cancels a scheduled 5h-limit resume', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const clock = mock.clock(on)
+  await start($)
+  await handoff($, 'auto')
+  const hour = 3_600_000
+  await $.session.measure({ context: usage(10).context, rateLimits: [{ kind: 'five_hour', percentUsed: 100, resetsAt: new Date(hour).toISOString() }], changed: ['rateLimits'] })
+  await $.turn.complete(DIED('t1'))
+  expect(await hint($)).toMatch(/limit → /)
+  await menu($, 'resumeAfterLimit', false)
+  expect(await hint($)).not.toMatch(/limit → /)
+  await clock.advance(hour * 2)
+  expect(rec.prompts).toEqual([])
+})
+
+test('every boolean row through the /config menu: true, \'true\' and \'on\' are on, the rest off', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  for (const key of ['enabled', 'autoOn', 'resumeAfterLimit', 'segment']) {
+    for (const value of [true, 'true', 'on']) {
+      await menu($, key, false)
+      expect(await frame($, 'get', key), `${key} off before ${String(value)}`).toBe(false)
+      expect(await menu($, key, value), `${key} ${String(value)}`).toEqual({ value: true })
+      expect(rec.config.at(-1), `${key} ${String(value)} stored`).toEqual({ key: `handoff.${key}`, value: true })
+      expect(await frame($, 'get', key), `${key} ${String(value)}`).toBe(true)
+    }
+    for (const value of ['false', 'off']) {
+      expect(await menu($, key, value), `${key} ${value}`).toEqual({ value: false })
+      expect(await frame($, 'get', key), `${key} ${value}`).toBe(false)
+      await menu($, key, true)
+    }
+  }
+})
+
 test('a refused write of handoff.enabled (menu or set) leaves the loop armed', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
   on('config.set', { key: 'handoff.enabled' }, () => ({ deny: 'locked' }))
   const rec = world(on)
