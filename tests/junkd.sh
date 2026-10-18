@@ -68,9 +68,15 @@ out=$(printf '{}' | env -u CLAUDE_AGENT_ID "$tmp/next/scripts/setup.sh") || fail
 rg -q '^junkd: ' <<<"$out" || fail "next version: expected the junkd: line, got: $out"
 [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "next version: outputStyle not set"
 [ -e "$CLAUDE_CONFIG_DIR/junkd/setup-99.0.0.stamp" ] || fail "next version: not stamped under its own version"
-# the version read without jq (the sed fallback) is the same
-[ "$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$plugin/.claude-plugin/plugin.json" | head -1)" = "$ver" ] ||
-    fail "the sed fallback reads another version than jq"
+# a manifest that does not parse, even with a version line in it: nothing set, nothing stamped
+cp -R "$plugin/." "$tmp/broken"
+printf '{"name": "junkd", "version": "7.7.7",\n' > "$tmp/broken/.claude-plugin/plugin.json"
+reset
+printf '{"theme": "dark"}\n' > "$settings"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID "$tmp/broken/scripts/setup.sh" 2>&1) || fail "broken manifest: hook exited non-zero"
+[ -z "$out" ] || fail "broken manifest: hook printed output: $out"
+[ "$(cat "$settings")" = '{"theme": "dark"}' ] || fail "broken manifest: settings.json changed"
+[ ! -e "$CLAUDE_CONFIG_DIR/junkd/setup-7.7.7.stamp" ] || fail "broken manifest: stamped from the version line"
 
 # ---------------------------------------------------------------- key present -> untouched, silent, stamped (AC2, AC4)
 for value in '"Explanatory"' '"junkd:STE"' 'null' '""' '{"name":"x"}'; do
@@ -119,6 +125,38 @@ rm "$flag"
 out=$(main) || fail "on again: hook exited non-zero"
 rg -q '^junkd: ' <<<"$out" || fail "on again: expected the junkd: line, got: $out"
 [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "on again: outputStyle not set"
+# the setting itself in settings.json (the hooks module runs after this hook at a session start, so the flag
+# file is not yet there on a first session): off under any marketplace's junkd entry skips, no stamp
+for key in 'junkd@junk-drawer' 'junkd@other'; do
+    reset
+    printf '{"theme": "dark", "pluginConfigs": {"%s": {"options": {"output_style": "off"}}}}\n' "$key" > "$settings"
+    before=$(cat "$settings")
+    out=$(main) || fail "setting off ($key): hook exited non-zero"
+    [ -z "$out" ] || fail "setting off ($key): hook printed output: $out"
+    [ "$(cat "$settings")" = "$before" ] || fail "setting off ($key): settings.json changed"
+    [ ! -e "$stamp" ] || fail "setting off ($key): stamped although skipped"
+done
+# ste there, another plugin's off, or no options: the step applies
+for cfgjson in '{"junkd@junk-drawer": {"options": {"output_style": "ste"}}}' '{"tldr@junk-drawer": {"options": {"output_style": "off"}}}' \
+    '{"junkd@junk-drawer": {}}' '{}'; do
+    reset
+    printf '{"theme": "dark", "pluginConfigs": %s}\n' "$cfgjson" > "$settings"
+    out=$(main) || fail "pluginConfigs $cfgjson: hook exited non-zero"
+    rg -q '^junkd: ' <<<"$out" || fail "pluginConfigs $cfgjson: expected the junkd: line, got: $out"
+    [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "pluginConfigs $cfgjson: outputStyle not set"
+    [ "$(jq -c .pluginConfigs "$settings")" = "$(jq -c . <<<"$cfgjson")" ] || fail "pluginConfigs $cfgjson: pluginConfigs changed"
+done
+# neither CLAUDE_CONFIG_DIR nor HOME: nothing to do, exit 0, silent
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR -u HOME "$hook" 2>&1) || fail "no HOME: hook exited non-zero"
+[ -z "$out" ] || fail "no HOME: hook printed output: $out"
+# the stamp dir cannot be made (a file in its place): the key is still set, one line, no noise
+reset
+printf '{"theme": "dark"}\n' > "$settings"
+: > "$CLAUDE_CONFIG_DIR/junkd"
+out=$(main) || fail "stamp dir blocked: hook exited non-zero"
+[ "$(wc -l <<<"$out" | tr -d ' ')" = 1 ] && rg -q '^junkd: ' <<<"$out" || fail "stamp dir blocked: expected one junkd: line, got: $out"
+[ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "stamp dir blocked: outputStyle not set"
+rm "$CLAUDE_CONFIG_DIR/junkd"
 # with no CLAUDE_CONFIG_DIR, everything lives under $HOME/.claude
 mkdir -p "$tmp/home/.claude/junkd" && : > "$tmp/home/.claude/junkd/output-style-off"
 printf '{}' > "$tmp/home/.claude/settings.json"
@@ -201,12 +239,13 @@ reset
 printf '{"theme": "dark"}\n' > "$settings"
 mkdir -p "$tmp/bin"
 for t in bash cat mkdir cp mv rm readlink sed head mktemp dirname env; do ln -s "$(command -v "$t")" "$tmp/bin/$t"; done
-out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" HOME="$tmp/nohome" "$hook") || fail "no jq: hook exited non-zero"
+# The script adds the usual tool dirs to PATH; JUNKD_SETUP_PATH_DIRS= keeps a brew or system jq out of reach.
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" JUNKD_SETUP_PATH_DIRS= HOME="$tmp/nohome" "$hook" 2>&1) || fail "no jq: hook exited non-zero"
 [ -z "$out" ] || fail "no jq: hook printed output: $out"
 [ "$(cat "$settings")" = '{"theme": "dark"}' ] || fail "no jq: settings.json changed"
 [ ! -e "$stamp" ] || fail "no jq: stamped"
 reset   # and a missing settings.json is not even created without jq
-out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" HOME="$tmp/nohome" "$hook") || fail "no jq, no file: hook exited non-zero"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" JUNKD_SETUP_PATH_DIRS= HOME="$tmp/nohome" "$hook" 2>&1) || fail "no jq, no file: hook exited non-zero"
 [ -z "$out" ] || fail "no jq, no file: hook printed output: $out"
 [ ! -e "$settings" ] || fail "no jq, no file: settings.json was created"
 

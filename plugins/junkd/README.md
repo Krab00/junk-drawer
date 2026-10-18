@@ -67,9 +67,11 @@ compaction and every subagent are skipped. The hook always exits 0.
 key that exists, whatever its value, and `/output-style` changes it any time, `junkd:STE` included.
 
 **Turn the step off.** Set `output_style` to `off` in `/config` (the junkd row; `ste` is the default). The
-hooks module mirrors the row into the flag file `~/.claude/junkd/output-style-off`, which the shell hook reads
-(a shell hook reads no plugin setting), at every write of the row and at session start. While it is off no
-stamp is written, so `ste` again applies the step at the next session start. Removing the plugin stops the
+shell hook reads the row where Claude Code stores it (`pluginConfigs` in `settings.json`), and the hooks
+module also mirrors it into the flag file `~/.claude/junkd/output-style-off`, at every write of the row and at
+session start, so the step is off from the first session on. While it is off no stamp is written, so `ste`
+again applies the step at the next session start. The step needs `jq`; without it nothing is written and
+nothing is stamped. Removing the plugin stops the
 step too; a `junkd:STE` already in `settings.json` then names a style that is gone, so pick another with
 `/output-style`.
 
