@@ -54,7 +54,9 @@ optional, tldr works without it.
 shell hook cannot read `$.config`, so `~/.claude/tldr-on` (or `$CLAUDE_CONFIG_DIR/tldr-on`) is what decides
 terse mode. Flipping `terse` in `/config` or through `$.tldr.set` writes the row *and* the flag file;
 `/tldr on|off` writes the flag file only. When the two disagree the file wins: `$.tldr.get` answers `terse`
-from the file, and the next write puts both back in step.
+from the file, and the next write puts both back in step. A hand edit of `terse` in settings.json writes the row
+only: the flag file, written by `/tldr on|off` and by the setting, is what the shell hook reads, so the edit takes
+effect at the next write through `/config` or `$.tldr.set`.
 
 ### API for other plugins
 
