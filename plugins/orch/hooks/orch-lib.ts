@@ -69,7 +69,7 @@ const ALLOW = new Set([
   'ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill',
   'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger',
 ])
-const REVIEWER = /^(orch:)?(verify-coordinator|ui-reviewer)$/
+const REVIEWER = /^(orch:)?(verify-coordinator|ui-reviewer|test-planner|test-reviewer)$/
 const MODELS = new Set(['opus', 'sonnet', 'haiku']) // an Agent's `model`: never inherit; fable only as below
 const FABLE = /fable/i // `fable` or a full Fable id: an Agent's explicit model, only with allow_fable_agents
 const PLAIN_PATH = /^\/[\x20-\x7e]*$/ // absolute, printable ASCII: no `~`-relative, no Unicode alias of a name
