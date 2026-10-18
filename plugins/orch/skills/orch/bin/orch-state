@@ -1,73 +1,126 @@
 #!/usr/bin/env bash
 # orch-state — canonical task-file store CRUD. Frontmatter is the source of truth
 # (no separate manifest). Zero deps (bash + coreutils). ALL status edits go through here.
-#   orch-state list                 # id | status | deps table (from frontmatter)
-#   orch-state set <id> <status>    # status in: todo|in_progress|done|blocked
-#   orch-state reset-stale          # in_progress|blocked -> todo (give it fresh rounds)
+#   orch-state list                 # id (file name) | status | deps table; status `invalid` = the file
+#                                   # has no closed --- frontmatter block (never selected; `set` refuses it).
+#                                   # Files starting with `_` (_lessons.md, _notes.md) are not tasks: hidden
+#   orch-state set <id> <status>    # status in: todo|in_progress|done|blocked (a CRLF file is rewritten LF)
+#   orch-state reset-stale [--blocked]
+#                                   # in_progress -> todo (a crashed run); --blocked: blocked -> todo too
 #   orch-state new <id> [title...]  # write a skeleton task file (spec layout)
+#   orch-state cfg <key>            # print a top-level key of the config's frontmatter
 # tasks_dir is read from .orch/config.md (legacy fallback: .claude/orch.config.md).
+#   orch-state id <id>              # print <id> if it is a valid task id, else fail (orch-worktree uses it)
 set -euo pipefail
+
+# A task id names a file in tasks/, a worktree in .worktrees/ and part of a branch: one plain word.
+# A leading `_` is reserved for non-task files (_lessons.md), so it is never a task id.
+_id() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$1" != *..* ]] || { echo "orch: bad task id '$1' (letters, digits, . _ -; not starting with _)" >&2; exit 1; }
+  echo "$1"
+}
+
+# id and help need no config.
+case "${1:-}" in
+  id) _id "${2:-}"; exit 0 ;;
+  ""|-h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 0 ;;
+esac
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 config="$root/.orch/config.md"
 [ -f "$config" ] || config="$root/.claude/orch.config.md"
 [ -f "$config" ] || { echo "orch: no config ($root/.orch/config.md) - run orch-init" >&2; exit 2; }
 
-# _fm_get <file> <key> -> value of a top-level YAML-frontmatter key (first --- block).
+# _fm_get <file> <key> -> value of a top-level (column 0) key of the first --- block. CRLF tolerated;
+# one pair of quotes stripped; a ` # comment` stripped outside quotes; a block list (`key:` then
+# `  - a`) printed as [a, b].
 _fm_get() {
-  awk -v key="$2" '
-    NR==1 && $0 ~ /^---[ \t]*$/ { i=1; next }
-    i && $0 ~ /^---[ \t]*$/ { exit }
-    i { p=index($0,":"); if(p==0) next
-        k=substr($0,1,p-1); gsub(/^[ \t]+|[ \t]+$/,"",k)
-        if(k==key){ v=substr($0,p+1); gsub(/^[ \t]+|[ \t]+$/,"",v); print v; exit } }
+  awk -v key="$2" -v sq="'" '
+    function unq(v,  c, e) {
+      gsub(/^[ \t]+|[ \t]+$/, "", v); c = substr(v, 1, 1)
+      if (c == "\"" || c == sq) { v = substr(v, 2); e = index(v, c); return e ? substr(v, 1, e - 1) : v }
+      sub(/[ \t]+#.*$/, "", v); return v
+    }
+    { sub(/\r$/, "") }
+    NR == 1 && /^---[ \t]*$/ { i = 1; next }
+    !i || /^---[ \t]*$/ { exit }
+    list { if ($0 ~ /^[ \t]+-[ \t]/) { v = $0; sub(/^[ \t]+-/, "", v); out = out (n++ ? ", " : "") unq(v); next } exit }
+    /^[^ \t#]/ {
+      p = index($0, ":"); if (!p || substr($0, 1, p - 1) != key) next
+      v = unq(substr($0, p + 1))
+      if (v == "") { list = 1; next }
+      print v; exit
+    }
+    END { if (n) print "[" out "]" }
   ' "$1"
 }
 
+# _fm_ok <file>: line 1 is --- and a closing --- follows (CRLF tolerated).
+_fm_ok() {
+  awk '{ sub(/\r$/, "") } NR == 1 { if (!/^---[ \t]*$/) exit 1; next } /^---[ \t]*$/ { ok = 1; exit } END { exit !ok }' "$1"
+}
+
 tasks_dir=$(_fm_get "$config" tasks_dir); tasks_dir="${tasks_dir:-.orch/tasks}"
-tasks_dir="${tasks_dir%\"}"; tasks_dir="${tasks_dir#\"}"
 tasks_dir="$root/$tasks_dir"
 file_for(){ echo "$tasks_dir/$1.md"; }
 
+# _task_files -> the task files of tasks_dir: *.md minus the `_`-prefixed ones (_lessons.md).
+_task_files() {
+  shopt -s nullglob
+  local f
+  for f in "$tasks_dir"/*.md; do
+    case "$(basename "$f")" in _*) continue ;; esac
+    echo "$f"
+  done
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
+  cfg)
+    _fm_get "$config" "${1:?usage: orch-state cfg <key>}"
+    ;;
   list)
     printf '%-18s %-13s %s\n' ID STATUS DEPS
-    shopt -s nullglob
-    for f in "$tasks_dir"/*.md; do
-      id=$(_fm_get "$f" id); [ -n "$id" ] || id=$(basename "$f" .md)
-      st=$(_fm_get "$f" status); st="${st:-todo}"
-      deps=$(_fm_get "$f" deps)
-      printf '%-18s %-13s %s\n' "$id" "$st" "$deps"
-    done
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      if _fm_ok "$f"; then st=$(_fm_get "$f" status); st=${st:-todo}; else st=invalid; fi
+      printf '%-18s %-13s %s\n' "$(basename "$f" .md)" "$st" "$(_fm_get "$f" deps)"
+    done < <(_task_files)
     ;;
   set)
-    id="${1:?usage: orch-state set <id> <status>}"; st="${2:?status required}"
+    id=$(_id "${1:?usage: orch-state set <id> <status>}"); st="${2:?status required}"
     case "$st" in todo|in_progress|done|blocked) ;; *) echo "orch: bad status '$st'" >&2; exit 1;; esac
     f=$(file_for "$id"); [ -f "$f" ] || { echo "orch: no task '$id' ($f)" >&2; exit 1; }
+    _fm_ok "$f" || { echo "orch: $f has no frontmatter block (--- ... ---); status not set" >&2; exit 1; }
     tmp=$(mktemp)
     awk -v st="$st" '
-      NR==1 && $0 ~ /^---[ \t]*$/ { i=1; print; next }
-      i && $0 ~ /^---[ \t]*$/ { if(!seen) print "status: " st; i=0; print; next }
-      i && $0 ~ /^status:/ { print "status: " st; seen=1; next }
+      { sub(/\r$/, "") }
+      NR == 1 { i = 1; print; next }
+      i && /^---[ \t]*$/ { if (!seen) print "status: " st; i = 0; print; next }
+      i && /^status:/ { print "status: " st; seen = 1; next }
       { print }
     ' "$f" > "$tmp"
     mv "$tmp" "$f"
     echo "$id -> $st"
     ;;
   reset-stale)
-    shopt -s nullglob; n=0
-    for f in "$tasks_dir"/*.md; do
+    blocked=""
+    for a in "$@"; do
+      case "$a" in --blocked) blocked=1 ;; *) echo "orch: reset-stale: unknown flag '$a'" >&2; exit 1 ;; esac
+    done
+    n=0
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
       st=$(_fm_get "$f" status)
-      if [ "$st" = in_progress ] || [ "$st" = blocked ]; then
-        id=$(_fm_get "$f" id); [ -n "$id" ] || id=$(basename "$f" .md)
+      if [ "$st" = in_progress ] || { [ "$st" = blocked ] && [ -n "$blocked" ]; }; then
+        id=$(basename "$f" .md)
         "$0" set "$id" todo >/dev/null; echo "reset $id ($st -> todo)"; n=$((n+1))
       fi
-    done
+    done < <(_task_files)
     [ "$n" -gt 0 ] || echo "no stale tasks"
     ;;
   new)
-    id="${1:?usage: orch-state new <id> [title...]}"; shift || true
+    id=$(_id "${1:?usage: orch-state new <id> [title...]}"); shift || true
     title="${*:-$id}"
     mkdir -p "$tasks_dir"
     f=$(file_for "$id")
@@ -89,9 +142,6 @@ criteria_source: derived
 - [ ] AC1: <tool-checkable sentence> (modality: ui|api|test|data)
 EOF
     echo "created $f"
-    ;;
-  ""|-h|--help|help)
-    awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"
     ;;
   *) echo "orch-state: unknown command '$cmd'" >&2; exit 1;;
 esac

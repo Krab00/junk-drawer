@@ -112,14 +112,52 @@ Drive a full drain with **`/loop /orch all`** — it keys off this line and stop
 | `github-issues` | Pull labelled issues → task files, push a status comment back (needs `gh`) |
 | `linear-mcp` | Pull/push via the Linear MCP **in-conversation** — thin in v0.1 (see limitations) |
 
+## Agents
+
+Each agent pins its model in its frontmatter; spawn them without `model:` and they run on it. Pass
+a different model only when the user asked for it.
+
+| Agent | Model | Job |
+|---|---|---|
+| `orch-ops` | haiku | runs the bin scripts, git, gh and jq reads for the orchestrator; one line back, output in a report file |
+| `implementer` | opus | builds one task (or one file-disjoint slice of it) on its own branch in its own worktree, with tests and a mutant sweep |
+| `lead-implementer` | opus | one big task: freezes the shared contract, fans out to parallel `implementer` slices, merges them back, runs the final gate |
+| `verify-coordinator` | opus | the whole verification of one task: builds the verify env, runs the inline checks, spawns the three reviewers, writes the verdict table |
+| `test-planner` | sonnet | derives the mandatory test matrix from the diff (happy + edge rows with real induction recipes) |
+| `ui-reviewer` | sonnet | drives the browser (chrome-devtools MCP, agent-browser, playwright MCP, agent-device: first found), a screenshot per UI criterion |
+| `test-reviewer` | sonnet | audits the tests a change ships: real assertions, coverage of the change, no over-mocking; `OK` or `GAPS` |
+
+The real files live in `skills/orch/roles/`; `agents/` at the plugin root is a symlink to them
+(see the layout note in the repo README).
+
+## Orchestrator rules, injected at session start
+
+`skills/orch/ORCHESTRATOR.md` is the rule sheet for the main session: on Fable the main loop only
+plans and delegates (no tool use of its own, git and the bin scripts through `orch-ops`, one-line
+agent results, no agent chatter in the transcript); on Opus the same rules apply only when the user
+asks for orchestrator mode; other models work inline. `hooks/hooks.json` registers
+`scripts/orch-context.sh` as a `SessionStart` hook that prints the sheet into the context of the
+main session only:
+
+- a subagent never gets it: the hook exits silently when `CLAUDE_AGENT_ID` is set or the hook
+  input carries an `agent_id`;
+- `ORCH_INJECT_RULES=0` in the environment turns the injection off;
+- the hook always exits 0, so a missing sheet never blocks a session.
+
+`tests/orch.sh` (run by `tests/smoke.sh`) covers the hook, the agent roster and the bin scripts.
+
 ## Under the hood
 
 Three zero-dependency scripts carry the deterministic mechanics (frontmatter is the single source
 of truth — no separate manifest to drift):
 
-- `bin/orch-state` — task-store CRUD (`list` / `set` / `reset-stale` / `new`).
-- `bin/orch-worktree` — per-task worktrees under `.worktrees/` + stable port slots
-  (`port = capability port_base + slot`).
+- `bin/orch-state` — task-store CRUD (`list` / `set` / `reset-stale [--blocked]` / `new` /
+  `cfg <key>` / `id <id>`). `list` hides `_lessons.md` and every other `_`-prefixed file (they are
+  not tasks) and marks a file without a closed frontmatter block `invalid`; `set` refuses it.
+- `bin/orch-worktree` — per-task worktrees under `.worktrees/` (excluded from git status) + stable
+  port slots (`port = capability port_base + slot`, registry guarded by a lock for parallel
+  verifiers). An existing branch is attached detached, so the implementer's checkout may keep it;
+  the config's `default_base` is never accepted as a task branch.
 - `bin/orch-sync` — the task-store ⇄ backend bridge.
 
 ## v0.1 limitations
