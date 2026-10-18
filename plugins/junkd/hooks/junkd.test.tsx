@@ -213,6 +213,15 @@ const PANED_HANDOFF: Plugin = {
       await $.ui.close({ id: 'handoff' })
       return { value: undefined }
     })
+    // `/handoff-mark`: the person's close mark on the tab, as the real module's ui.close hook answers it: the pane
+    // closes and the mark goes. (The harness raises no close to an inline plugin's own ui.close hook, so the
+    // command does what that hook does.)
+    on('command.run', { command: 'handoff-mark' }, async $ => {
+      isUp = false
+      owner = undefined
+      await $.ui.close({ id: 'handoff' })
+      return {}
+    })
     on('command.run', { command: 'handoff-own' }, async $ => {
       owner = undefined
       isUp = !isUp
@@ -290,14 +299,16 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   const rec = { files, reads: [] as string[], writes: [] as string[], mvs: [] as string[][], rms: [] as string[][], config: [] as { key: string; value: unknown }[], toasts: [] as string[], opens: [] as Open[], closed: [] as string[], calls: [] as Call[],
     commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], beneath: '', merged: '',
     // `log`: junkd's own pane calls and the feature panes' show/hide, one line each, in the order they arrived.
-    log: [] as string[], gits: [] as string[][], denyShow: {} as Record<string, string>,
+    log: [] as string[], gits: [] as string[][], denyShow: {} as Record<string, string>, denyFocusedShow: {} as Record<string, string>,
+    held: undefined as Promise<void> | undefined, release: () => {},
     tabs: [] as string[] } // every plugin's open panes in open order, as the engine draws their tabs
   on('env.get', (_$, e) => ({ value: env[e.name] }))
   on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('fs.exists', (_$, e) => ({ value: e.path in files }))
-  on('fs.read', (_$, e) => {
+  on('fs.read', async (_$, e) => {
     rec.reads.push(e.path)
+    await rec.held // every read waits while a test holds them (`hold`), so a refresh stays in flight
     if (o.checkout && e.path !== MARKETPLACE_JSON && /\/\.claude-plugin\/marketplace\.json$/.test(e.path)) return { value: o.checkout }
     if (!(e.path in files)) throw new Error(`ENOENT ${e.path}`)
     return { value: files[e.path]! }
@@ -313,7 +324,7 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
       rec.gits.push([...e.argv])
       if (o.gitThrows) throw new Error('spawn git ENOENT')
       const ok = o.sha !== undefined
-      return { value: { exitCode: ok ? 0 : 128, stdout: ok ? `${o.sha}\n` : '', stderr: ok ? '' : 'fatal: not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
+      return { value: { exitCode: ok ? 0 : 128, stdout: ok ? `${o.sha}\n` : 'garbage\n', stderr: ok ? '' : 'fatal: not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     // The output_style flag file's removal (`rm -f -- <flag>`), recorded and applied.
     if (e.argv[0] === 'rm') {
@@ -344,12 +355,14 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
     return e.component === 'PromptHint' && rec.beneath ? <Text>{rec.beneath}</Text> : <Box key="engine" />
   })
   // Each loaded noun's set, show and hide, answered beneath the fake plugins: recorded, and answered as the real one
-  // would; `denyShow.<noun>` refuses that noun's show with the reason.
+  // would; `denyShow.<noun>` refuses that noun's show with the reason, `denyFocusedShow.<noun>` only a show asking
+  // for focus.
   const nouns = o.nouns === true ? ['handoff', 'orch', 'tldr'] : o.nouns ?? []
   const pane = (noun: string, method: 'show' | 'hide', e: unknown) => {
     rec.calls.push({ noun, method, input: e })
     rec.log.push(`${noun}.${method} ${JSON.stringify(e)}`)
-    const deny = method === 'show' ? rec.denyShow[noun] : undefined
+    const focused = (e as { focus?: boolean } | undefined)?.focus === true
+    const deny = method === 'show' ? rec.denyShow[noun] ?? (focused ? rec.denyFocusedShow[noun] : undefined) : undefined
     return deny ? { deny } : { value: undefined }
   }
   if (nouns.includes('handoff')) {
@@ -551,6 +564,43 @@ test('AC1: the set never calls show or hide on tldr (no pane), even where its no
   await run($, 'junkd')
   expect(rec.log.filter(l => l.startsWith('tldr.'))).toEqual([])
   expect(rec.log).toEqual(['ui.open junkd', 'ui.close handoff', 'ui.close orch', 'ui.open handoff', 'ui.open orch', 'ui.close junkd', 'ui.close handoff', 'ui.close orch'])
+})
+
+test('AC1: junkd opens and both feature shows go out before the pane data is read (a held read does not delay them)', WITH_NOUNS, async ($, on) => {
+  const rec = world(on, fixture(), { nouns: true })
+  await start($)
+  rec.held = new Promise<void>(r => { rec.release = r })
+  const reads = rec.reads.length
+  const done = run($, 'junkd')
+  await new Promise(r => setTimeout(r, 50))
+  expect(rec.reads.length, 'a read is in flight').toBeGreaterThan(reads)
+  expect(rec.log).toEqual(OPEN_SET) // while the read is still held
+  rec.release()
+  rec.held = undefined
+  await done
+})
+
+test('AC2: a set pane the person closes by hand loses the mark: closing the set does not close it again', { plugins: [PANED_HANDOFF, PANED_ORCH] }, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await run($, 'junkd')
+  const before = rec.closed.length
+  await run($, 'handoff-mark') // the person's mark on handoff's tab
+  expect(rec.tabs).toEqual(['junkd', 'orch'])
+  await run($, 'junkd')
+  expect(rec.tabs).toEqual([])
+  // handoff closed exactly once from here: the person's close; the set's close leaves it alone
+  expect(rec.closed.slice(before)).toEqual(['handoff', 'junkd', 'orch'])
+})
+
+test('AC3: settings ▸ whose focused show is refused: show, junkd closes, the focused show, one toast with the reason', WITH_NOUNS, async ($, on) => {
+  const rec = world(on, fixture(), { nouns: true })
+  rec.denyFocusedShow.orch = 'orch: keys refused'
+  const pane = await openPane($)
+  const at = rec.log.length
+  await pane.press({ key: 'pane:orch' })
+  expect(rec.log.slice(at)).toEqual(['orch.show {}', 'ui.close junkd', 'orch.show {"focus":true}'])
+  expect(rec.toasts).toEqual(['✗ orch: keys refused'])
 })
 
 test('AC5: the header is ✚ junkd, the marketplace and the short sha of its checkout; the section titles in the accent', async ($, on) => {

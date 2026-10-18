@@ -857,6 +857,20 @@ test('$.orch.hide with an owner closes only the pane that owner showed, while no
   expect(rec.closed).toHaveLength(5)
 })
 
+test('$.orch.hide on a pane never opened: no error, nothing closed, and /orch panel still opens it', WITH_FRAME, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  // No owner: the close goes out (a pane opened but not placed is open too); for an id not open the engine leaves
+  // it alone. With an owner the pane never had: nothing at all.
+  await frame($, 'hide')
+  expect(rec.closed).toEqual(['orch'])
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toEqual(['orch'])
+  expect(rec.opened).toEqual([])
+  await orchCmd($, 'panel')
+  expect(rec.opened).toEqual(['orch'])
+})
+
 // Every word drawn: the Texts and the Buttons' labels (a field's title is its hotkey Button).
 const texts = async (ui: Mounted<Surface, 'Pane'>) =>
   [...(await ui.findAll({ type: 'Text' })).map(t => t.text), ...(await ui.findAll({ type: 'Button' })).map(b => String(b.props.label ?? ''))].join('\n')
