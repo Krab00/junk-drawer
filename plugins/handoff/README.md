@@ -78,6 +78,34 @@ Set them in the Settings tab or in `/config` under plugin `handoff`.
 
 `ctx-limit` stays a separate, manual safeguard.
 
+### API for other plugins
+
+The hooks module adds `$.handoff` to the engine's `$`, so another mod (a frame that shows the main
+settings and jumps into the pane) calls it instead of reading this plugin's files. The host hands a
+noun's method one input and answers every call asynchronously, so each takes one argument and returns a
+promise. List `handoff` under `dependencies` in your plugin.json and the engine lays its contract
+(`types/index.d.ts`, exported as `Handoff`) beside the API reference, typed.
+
+- `schema()` — one entry per setting: `{ key, type, title, default, main }`; `main` marks `threshold`,
+  `autoOn`, `resumeAfterLimit` and `segment`, the four a frame shows first.
+- `get(key)` — the current value of a setting (the `/config` row at load, then every `set`).
+- `set({ key, value, scope? })` — writes `handoff.<key>` through `$.config` and resolves to the stored
+  value; refused (unknown key, a value that does not fit, a `config.set` hook's deny) it rejects with
+  the reason. `scope` takes only `user` today; the field exists so project or session scopes can be
+  added later without changing callers.
+- `open({ route? })` — the same path as `/handoff panel` and the 🪃 click: toggles the pane; with a
+  route (`auto`, `handoffs`, `settings`) it opens on that tab, or switches the tab while the pane is up.
+- `status()` — `{ armed, percent, phase }` of the auto loop.
+
+Can a mod read another plugin's `$.config` keys? Yes. There is no `$.config.get`; `$.config.list()`
+returns every row of the `/config` menu, the engine's own and each enabled plugin's `userConfig`
+fields alike, keyed `<plugin>.<field>` with its current `value`, `kind`, owner and lock, so a mod reads
+`handoff.threshold` by finding that row (the API reference documents `list` as "each enabled plugin's
+userConfig fields alike"; a row a `config.describe` hook hides is left out, a managed one shows
+`isLocked`). Writing works the same way: `$.config.set({ key: 'handoff.threshold', value })` changes
+another plugin's row as the person would in the menu, through the other plugins' hooks, which may deny
+it. `$.handoff.get` and `set` are the typed, validated shortcut over those rows, nothing more.
+
 ## Support per harness
 
 | | `/handoff` | `/handon` | `/handoff auto` |

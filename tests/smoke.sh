@@ -130,6 +130,49 @@ rg -qF "/orch/rules-off" "$root/plugins/orch/hooks/index.tsx" && rg -qF "CLAUDE_
     rg -qF '/orch/rules-off' "$root/plugins/orch/skills/orch/scripts/orch-context.sh" ||
     { echo "orch: the inject_rules flag file is not spelled alike in the hooks module and orch-context.sh"; exit 1; }
 
+# $.handoff.schema() is a mirror of the handoff manifest's userConfig (a hooks module cannot import JSON):
+# every field's key, type, title and default must appear together on one SCHEMA line of lib.ts, and the
+# mirror must hold no field the manifest lacks.
+handoff_manifest="$root/plugins/handoff/.claude-plugin/plugin.json"
+handoff_lib="$root/plugins/handoff/hooks/lib.ts"
+for key in $(jq -r '.userConfig | keys[]' "$handoff_manifest"); do
+    type=$(jq -r ".userConfig[\"$key\"].type" "$handoff_manifest")
+    title=$(jq -r ".userConfig[\"$key\"].title" "$handoff_manifest")
+    default=$(jq -c ".userConfig[\"$key\"].default" "$handoff_manifest")
+    rg -F "key: '$key'" "$handoff_lib" | rg -F "type: '$type'" | rg -F "title: '$title'" | rg -qF "default: $default," ||
+        { echo "handoff SCHEMA entry for $key does not match the manifest"; exit 1; }
+done
+schema_keys=$(rg -o "^  \{ key: '[A-Za-z]+'" "$handoff_lib" | rg -o "'[A-Za-z]+'" | tr -d "'" | sort)
+[ "$schema_keys" = "$(jq -r '.userConfig | keys[]' "$handoff_manifest" | sort)" ] ||
+    { echo "handoff SCHEMA keys differ from the manifest's userConfig"; exit 1; }
+
+# The same for $.tldr.schema() and the tldr manifest (hooks/index.tsx).
+tldr_manifest="$root/plugins/tldr/.claude-plugin/plugin.json"
+tldr_mod="$root/plugins/tldr/hooks/index.tsx"
+for key in $(jq -r '.userConfig | keys[]' "$tldr_manifest"); do
+    type=$(jq -r ".userConfig[\"$key\"].type" "$tldr_manifest")
+    title=$(jq -r ".userConfig[\"$key\"].title" "$tldr_manifest")
+    default=$(jq -c ".userConfig[\"$key\"].default" "$tldr_manifest")
+    rg -F "key: '$key'" "$tldr_mod" | rg -F "type: '$type'" | rg -F "title: '$title'" | rg -qF "default: $default," ||
+        { echo "tldr SCHEMA entry for $key does not match the manifest"; exit 1; }
+done
+schema_keys=$(rg -o "^  \{ key: '[A-Za-z]+'" "$tldr_mod" | rg -o "'[A-Za-z]+'" | tr -d "'" | sort)
+[ "$schema_keys" = "$(jq -r '.userConfig | keys[]' "$tldr_manifest" | sort)" ] ||
+    { echo "tldr SCHEMA keys differ from the manifest's userConfig"; exit 1; }
+
+# The flag file is the shell-side truth of terse mode: on Claude Code, tldr-flag (what /tldr on runs),
+# tldr-hook and the mod ($.tldr.get/set, checked by its plugin test) must all spell it
+# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/tldr-on.
+tldr_cfg="$tmp/tldr-cfg"
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-flag" on >/dev/null
+[ -f "$tldr_cfg/tldr-on" ] || { echo "tldr-flag on did not create \$CLAUDE_CONFIG_DIR/tldr-on"; exit 1; }
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-hook" | rg -q 'TL;DR MODE ON'
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-flag" off >/dev/null
+[ ! -e "$tldr_cfg/tldr-on" ] || { echo "tldr-flag off left the flag file"; exit 1; }
+[ -z "$(CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-hook")" ]
+rg -qF "/tldr-on" "$tldr_mod" && rg -qF "CLAUDE_CONFIG_DIR" "$tldr_mod" ||
+    { echo "tldr hooks module does not spell the flag file as tldr-flag does"; exit 1; }
+
 project="$tmp/project"
 mkdir -p "$project/.orch" "$project/.orch/tasks"
 git -C "$project" init -q

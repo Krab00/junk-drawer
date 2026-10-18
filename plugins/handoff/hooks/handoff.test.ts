@@ -2,7 +2,7 @@
 // `panel | auto | off` arguments, the 🪃 prompt-line segment and the pane's three tabs.
 // Everything beneath the plugin is answered from memory by `world`; nothing touches a real home.
 import { expect, mock, test } from 'claude-code/testing'
-import type { Engine, Mounted } from 'claude-code/testing'
+import type { Engine, Mounted, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 const HOME = '/home/u'
@@ -42,6 +42,7 @@ function world(on: On) {
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.usage', () => ({ value: usage(rec.percent) }))
   on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('command.list', () => ({
     value: [
       { name: 'handoff:handoff', description: '', source: 'plugin' },
@@ -101,6 +102,49 @@ async function hotkey(ui: Mounted<Surface, 'Pane'>, key: string) {
 }
 
 const texts = async (ui: Mounted<Surface, 'Pane'>) => (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+
+// A frame plugin beside handoff, as T5 will be: `/frame <method> [json]` calls `$.handoff.<method>` and answers
+// what came back (an inline plugin closes over nothing, so the command carries the result out as text).
+const FRAME: Plugin = {
+  name: 'frame',
+  register(on) {
+    on('command.run', { command: 'frame' }, async ($, e) => {
+      const [method = '', ...rest] = e.args.trim().split(/\s+/)
+      const input = rest.length ? JSON.parse(rest.join(' ')) : undefined
+      try {
+        // The host lets a noun's method be called, never read, so "exists" means "answers a call".
+        if (method === 'members') {
+          const answered: string[] = []
+          if (Array.isArray(await $.handoff.schema())) answered.push('schema')
+          if (typeof (await $.handoff.get('threshold')) === 'number') answered.push('get')
+          if (typeof (await $.handoff.set({ key: 'threshold', value: await $.handoff.get('threshold') })) === 'number') answered.push('set')
+          await $.handoff.open()
+          await $.handoff.open()
+          answered.push('open')
+          if (typeof (await $.handoff.status()).armed === 'boolean') answered.push('status')
+          return { text: JSON.stringify({ ok: answered }) }
+        }
+        if (method === 'schema') return { text: JSON.stringify({ ok: await $.handoff.schema() }) }
+        if (method === 'status') return { text: JSON.stringify({ ok: await $.handoff.status() }) }
+        if (method === 'get') return { text: JSON.stringify({ ok: await $.handoff.get(input) }) }
+        if (method === 'set') return { text: JSON.stringify({ ok: await $.handoff.set(input) }) }
+        if (method === 'open') return { text: JSON.stringify({ ok: await $.handoff.open(input) }) }
+        return { text: JSON.stringify({ error: `no method ${method}` }) }
+      } catch (err) {
+        return { text: JSON.stringify({ error: String((err as Error).message ?? err) }) }
+      }
+    })
+  },
+}
+const WITH_FRAME = { plugins: [FRAME] }
+// `frame <method> [input]` through the engine; resolves to the method's answer, rejects with its refusal.
+async function frame($: Engine, method: string, input?: unknown): Promise<unknown> {
+  const args = input === undefined ? method : `${method} ${JSON.stringify(input)}`
+  const r = (await $.command.run({ command: 'frame', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })) as { text?: string }
+  const out = JSON.parse(r.text ?? '{}') as { ok?: unknown; error?: string }
+  if (out.error !== undefined) throw new Error(out.error)
+  return out.ok
+}
 
 test('auto arms, denies tools past the threshold, lets the handoff through', OPTIONS, async ($, on) => {
   const rec = world(on)
@@ -318,4 +362,104 @@ test('a turn that dies on the 5h limit resumes 2 min after the reset; the settin
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'error' })
   await clock.advance(hour * 2)
   expect(rec.prompts.length).toBe(1)
+})
+
+// The manifest's userConfig keys. A test cannot import plugin.json (only code files load), so the keys stand
+// here and the defaults come from the engine: with no test options, get() answers the manifest's defaults.
+// tests/smoke.sh checks each entry's type, title and default against the manifest itself.
+const MANIFEST_KEYS = ['threshold', 'checkEvery', 'autoOn', 'resumeAfterLimit', 'staleDays', 'segment']
+
+test('$.handoff: the five calls exist; schema mirrors the manifest with main on the four frame fields', WITH_FRAME, async ($, on) => {
+  world(on)
+  await start($)
+  expect(await frame($, 'members')).toEqual(['schema', 'get', 'set', 'open', 'status'])
+
+  const schema = (await frame($, 'schema')) as { key: string; type: string; title: string; default: unknown; main: boolean }[]
+  expect(schema.map(f => f.key).sort()).toEqual([...MANIFEST_KEYS].sort())
+  for (const f of schema) {
+    expect(typeof f.default, f.key).toBe(f.type)
+    expect(f.title, f.key).toMatch(/\S/)
+    expect(await frame($, 'get', f.key), `get(${f.key}) is the manifest default`).toBe(f.default)
+  }
+  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['threshold', 'autoOn', 'resumeAfterLimit', 'segment'])
+})
+
+test('$.handoff.set writes handoff.<key> through $.config and get reads it back; a bad value or scope is refused', WITH_FRAME, async ($, on) => {
+  on('config.set', { key: 'handoff.checkEvery' }, () => ({ deny: 'locked' })) // one row a hook refuses
+  const rec = world(on)
+  await start($)
+  expect(await frame($, 'set', { key: 'threshold', value: 70 })).toBe(70)
+  expect(rec.config).toEqual([{ key: 'handoff.threshold', value: 70 }])
+  expect(await frame($, 'get', 'threshold')).toBe(70)
+
+  expect(await frame($, 'set', { key: 'segment', value: 'off', scope: 'user' })).toBe(false)
+  expect(rec.config.at(-1)).toEqual({ key: 'handoff.segment', value: false })
+  expect(await frame($, 'get', 'segment')).toBe(false)
+
+  // exact bounds: 100 and 1 are in, -5 (and 0, 101 below) are out; 'on' is a true
+  expect(await frame($, 'set', { key: 'threshold', value: 100 })).toBe(100)
+  expect(await frame($, 'set', { key: 'staleDays', value: 1 })).toBe(1) // checkEvery is the row the deny hook below locks
+  expect(await frame($, 'set', { key: 'autoOn', value: 'on' })).toBe(true)
+  expect(rec.config.slice(-3)).toEqual([
+    { key: 'handoff.threshold', value: 100 }, { key: 'handoff.staleDays', value: 1 }, { key: 'handoff.autoOn', value: true },
+  ])
+  await expect(frame($, 'set', { key: 'threshold', value: -5 })).rejects.toThrow(/not a valid threshold/)
+  expect(await frame($, 'get', 'threshold')).toBe(100)
+  expect(await frame($, 'set', { key: 'threshold', value: 70 })).toBe(70)
+
+  const writes = rec.config.length
+  await expect(frame($, 'set', { key: 'threshold', value: 'abc' })).rejects.toThrow(/not a valid threshold/)
+  await expect(frame($, 'set', { key: 'threshold', value: 101 })).rejects.toThrow(/not a valid threshold/)
+  await expect(frame($, 'set', { key: 'checkEvery', value: 0 })).rejects.toThrow(/not a valid checkEvery/)
+  await expect(frame($, 'set', { key: 'threshold', value: 70, scope: 'project' })).rejects.toThrow(/scope project/)
+  await expect(frame($, 'set', { key: 'nope', value: 1 })).rejects.toThrow(/no setting nope/)
+  await expect(frame($, 'get', 'nope')).rejects.toThrow(/no setting nope/)
+  expect(rec.config.length).toBe(writes) // none of the refusals reached $.config
+  expect(await frame($, 'get', 'threshold')).toBe(70)
+
+  // a config.set hook's deny comes back as the refusal and the value stays
+  await expect(frame($, 'set', { key: 'checkEvery', value: 9 })).rejects.toThrow(/locked/)
+  expect(await frame($, 'get', 'checkEvery')).toBe(5)
+})
+
+test('$.handoff.open toggles the pane; a route opens it on that tab or switches the tab while it is up', WITH_FRAME, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await frame($, 'open')
+  expect(rec.opened).toEqual(['ahandoff'])
+  await frame($, 'open')
+  expect(rec.closed).toEqual(['ahandoff'])
+
+  await frame($, 'open', { route: 'handoffs' })
+  expect(rec.opened).toEqual(['ahandoff', 'ahandoff'])
+  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+  expect(await ui.find({ key: 'row-aaaaaaaa' }), 'the Handoffs tab is up').toBeDefined()
+  await ui.unmount()
+
+  await expect(frame($, 'open', { route: 'bogus' })).rejects.toThrow(/no tab bogus/) // unknown route: refused, pane untouched
+  await frame($, 'open', { route: 'settings' }) // up already: switch, do not close
+  expect(rec.closed).toEqual(['ahandoff'])
+  const settings = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+  expect((await settings.findAll({ type: 'Input' })).some(i => /^threshold/.test(i.key ?? '')), 'the Settings tab is up').toBe(true)
+  await settings.unmount()
+})
+
+test('$.handoff.status mirrors armed, percent and phase', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  expect(await frame($, 'status')).toEqual({ armed: false, percent: 0, phase: 'idle' })
+
+  await handoff($, 'auto')
+  await clock.advance(1)
+  rec.percent = 42
+  await $.tool.call({ tool: 'Read', file_path: '/tmp/a' })
+  expect(await frame($, 'status')).toEqual({ armed: true, percent: 42, phase: 'idle' })
+
+  rec.percent = 90
+  await $.tool.call({ tool: 'Read', file_path: '/tmp/a' })
+  expect(await frame($, 'status')).toEqual({ armed: true, percent: 90, phase: 'handoff' })
+
+  await handoff($, 'off')
+  expect((await frame($, 'status') as { armed: boolean; phase: string })).toMatchObject({ armed: false, phase: 'idle' })
 })
