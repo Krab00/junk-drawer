@@ -461,7 +461,7 @@ const SHUTTER: Plugin = {
 }
 const shut = ($: Engine) => $.command.run({ command: 'shut', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
 
-test('$.handoff.show opens and never closes; reopen moves the tab after the caller; focus and route as asked', WITH_FRAME, async ($, on) => {
+test('$.handoff.show opens and never closes; focus and route as asked', WITH_FRAME, async ($, on) => {
   const rec = world(on)
   await start($)
   await frame($, 'show', { owner: 'junkd' })
@@ -471,23 +471,19 @@ test('$.handoff.show opens and never closes; reopen moves the tab after the call
   expect(rec.opened).toEqual(['ahandoff', 'ahandoff'])
   expect(rec.closed).toEqual([])
 
-  await frame($, 'show', { reopen: true }) // up: closed first, then opened again
-  expect(rec.closed).toEqual(['ahandoff'])
-  expect(rec.opened).toHaveLength(3)
   await frame($, 'hide')
-  expect(rec.closed).toHaveLength(2)
-  await frame($, 'show', { reopen: true }) // not up: nothing to close
-  expect(rec.closed).toHaveLength(2)
-  expect(rec.opened).toHaveLength(4)
+  expect(rec.closed).toEqual(['ahandoff'])
+  await frame($, 'show')
+  expect(rec.opened).toHaveLength(3)
 
   await frame($, 'show', { route: 'settings', focus: true })
   expect(rec.focus.at(-1)).toBe(true)
-  expect(rec.closed).toHaveLength(2)
+  expect(rec.closed).toHaveLength(1) // up already: switched to Settings, not closed
   const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
   expect((await ui.findAll({ type: 'Input' })).some(i => /^threshold/.test(i.key ?? '')), 'the Settings tab is up').toBe(true)
   await ui.unmount()
   await expect(frame($, 'show', { route: 'bogus' })).rejects.toThrow(/no tab bogus/)
-  expect(rec.opened).toHaveLength(5) // the refused route opened nothing
+  expect(rec.opened).toHaveLength(4) // the refused route opened nothing
 })
 
 test('$.handoff.hide with an owner closes only the pane that owner showed, while nothing reopened or closed it since', { plugins: [FRAME, SHUTTER] }, async ($, on) => {

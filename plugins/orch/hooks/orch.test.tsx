@@ -789,7 +789,7 @@ const SHUTTER: Plugin = {
 }
 const shut = ($: Engine) => $.command.run({ command: 'shut', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
 
-test('$.orch.show opens and never closes; reopen moves the tab after the caller; focus as asked', WITH_FRAME, async ($, on) => {
+test('$.orch.show opens and never closes; focus as asked', WITH_FRAME, async ($, on) => {
   const rec = world(on)
   await start($)
   await frame($, 'show', { owner: 'junkd' })
@@ -799,19 +799,15 @@ test('$.orch.show opens and never closes; reopen moves the tab after the caller;
   expect(rec.opened).toEqual(['orch', 'orch'])
   expect(rec.closed).toEqual([])
 
-  await frame($, 'show', { reopen: true }) // up: closed first, then opened again
-  expect(rec.closed).toEqual(['orch'])
-  expect(rec.opened).toHaveLength(3)
   await frame($, 'hide')
-  expect(rec.closed).toHaveLength(2)
-  await frame($, 'show', { reopen: true }) // not up: nothing to close
-  expect(rec.closed).toHaveLength(2)
-  expect(rec.opened).toHaveLength(4)
+  expect(rec.closed).toEqual(['orch'])
+  await frame($, 'show')
+  expect(rec.opened).toHaveLength(3)
 
   await frame($, 'show', { focus: true })
   expect(rec.focus.at(-1)).toBe(true)
   await orchCmd($, 'panel') // its own toggle: closes the pane show left up
-  expect(rec.closed).toHaveLength(3)
+  expect(rec.closed).toHaveLength(2)
   await orchCmd($, 'panel')
   expect(rec.focus.at(-1)).toBe(true) // its own command still asks for the keys
 })

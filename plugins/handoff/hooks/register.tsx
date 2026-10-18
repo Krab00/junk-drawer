@@ -361,12 +361,10 @@ export const register: Register = (on, options) => {
     return { value: undefined }
   })
   // show never closes: the pane opens (or, up already, is asked again: retitled, its tab switched, the keys asked
-  // for), on `route` when given. `reopen` closes a pane that is up first, so its tab goes after the caller's; `owner`
-  // marks it as that caller's, for hide.
+  // for), on `route` when given; `owner` marks it as that caller's, for hide.
   on('handoff.show', async ($, e) => {
     const route = e?.route
     if (route !== undefined && !TABS.some(t => t[2] === route)) return { deny: `handoff: no tab ${String(route)}` }
-    if (e?.reopen === true && S.paneOpen) await closePane($)
     const opened = openPane($, route, e?.focus === true)
     owner = e?.owner
     await opened
