@@ -75,8 +75,9 @@ Install per host:
 - Claude Code: `/plugin install junkd@junk-drawer`, then `/reload-plugins`. The marketplace entry
   pulls `handoff`, `orch` and `tldr` in as dependencies.
 - Codex, Kimi, OpenCode: no. junkd is a mod (a hooks module, no shell, no skill), and only Claude Code
-  runs mods. The `/junk-drawer` cheatsheet plugin stays the catalog on those hosts; the Kimi marketplace
-  lists junkd only so the id is known, there is nothing to install from it there.
+  runs mods. The `/junk-drawer` cheatsheet plugin stays the catalog on those hosts. The Kimi marketplace
+  lists junkd so the id is known; its Kimi manifest (`.kimi-plugin/plugin.json`) says it is Claude Code
+  only and ships no skill and no hook, so an install there succeeds and does nothing.
 
 `/junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs (junkd,
 handoff's, orch's) and closes them together. The junkd pane has three sections:

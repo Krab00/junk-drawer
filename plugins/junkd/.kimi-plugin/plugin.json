@@ -1,0 +1,14 @@
+{
+  "name": "junkd",
+  "version": "0.2.3",
+  "description": "A Claude Code mod (the /junkd pane over this marketplace). It does nothing on Kimi: no skills, no hooks; the listing only makes the id known.",
+  "author": { "name": "Krab00" },
+  "homepage": "https://github.com/Krab00/junk-drawer",
+  "keywords": ["claude-code", "mod"],
+  "interface": {
+    "displayName": "junkd (Claude Code only)",
+    "shortDescription": "Claude Code only; nothing to run on Kimi",
+    "longDescription": "junkd is a Claude Code mod: a hooks module that draws the /junkd pane. Kimi runs no mods, so this plugin ships no skills and no hooks here.",
+    "developerName": "Krab00"
+  }
+}
