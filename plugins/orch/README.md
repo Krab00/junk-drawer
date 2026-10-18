@@ -142,8 +142,11 @@ main session only:
 - a subagent never gets it: the hook exits silently when `CLAUDE_AGENT_ID` is set or the hook
   input carries an `agent_id`;
 - `ORCH_INJECT_RULES=0` in the environment turns the injection off, and so does the `inject_rules`
-  setting below: off, the hooks module writes the flag file `~/.claude/orch/rules-off` (under
-  `CLAUDE_CONFIG_DIR` when set) and the hook exits silently while it exists;
+  setting below. The hook reads the setting from `settings.json` itself (`pluginConfigs`, the first
+  `orch@` entry; it runs before the hooks module at a session start): `true` injects, any other
+  value skips. Only without a value there (or without `jq`) does the flag file
+  `~/.claude/orch/rules-off` (under `CLAUDE_CONFIG_DIR` when set) decide, which the hooks module
+  writes while the setting is off;
 - the hook always exits 0, so a missing sheet never blocks a session.
 
 `tests/orch.sh` (run by `tests/smoke.sh`) covers the hook, the agent roster and the bin scripts.
