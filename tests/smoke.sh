@@ -106,6 +106,22 @@ handoff_result=$(CODEX_THREAD_ID=codex-id CLAUDE_CODE_SESSION_ID=claude-id CLAUD
     JUNK_DRAWER_RUNTIME=claude "$root/plugins/handoff/bin/handoff-path")
 [ "$(printf '%s\n' "$handoff_result" | tail -1)" = claude-i ]
 
+# $.handoff.schema() is a mirror of the handoff manifest's userConfig (a hooks module cannot import JSON):
+# every field's key, type, title and default must appear together on one SCHEMA line of lib.ts, and the
+# mirror must hold no field the manifest lacks.
+handoff_manifest="$root/plugins/handoff/.claude-plugin/plugin.json"
+handoff_lib="$root/plugins/handoff/hooks/lib.ts"
+for key in $(jq -r '.userConfig | keys[]' "$handoff_manifest"); do
+    type=$(jq -r ".userConfig[\"$key\"].type" "$handoff_manifest")
+    title=$(jq -r ".userConfig[\"$key\"].title" "$handoff_manifest")
+    default=$(jq -c ".userConfig[\"$key\"].default" "$handoff_manifest")
+    rg -F "key: '$key'" "$handoff_lib" | rg -F "type: '$type'" | rg -F "title: '$title'" | rg -qF "default: $default," ||
+        { echo "handoff SCHEMA entry for $key does not match the manifest"; exit 1; }
+done
+schema_keys=$(rg -o "^  \{ key: '[A-Za-z]+'" "$handoff_lib" | rg -o "'[A-Za-z]+'" | tr -d "'" | sort)
+[ "$schema_keys" = "$(jq -r '.userConfig | keys[]' "$handoff_manifest" | sort)" ] ||
+    { echo "handoff SCHEMA keys differ from the manifest's userConfig"; exit 1; }
+
 project="$tmp/project"
 mkdir -p "$project/.orch" "$project/.orch/tasks"
 git -C "$project" init -q
