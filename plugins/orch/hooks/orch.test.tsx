@@ -263,6 +263,32 @@ test('transcriptTokens: the last usage record, its last iteration, input + cache
   expect(transcriptTokens(`${line({ input_tokens: 7 })}\n{"message":{"usage":"x"}}\n{broken "usage"`)).toBe(7) // a later bad line is skipped
 })
 
+test('every denial family starts with the prefix', () => {
+  const s = st({ exists: true, agent: null })
+  const texts = [
+    orchGuard(main('Edit'), s, on_), orchGuard(main('mcp__x__y'), s, on_),
+    orchGuard(main('Read', { file_path: '/repo/a.ts' }), s, on_),
+    orchGuard(main('Write', { file_path: '/repo/a.ts' }), s, on_),
+    orchGuard(main('Write', { file_path: 'rel.md' }), s, on_),
+    orchGuard(main('Read', { file_path: '~/x.md' }), s, on_),
+    orchGuard(main('Read', { file_path: `${SCRATCH}/r.md` }), st({ placed: null }), on_),
+    orchGuard(main('Write', { file_path: `${SCRATCH}/r.md` }), st({ placed: null }), on_),
+    orchGuard(main('CronCreate', { prompt: '/model opus' }), s, on_),
+    orchGuard(main('ScheduleWakeup', { prompt: '/model opus' }), s, on_),
+    orchGuard(main('Bash', { command: 'git push' }), s, on_),
+    orchGuard(main('Monitor', { command: 'git push' }), s, on_),
+    orchGuard(main('Agent', { subagent_type: 'fork' }), s, on_),
+    orchGuard(main('Agent', { model: 'fable' }), s, on_),
+    orchGuard(main('SendMessage', { to: 'x' }), s, on_),
+    orchGuard(main('SendMessage', { to: 'x' }), st({ agent: { type: 'ui-reviewer' } }), on_),
+    orchGuard(main('SendMessage', { to: 'x' }), st({ agent: { type: 'orch:implementer', tokens: 900_000 } }), on_),
+    orchSpawn({ fork: true, subagentType: 'fork', parentModel: FABLE }, on_),
+    orchSpawn({ fork: false, subagentType: 'general-purpose', parentModel: FABLE }, on_),
+  ]
+  expect(texts.length).toBe(19)
+  for (const t of texts) expect(t).toMatch(/^Orchestrator mode \(orch\): \S/)
+})
+
 // ------------------------------------------------------------------ the module
 
 type Agent = { id: string; type: string; name?: string }
@@ -279,7 +305,8 @@ function world(on: On) {
   const files: Record<string, string> = {}
   const rec = { model: FABLE as string | undefined, agents: [] as Agent[], files, toasts: [] as string[],
     links: {} as Record<string, string>, dangling: {} as Record<string, string[]>, nowhere: [] as string[], envFails: false,
-    config: [] as { key: string; value: unknown }[], opened: [] as string[], closed: [] as string[], runs: [] as string[][] }
+    config: [] as { key: string; value: unknown }[], opened: [] as string[], closed: [] as string[], runs: [] as string[][],
+    existsFails: false, writeFails: false, notPlaced: false }
   on('env.get', (_$, e) => {
     if (rec.envFails) throw new Error('env unavailable')
     return { value: env[e.name] }
@@ -304,18 +331,25 @@ function world(on: On) {
   })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
-  on('ui.open', (_$, e) => { rec.opened.push(e.id); return { value: { isPlaced: true as const } } })
+  on('ui.open', (_$, e) => { rec.opened.push(e.id); return { value: rec.notPlaced ? { isPlaced: false as const, reason: 'no room' } : { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); return { value: undefined } })
   on('ui.focus', () => ({}))
   on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
   on('agent.list', () => ({ value: rec.agents.map(a => ({ description: '', status: 'completed' as const, ...a })) }))
   on('tool.call', () => ({ result: 'ok', text: 'ok' }))
-  on('fs.exists', (_$, e) => ({ value: e.path in files }))
+  on('fs.exists', (_$, e) => {
+    if (rec.existsFails) throw new Error('EACCES')
+    return { value: e.path in files }
+  })
   on('fs.read', (_$, e) => {
     if (!(e.path in files)) throw new Error('ENOENT')
     return { value: files[e.path]! }
   })
-  on('fs.write', (_$, e) => { files[e.path] = e.text; return { value: undefined } })
+  on('fs.write', (_$, e) => {
+    if (rec.writeFails) throw new Error('EROFS')
+    files[e.path] = e.text
+    return { value: undefined }
+  })
   on('process.run', (_$, e) => {
     rec.runs.push([...e.argv])
     if (e.argv[0] === 'rm') delete files[e.argv.at(-1)!]
@@ -366,6 +400,10 @@ const FRAME: Plugin = {
         if (method === 'open') return { text: JSON.stringify({ ok: await $.orch.open() }) }
         if (method === 'guardState') return { text: JSON.stringify({ ok: await $.orch.guardState() }) }
         if (method === 'config') return { text: JSON.stringify({ ok: await $.config.set(input) }) }
+        // another plugin's own tool calls and spawns: the guard is for the model's, not these
+        if (method === 'edit') return { text: JSON.stringify({ ok: await $.tool.call({ tool: 'Edit', file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' }) }) }
+        if (method === 'bash') return { text: JSON.stringify({ ok: await $.tool.call({ tool: 'Bash', command: 'git push --force' }) }) }
+        if (method === 'spawn') return { text: JSON.stringify({ ok: await $.agent.spawn({ prompt: 'p', description: 'd', subagentType: 'fork' }) }) }
         return { text: JSON.stringify({ error: `no method ${method}` }) }
       } catch (err) {
         return { text: JSON.stringify({ error: String((err as Error).message ?? err) }) }
@@ -412,6 +450,62 @@ test('AC8: the live model decides, so a /model switch counts at once; a subagent
   expect(await frame($, 'guardState')).toEqual({ active: false, model: FABLE })
   await frame($, 'set', { key: 'guard', value: 'fable' })
   expect(denial(await fetch($))).toMatch(/may not run WebFetch/)
+})
+
+test("AC8: another plugin's $.tool.call and $.agent.spawn pass on a guarded Fable main loop; the engine's own are denied", WITH_FRAME, async ($, on) => {
+  world(on)
+  on('agent.spawn', (_$, e) => ({ model: e.model ?? 'opus', agentId: 'sub-1' }))
+  await start($)
+  expect(denial(await edit($))).toMatch(/may not run Edit/)
+  expect(denial(await frame($, 'edit'))).toBeUndefined()
+  expect(denial(await frame($, 'bash'))).toBeUndefined()
+  expect((await frame($, 'spawn') as { deny?: string }).deny).toBeUndefined()
+  expect((await $.agent.spawn({ tool_use_id: 'tu1', prompt: 'p', description: 'd', subagentType: 'fork', provider: { plugin: 'engine', tier: 'core' }, parentModel: FABLE, background: true, fork: true })).deny).toMatch(/a fork/)
+})
+
+test('a Read whose spelling is a root but which lands outside (handoffs linked out) is denied', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: `${CFG}/handoffs/a.md` }))).toBeUndefined()
+  rec.links[`${CFG}/handoffs`] = '/repo/src'
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: `${CFG}/handoffs/a.md` }))).toMatch(/may not run Read/)
+})
+
+test('a named agent that left the list is still known by name through its record', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  rec.agents = [{ id: 'imp1', type: 'orch:implementer', name: 'impl' }]
+  rec.files['/t/imp1.jsonl'] = `${JSON.stringify({ message: { usage: { input_tokens: 500_000 } } })}\n`
+  await $.classic.SubagentStop({ agent_id: 'imp1', agent_type: 'orch:implementer', agent_transcript_path: '/t/imp1.jsonl', stop_hook_active: false })
+  rec.agents = []
+  expect(denial(await $.tool.call({ tool: 'SendMessage', to: 'impl', message: 'x' }))).toMatch(/exceeds cap 400k/)
+  expect(denial(await $.tool.call({ tool: 'SendMessage', to: 'imp1', message: 'x' }))).toMatch(/exceeds cap 400k/)
+})
+
+test('a Write whose existence cannot be read is treated as existing: a new .md outside the roots is then denied', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  expect(denial(await $.tool.call({ tool: 'Write', file_path: '/repo/docs/new.md', content: '# x' }))).toBeUndefined()
+  rec.existsFails = true
+  expect(denial(await $.tool.call({ tool: 'Write', file_path: '/repo/docs/new.md', content: '# x' }))).toMatch(/may Write only/)
+  expect(denial(await $.tool.call({ tool: 'Write', file_path: `${SCRATCH}/r.md`, content: '# x' }))).toBeUndefined() // a root needs no answer
+})
+
+test('a session start whose flag write fails still starts', { options: { inject_rules: false } }, async ($, on) => {
+  const rec = world(on)
+  rec.writeFails = true
+  await start($)
+  expect(Object.keys(rec.files)).toEqual([])
+})
+
+test('a pane the surface could not place is not open: the next toggle opens again', WITH_FRAME, async ($, on) => {
+  const rec = world(on)
+  rec.notPlaced = true
+  await start($)
+  await frame($, 'open')
+  await frame($, 'open')
+  expect(rec.opened).toEqual(['orch', 'orch'])
+  expect(rec.closed).toEqual([])
 })
 
 test('the guard option the engine fills in from the manifest holds at load', { ...WITH_FRAME, options: { guard: 'always' } }, async ($, on) => {
@@ -615,6 +709,8 @@ test('a write to an orch row by the /config menu, not $.orch.set, is validated t
   expect(await frame($, 'get', { key: 'rounds' })).toBe(7)
   await frame($, 'config', { key: 'other.rounds', value: 0 }) // another plugin's row passes untouched
   expect(rec.config.at(-1)).toEqual({ key: 'other.rounds', value: 0 })
+  expect((await frame($, 'config', { key: 'orch.nope', value: 'x' })) as { deny?: string }).toEqual({ value: 'x' }) // an orch row this version lacks: not ours to judge
+  expect(rec.config.at(-1)).toEqual({ key: 'orch.nope', value: 'x' })
 })
 
 test('inject_rules mirrors into the flag file scripts/orch-context.sh checks: off writes it, on removes it, session start syncs it', { ...WITH_FRAME, options: { inject_rules: false } }, async ($, on) => {
@@ -710,6 +806,11 @@ test('the pane: six rows; a letter flips a switch, enter in a field saves it, th
     await hotkey(ui, 'd')
     await frame($, 'get', { key: 'inject_rules' })
     expect(`${CFG}/orch/rules-off` in rec.files).toBe(false)
+    // b and e ask the focus ring onto the number fields; the kit implements no $.ui.focus (no hook of the test's or
+    // of another plugin's is reached), so only that the press settles and the pane stays is checked here
+    await hotkey(ui, 'b')
+    await hotkey(ui, 'e')
+    expect(await ui.find({ key: 'orch:rounds-focus' })).toBeDefined()
     // the choice row: the other options are Buttons, the current one is text
     expect((await ui.find({ key: 'orch:guard=fable' }))?.type).toBe('Box')
     expect(await ui.find({ type: 'Button', key: 'orch:guard=fable' })).toBeUndefined()
@@ -739,4 +840,9 @@ test('the pane: six rows; a letter flips a switch, enter in a field saves it, th
     expect(rec.config.length).toBeGreaterThan(before)
     await ui.unmount()
   }
+  // a mobile surface gets the engine's own drawing, not the pane
+  const mobile = await $.ui.mount({ plugin: 'orch', surface: 'mobile', ...PANE })
+  expect(await mobile.find({ key: 'engine' })).toBeDefined()
+  expect(await mobile.find({ type: 'Button', key: 'close' })).toBeUndefined()
+  await mobile.unmount()
 })

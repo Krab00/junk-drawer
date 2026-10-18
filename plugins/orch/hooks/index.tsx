@@ -247,7 +247,7 @@ export const register: Register = (on, options) => {
     return orchView($.ui.resolve(e) as Els, e.props, { ...O }, note, {
       close: () => void closePane($),
       set: (key, value) => void setOption($, key, value),
-      focus: key => void $.ui.focus({ requestId: PANE, key }),
+      focus: key => void $.ui.focus({ requestId: PANE, key }).catch(() => undefined), // a refused ring is no error
       refuse: text => {
         note = text
         redraw($)
