@@ -113,6 +113,10 @@ const inRoots = (path: string, cfg: string) => {
 
 // The repo's task store (.orch/: the config, the task files, _lessons.md), which /orch reads and writes first.
 const inStore = (path: string, repo: string) => repo !== '' && under(path, `${repo}/.orch`)
+// Write in the store: a .md only (task files, _lessons.md, notes), never the existing config: its tasks_dir steers the
+// bin scripts. A new config.md passes as any new .md does; changing one is delegated.
+const storeWrite = (path: string, repo: string) =>
+  inStore(path, repo) && /\.md$/i.test(path) && path.toLowerCase() !== `${repo}/.orch/config.md`.toLowerCase()
 
 // Write: never the deny list, a `..` path, a .claude dir or the config dir outside the roots, this plugin (its root
 // is bin/'s parent) or a loaded dir anywhere in its marketplace (`<marketplace>/plugins/<name>/bin/`; a plugin may
@@ -130,8 +134,8 @@ function pathRule(tool: string, path: string, s: OrchState): string | undefined 
     return (inRoots(path, s.configDir) || inStore(path, s.repo)) && !DOTDOT.test(path)
       ? undefined
       : deny("Read outside the scratchpad, the repo's .orch/ task store, the orch state dir, the handoffs and the project memory")
-  if (!forbidden(path, s) && (inRoots(path, s.configDir) || inStore(path, s.repo) || (path.endsWith('.md') && s.exists === false))) return undefined
-  return `${PREFIX} the main loop may Write only to the scratchpad, the repo's .orch/ task store, the orch state dir, the handoffs, the project memory or a new .md file, never to settings, Claude Code config (a .claude dir, the skills, agents, rules, commands, hooks of any plugin, CLAUDE.md, AGENTS.md, SKILL.md, anything else in the config dir) or this plugin. For ${path}, ask the user for a target path or delegate.`
+  if (!forbidden(path, s) && (inRoots(path, s.configDir) || storeWrite(path, s.repo) || (path.endsWith('.md') && s.exists === false))) return undefined
+  return `${PREFIX} the main loop may Write only to the scratchpad, a .md in the repo's .orch/ task store (not an existing config.md), the orch state dir, the handoffs, the project memory or a new .md file, never to settings, Claude Code config (a .claude dir, the skills, agents, rules, commands, hooks of any plugin, CLAUDE.md, AGENTS.md, SKILL.md, anything else in the config dir) or this plugin. For ${path}, ask the user for a target path or delegate.`
 }
 
 // `<bin>/<script> <plain args>`, one optional pair of quotes around the script path.

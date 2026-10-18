@@ -141,13 +141,23 @@ test('Read and Write: a plain absolute ASCII spelling only; the placed path must
   expect(guard('Read', `${CFG}/handoffs/a.md`, at('/real/claude/handoffs/a.md', '/real/claude'))).toBeUndefined()
 })
 
-test("Read and Write: the repo's .orch/ task store (config, task files, lessons); nothing beside it or above it", () => {
+test("Read and Write: the repo's .orch/ task store (Read all of it; Write a .md, never the existing config); nothing beside it or above it", () => {
   const guard = (tool: string, file_path: string, extra: Partial<OrchState> = {}) =>
     orchGuard(main(tool, { file_path, content: 'x' }), st({ exists: true, ...extra }), on_)
   for (const p of [`${REPO}/.orch/config.md`, `${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/tasks/_lessons.md`, `${REPO}/.orch/tasks/T-1.evidence/ac1.png`,
-    `${REPO}//.orch/./tasks/T-1.md`]) {
-    for (const tool of ['Read', 'Write']) expect(guard(tool, p), `${tool} ${p}`).toBeUndefined()
-  }
+    `${REPO}//.orch/./tasks/T-1.md`, `${REPO}/.orch/tasks/T-1.ts`]) expect(guard('Read', p), `Read ${p}`).toBeUndefined()
+  // Write in the store: an existing .md (task file, lessons, a policy note), any case of the extension
+  for (const p of [`${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/tasks/_lessons.md`, `${REPO}//.orch/./tasks/T-1.md`, `${REPO}/.orch/TEST-POLICY.md`,
+    `${REPO}/.orch/tasks/T-1.MD`, `${REPO}/.orch/tasks/config.md`, `${REPO}/.orch/config.md.md`, `${REPO}/.orch/x/config.md`])
+    expect(guard('Write', p), `Write ${p}`).toBeUndefined()
+  // ...but not an existing config (its tasks_dir steers the bin scripts) in any spelling, nor a file that is no .md
+  for (const p of [`${REPO}/.orch/config.md`, `${REPO}/.orch/CONFIG.MD`, `${REPO}//.orch/./config.md`, `${REPO}/.orch/tasks/../config.md`,
+    `${REPO}/.orch/tasks/T-1.evidence/ac1.png`, `${REPO}/.orch/tasks/T-1.ts`, `${REPO}/.orch/tasks/T-1.md.sh`, `${REPO}/.orch/md`])
+    expect(guard('Write', p), `Write ${p}`).toMatch(/may Write only/)
+  // a config that does not exist yet is a new .md like any other (orch-init's first write)
+  expect(guard('Write', `${REPO}/.orch/config.md`, { exists: false })).toBeUndefined()
+  // a link inside the store that lands on the config is refused where it lands
+  expect(guard('Write', `${REPO}/.orch/tasks/T-9.md`, { placed: { path: `${REPO}/.orch/config.md`, configDir: CFG, binDir: BIN, repo: REPO } })).toMatch(/may Write only/)
   // a .. out of the store, another repo's store, a sibling whose name starts with .orch or ends with it, the dir itself
   for (const p of [`${REPO}/.orch/../src/a.ts`, `${REPO}/.orch/tasks/../../src/a.ts`, '/other/.orch/x.ts', `${REPO}/.orchard/x.ts`,
     `${REPO}/x.orch/a.ts`, `${REPO}/src/.orch/a.ts`, `${REPO}/.orch`, '/repo2/.orch/a.ts', '/.orch/a.ts']) {
@@ -536,7 +546,10 @@ test("the task store: the session cwd's git toplevel is the repo whose .orch/ th
   rec.cwd = '/work/app/src'
   rec.git['/work/app/src'] = '/work/app'
   expect(denial(await read('/work/app/.orch/config.md'))).toBeUndefined()
-  expect(denial(await write('/work/app/.orch/tasks/T-1.ts'))).toBeUndefined() // an existing non-.md file: only the store lets it
+  rec.files['/work/app/.orch/tasks/T-1.md'] = '---\n---\n'
+  expect(denial(await write('/work/app/.orch/tasks/T-1.md'))).toBeUndefined() // an existing .md: only the store lets it
+  expect(denial(await write('/work/app/.orch/tasks/T-1.ts'))).toMatch(/may Write only/) // the store takes .md only
+  expect(denial(await write('/work/app/.orch/config.md'))).toMatch(/may Write only/) // nor the existing config
   expect(denial(await read('/work/app/.orchard/config.md'))).toMatch(/may not run Read/)
   expect(denial(await read('/work/app/.orch/../src/a.ts'))).toMatch(/may not run Read/)
   expect(denial(await read('/work/other/.orch/config.md'))).toMatch(/may not run Read/)
