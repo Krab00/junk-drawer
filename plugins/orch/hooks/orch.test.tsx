@@ -821,9 +821,11 @@ test('$.orch.hide with an owner closes only the pane that owner showed, while no
   await frame($, 'hide', { owner: 'junkd' })
   expect(rec.closed).toEqual(['orch'])
 
-  // Closed by its own command, then opened on its own: no longer the owner's.
+  // Closed by its own command: no longer the owner's, so hide leaves it alone; opened on its own: not the owner's.
   await frame($, 'show', { owner: 'junkd' })
   await orchCmd($, 'panel')
+  expect(rec.closed).toHaveLength(2)
+  await frame($, 'hide', { owner: 'junkd' })
   expect(rec.closed).toHaveLength(2)
   await orchCmd($, 'panel')
   await frame($, 'hide', { owner: 'junkd' })
