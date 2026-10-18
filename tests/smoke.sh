@@ -196,6 +196,15 @@ jq -e '.plugins[] | select(.name == "junkd" and .source == "./plugins/junkd")' "
 rg -qF 'CLAUDE_CONFIG_DIR' "$junkd_mod" && rg -qF '/settings.json`' "$junkd_mod" &&
     rg -qF '/plugins/marketplaces/${MARKETPLACE}`' "$junkd_mod" && rg -qF '/.claude-plugin/marketplace.json`' "$junkd_mod" ||
     { echo "junkd: settings.json or marketplace.json is not spelled as Claude Code lays it"; exit 1; }
+# The flag file is the shell-side truth of output_style off: the hooks module and scripts/setup.sh must both spell it
+# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/output-style-off. The style is named junkd:STE in both the file and the script.
+rg -qF "/junkd/output-style-off" "$junkd_mod" && rg -qF '/junkd/output-style-off' "$root/plugins/junkd/skills/junkd/scripts/setup.sh" ||
+    { echo "junkd: the output_style flag file is not spelled alike in the hooks module and setup.sh"; exit 1; }
+rg -q '^name: STE$' "$root/plugins/junkd/output-styles/STE.md" && rg -qF '"junkd:STE"' "$root/plugins/junkd/skills/junkd/scripts/setup.sh" ||
+    { echo "junkd: output-styles/STE.md is not named STE, or setup.sh does not set junkd:STE"; exit 1; }
+
+# The junkd plugin's own tests: the STE style and the SessionStart setup step over a temp config dir.
+bash "$root/tests/junkd.sh" >/dev/null 2>&1 || { echo "tests/junkd.sh failed; run it alone for the reason"; exit 1; }
 
 project="$tmp/project"
 mkdir -p "$project/.orch" "$project/.orch/tasks"
@@ -244,7 +253,10 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 9 ]
+# Nine skills, plus junkd's skills/junkd: no SKILL.md (junkd is a mod, not a skill), only the real home of the
+# plugin-root helper symlinks, as the layout invariant above asks.
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 10 ]
+[ ! -e "$installed/junkd/SKILL.md" ] || { echo "junkd grew a SKILL.md: count it as a skill above"; exit 1; }
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")

@@ -42,10 +42,45 @@ goes on without it.
 | `settings ▸` | Open that plugin's own pane (`open()`); junkd closes so it can take the keys |
 | `q` | Close the pane (`/junkd` or the `✚ junkd` segment toggles it) |
 
+## Output style (STE)
+
+junkd ships one output style, `junkd:STE` (`output-styles/STE.md`): Simplified Technical English, ASD-STE100.
+Short declarative sentences, one word for one meaning, the active voice, a procedure as a numbered list, no
+preamble, a two-sentence summary at the end of a turn. Code, logs and paths stay as they are. It is listed by
+`/output-style` like any other style once the plugin is on.
+
+A setup step makes it the default for a person who never chose a style, and for nobody else. At session start,
+in the main session only, `scripts/setup.sh` looks at `~/.claude/settings.json` (`$CLAUDE_CONFIG_DIR/settings.json`):
+
+- no `outputStyle` key → the key is set to `junkd:STE` (temp file, then `mv`; the other keys and their order
+  stay) and one line, `junkd: outputStyle set to junkd:STE in …`, is printed. A missing or empty file becomes
+  `{"outputStyle": "junkd:STE"}`.
+- an `outputStyle` key with any value → nothing is written, nothing is printed.
+- a file that does not parse, or is not a JSON object → nothing is written, nothing is printed, and the step
+  looks again next session.
+
+The step runs once per plugin version: a stamp, `~/.claude/junkd/setup-<version>.stamp`, is written once the
+key is there (set or found). Delete the key later and it stays deleted until the next version. A `/clear`, a
+compaction and every subagent are skipped. The hook always exits 0.
+
+**Keep your own style.** Pick it once with `/output-style` (that writes the key) — the step never touches a
+key that exists, whatever its value, and `/output-style` changes it any time, `junkd:STE` included.
+
+**Turn the step off.** Set `output_style` to `off` in `/config` (the junkd row; `ste` is the default). The
+hooks module mirrors the row into the flag file `~/.claude/junkd/output-style-off`, which the shell hook reads
+(a shell hook reads no plugin setting), at every write of the row and at session start. While it is off no
+stamp is written, so `ste` again applies the step at the next session start. Removing the plugin stops the
+step too; a `junkd:STE` already in `settings.json` then names a style that is gone, so pick another with
+`/output-style`.
+
 ## Files
 
-- `hooks/index.tsx` — the module: the pane's data, the noun calls, the toggles; `hooks/junkd-views.tsx` the
-  drawing.
+- `hooks/index.tsx` — the module: the pane's data, the noun calls, the toggles, the `output_style` mirror;
+  `hooks/junkd-views.tsx` the drawing.
 - `commands/junkd.md` — `/junkd:junkd`, intercepted by the module like the registered `/junkd`.
-- `hooks/junkd.test.tsx` — the pane over a fake config tree and fake handoff/orch/tldr plugins:
-  `claude plugin test plugins/junkd`.
+- `output-styles/STE.md` — the `junkd:STE` output style.
+- `scripts/setup.sh` — the SessionStart step above (the real file is `skills/junkd/scripts/setup.sh`, the
+  plugin-root `scripts` a symlink to it, as the layout invariant of `tests/smoke.sh` asks).
+- `hooks/junkd.test.tsx` — the pane over a fake config tree and fake handoff/orch/tldr plugins, and the
+  `output_style` mirror: `claude plugin test plugins/junkd`. `tests/junkd.sh` — the style file and the setup
+  step over a temp `CLAUDE_CONFIG_DIR`: `bash tests/junkd.sh`.
