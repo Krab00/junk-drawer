@@ -26,8 +26,8 @@ const MARKETPLACE = 'junk-drawer'
 const NOUNS = ['handoff', 'orch', 'tldr'] as const
 type Noun = (typeof NOUNS)[number]
 const HAS_PANE: Record<Noun, boolean> = { handoff: true, orch: true, tldr: false }
-// The feature panes of the set, in tab order after junkd's.
-const SET = NOUNS.filter(n => HAS_PANE[n])
+// The feature panes of the set, in tab order after junkd's (tldr has no pane).
+const SET: readonly Noun[] = ['handoff', 'orch']
 const isNoun = (name: string): name is Noun => (NOUNS as readonly string[]).includes(name)
 
 let isOpen = false
@@ -239,7 +239,6 @@ const togglePane = async ($: $) => {
 // junkd is gone by the time a refusal comes back, so the reason is a toast.
 const openSettings = async ($: $, plugin: string) => {
   if (!isNoun(plugin)) return
-  note = '' // junkd's last answer is not the feature pane's
   const shown = showOf($, plugin, { settings: true })
   isOpen = false
   await $.ui.close({ id: PANE })
