@@ -42,6 +42,16 @@ goes on without it.
 | `settings ▸` | Open that plugin's own pane (`open()`); junkd closes so it can take the keys |
 | `q` | Close the pane (`/junkd` or the `✚ junkd` segment toggles it) |
 
+## Settings
+
+One row in `/config` under plugin `junkd` (`userConfig` in the manifest):
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `output_style` | string (`ste`, `off`) | `ste` | Run the output-style step below at session start (`ste`), or skip it (`off`) |
+
+Scope: user-global; project/session overrides: planned.
+
 ## Output style (STE)
 
 junkd ships one output style, `junkd:STE` (`output-styles/STE.md`): Simplified Technical English, ASD-STE100.

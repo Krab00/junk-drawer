@@ -37,8 +37,15 @@ session with the plugin goes terse.
 
 Two rows in `/config` on Claude Code (`userConfig` in the manifest):
 
-- `terse` (boolean, off) — terse mode, the same switch as `/tldr on|off`.
-- `sentences` (number, 3) — how many sentences a `/tldr` without a number may use.
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `terse` | boolean | `false` | Terse mode, the same switch as `/tldr on|off` |
+| `sentences` | number | `3` | How many sentences a `/tldr` without a number may use |
+
+Scope: user-global; project/session overrides: planned.
+
+The [junkd](../junkd/README.md) frame shows both rows in its own pane through `$.tldr` (below); it is
+optional, tldr works without it.
 
 **The flag file is the shell-side truth.** The per-turn hook is a shell script and runs on every host, and a
 shell hook cannot read `$.config`, so `~/.claude/tldr-on` (or `$CLAUDE_CONFIG_DIR/tldr-on`) is what decides

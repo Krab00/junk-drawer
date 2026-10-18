@@ -184,17 +184,21 @@ from outside a `plugins/` path is not covered by the Write rule. The exact rules
 field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes).
 The same rows are in `/config` under plugin `orch`.
 
-| Setting | Default | What it does |
-|---|---|---|
-| `guard` | `fable` | When the guard holds the main loop: `fable`, `always` or `off` |
-| `allow_fable_agents` | `false` | Let the main loop spawn a subagent on an explicit Fable model (the user asked) |
-| `implementer_ctx_k` | `400` | Reuse an implementer for a fix round only while its context is under this many k tokens (50–1000) |
-| `ui_review` | `true` | Run `ui-reviewer` without asking when the config declares `web` |
-| `inject_rules` | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file above when off) |
-| `rounds` | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `guard` | string (`fable`, `always`, `off`) | `fable` | When the guard holds the main loop: on a Fable model, always, or never |
+| `allow_fable_agents` | boolean | `false` | Let the main loop spawn a subagent on an explicit Fable model (the user asked) |
+| `implementer_ctx_k` | number | `400` | Reuse an implementer for a fix round only while its context is under this many k tokens (50–1000) |
+| `ui_review` | boolean | `true` | Run `ui-reviewer` without asking when the config declares `web` |
+| `inject_rules` | boolean | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file above when off) |
+| `rounds` | number | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
+
+Scope: user-global; project/session overrides: planned.
 
 A value that does not fit (a guard word other than the three, a number out of range or not whole)
-is refused on every write path: the pane, `$.orch.set` and the `/config` menu alike.
+is refused on every write path: the pane, `$.orch.set` and the `/config` menu alike. The
+[junkd](../junkd/README.md) frame shows the first three rows in its own pane through `$.orch` (below);
+it is optional, orch works without it.
 
 ### API for other plugins
 

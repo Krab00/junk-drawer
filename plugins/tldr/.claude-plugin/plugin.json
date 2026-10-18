@@ -1,7 +1,7 @@
 {
   "name": "tldr",
   "description": "Summarize the current work / a file / a selection on demand; /tldr on keeps every reply terse. $.tldr lets other mods read and flip the settings.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": { "name": "Krab00" },
   "types": "./types/index.d.ts",
   "userConfig": {
