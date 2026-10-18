@@ -39,8 +39,8 @@ binds Opus the same way. On any other model this sheet does not apply: work inli
 
 ### Context economy
 
-- A fix round goes to the SAME implementer by SendMessage while its context is under about
-  400k tokens; above that, spawn a fresh one. A live agent holds the task context and pays
+- A fix round goes to the SAME implementer by SendMessage while its context is under the
+  `implementer_ctx_k` setting (default 400k tokens); above that, spawn a fresh one. A live agent holds the task context and pays
   cheap cache reads, a respawn pays a full cache write.
 - Do not abandon a live subagent whose task may still need follow-up. Continue it for ITS OWN
   task only; a new, unrelated task gets a fresh agent. Stop an agent only when its context is

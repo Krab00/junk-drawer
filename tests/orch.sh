@@ -253,6 +253,66 @@ cp "$project/.orch/config.md" "$run/.orch/config.md"
     [ ! -d "$run/.worktrees/W-1" ] || fail "worktree project: remove left the dir"
 )
 
+# orch-state settings: the user settings /orch runs with, from settings.json pluginConfigs (no config needed)
+settings_json="$CLAUDE_CONFIG_DIR/settings.json"
+defaults=$'rounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'
+settings() { (cd "$tmp" && "$bin/orch-state" settings); }   # $tmp: no repo, no .orch/config.md
+mkdir -p "$CLAUDE_CONFIG_DIR"
+rm -f "$settings_json"
+[ "$(settings)" = "$defaults" ] || fail "settings, no settings.json: expected the defaults, got: $(settings)"
+# opts <json of orch@junk-drawer's options> -> what settings prints
+opts() { printf '{"theme":"dark","pluginConfigs":{"tldr@junk-drawer":{"options":{"rounds":9}},"orch@junk-drawer":{"options":%s}}}\n' "$1" > "$settings_json"; settings; }
+[ "$(opts '{"rounds":5,"ui_review":false,"implementer_ctx_k":600,"inject_rules":false}')" = $'rounds=5\nui_review=false\nimplementer_ctx_k=600\ninject_rules=false' ] ||
+    fail "settings: values not read: $(settings)"
+[ "$(opts '{"ui_review":true,"inject_rules":true}')" = "$defaults" ] || fail "settings: explicit true switches: $(settings)"
+# the exact bounds, one assertion each: in range kept, one past clamped
+for pair in rounds:0:1 rounds:1:1 rounds:10:10 rounds:11:10 rounds:-4:1 implementer_ctx_k:49:50 implementer_ctx_k:50:50 \
+    implementer_ctx_k:1000:1000 implementer_ctx_k:1001:1000; do
+    IFS=: read -r key in want <<<"$pair"
+    got=$(opts "{\"$key\":$in}" | rg "^$key=")
+    [ "$got" = "$key=$want" ] || fail "settings: $key $in: expected $want, got $got"
+done
+# not a whole number: rounded like the hooks module; a numeric string counts; anything else is the default
+for pair in '2.5:3' '2.4:2' '"4":4' '" 6 ":6' '"abc":3' '"":3' '" ":3' '"\t6\n":6' '"\u00a07":7' 'true:3' 'null:3' '[5]:3' '{}:3' '"nan":3' '"Infinity":3' '"1e999":3' '1e999:3'; do
+    in=${pair%:*} want=${pair##*:}
+    got=$(opts "{\"rounds\":$in}" | rg '^rounds=')
+    [ "$got" = "rounds=$want" ] || fail "settings: rounds $in: expected $want, got $got"
+done
+got=$(opts '{"implementer_ctx_k":"250"}' | rg '^implementer_ctx_k=')
+[ "$got" = implementer_ctx_k=250 ] || fail "settings: implementer_ctx_k \"250\": got $got"
+# a switch: missing = true, only a JSON true is true
+for in in false null 0 1 '"true"' '"on"'; do
+    got=$(opts "{\"ui_review\":$in,\"inject_rules\":$in}" | rg '^(ui_review|inject_rules)=' | tr '\n' ' ')
+    [ "$got" = "ui_review=false inject_rules=false " ] || fail "settings: switch $in: got $got"
+done
+# no orch@ entry (another plugin, a name that only starts with orch), no options, options not an object, the file
+# not one JSON object: the defaults
+for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"rounds":9}}}}' '{"pluginConfigs":{"orchard@x":{"options":{"rounds":9}}}}' \
+    '{"pluginConfigs":{"xorch@x":{"options":{"rounds":9}}}}' '{"pluginConfigs":{"orch@junk-drawer":{}}}' \
+    '{"pluginConfigs":{"orch@junk-drawer":{"options":[9]}}}' '{"pluginConfigs":[]}' '{}' '' '{"pluginConfigs":' '[]' '"x"' \
+    '{"pluginConfigs":{"orch@a":{"options":{"rounds":9}}}} {}' 'not json'; do
+    printf '%s' "$content" > "$settings_json"
+    [ "$(settings)" = "$defaults" ] || fail "settings, file $content: expected the defaults, got: $(settings)"
+done
+# the first orch@ entry decides (any marketplace)
+printf '{"pluginConfigs":{"orch@other":{"options":{"rounds":7}},"orch@junk-drawer":{"options":{"rounds":2}}}}' > "$settings_json"
+[ "$(settings | rg '^rounds=')" = rounds=7 ] || fail "settings: the first orch@ entry does not decide"
+# no jq on PATH: the defaults, exit 0
+mkdir -p "$tmp/nojq"
+ln -sf "$(command -v bash)" "$tmp/nojq/bash"
+out=$(cd "$tmp" && PATH="$tmp/nojq" "$bin/orch-state" settings) || fail "settings without jq exited non-zero"
+[ "$out" = "$defaults" ] || fail "settings without jq: expected the defaults, got: $out"
+# with no CLAUDE_CONFIG_DIR the file is $HOME/.claude/settings.json
+mkdir -p "$tmp/shome/.claude"
+printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"rounds":4}}}}' > "$tmp/shome/.claude/settings.json"
+[ "$(cd "$tmp" && env -u CLAUDE_CONFIG_DIR HOME="$tmp/shome" "$bin/orch-state" settings | rg '^rounds=')" = rounds=4 ] ||
+    fail "settings: \$HOME/.claude/settings.json not read without CLAUDE_CONFIG_DIR"
+# inside a project, and inside a project that is itself a worktree: the same user settings
+printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"rounds":6}}}}' > "$settings_json"
+[ "$(cd "$project" && "$bin/orch-state" settings | rg '^rounds=')" = rounds=6 ] || fail "settings in the project"
+[ "$(cd "$run" && "$bin/orch-state" settings | rg '^rounds=')" = rounds=6 ] || fail "settings in a worktree project"
+rm -f "$settings_json"
+
 # orch-sync on the adhoc backend is a no-op in both directions
 rg -q 'no-op' <<<"$("$bin/orch-sync" pull)" || fail "orch-sync pull (adhoc) is not a no-op"
 rg -q 'no-op' <<<"$("$bin/orch-sync" push)" || fail "orch-sync push (adhoc) is not a no-op"

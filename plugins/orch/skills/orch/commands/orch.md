@@ -25,12 +25,22 @@ test runners, health paths — comes from **`.orch/config.md`** in the target re
 Read it before anything else. **No config → STOP** and tell the user to run `/orch:init`;
 never guess a stack.
 
+Then run `${CLAUDE_PLUGIN_ROOT}/bin/orch-state settings` — the user's plugin settings (from
+`settings.json`, user-global, no config needed), one `key=value` per line. Use them for the whole run:
+
+- `rounds=<n>` — the fix-round cap (§5); `--rounds R` overrides it for this run.
+- `ui_review=true|false` — `false`: no `ui-reviewer` is spawned; the UI criteria become
+  `PM-REVIEW` rows (reason: ui_review off). Pass the value to every `verify-coordinator` (§4).
+- `implementer_ctx_k=<n>` — the fix-round context cap (§5): a fix round goes to the same
+  implementer only while its context is under `<n>`k tokens; above it, a fresh implementer.
+- `inject_rules` — read by the SessionStart hook; nothing to do here.
+
 The config's `capabilities` block **gates** which checks run (§4/§6). A capability the
 project doesn't declare is silently skipped — never invent a check for a layer that doesn't
 exist. The mechanics live in three zero-dep scripts you drive (never hand-edit frontmatter
 or reinvent their logic):
 
-- `${CLAUDE_PLUGIN_ROOT}/bin/orch-state list | set <id> <status> | reset-stale | new <id> [title]`
+- `${CLAUDE_PLUGIN_ROOT}/bin/orch-state list | set <id> <status> | reset-stale | new <id> [title] | settings`
   — the canonical task store. Status is frontmatter; this is the only writer of it.
 - `${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree add <id> <branch> [base] | remove <id> | slot <id>`
   — per-task worktrees under `.worktrees/`; prints `dir=`, `slot=`, and `web_port=`/`api_port=`
@@ -72,7 +82,7 @@ for a human — never merge it yourself, or the run's record is lost when the wo
 - **`/orch all`** — `chain` with no limit: drain until no `todo` task remains.
 - No mode and no free text → ask which mode.
 
-Flags (any mode): `--rounds R` (fix-loop cap, default **3**); `--base <branch>` (start point
+Flags (any mode): `--rounds R` (fix-loop cap; default the `rounds` setting, §0); `--base <branch>` (start point
 instead of config `default_base`); `--deep` (force `lead-implementer` fan-out — see **Deep mode**);
 `--single-pr[=<branch>]` (one integration branch + one draft PR for the whole run — see
 **Single-PR mode**).
@@ -132,7 +142,7 @@ Per task:
 
 Spawn one `verify-coordinator` per task (parallel in `batch`). Hand it: task id, the
 implementer's `branch`, the verify slot (`orch-worktree slot <id>`), the task file path, the
-current lessons, the **config capabilities** (run commands, ports, health paths, test commands),
+current lessons, the `ui_review` setting (§0), the **config capabilities** (run commands, ports, health paths, test commands),
 and — on a re-verify round (§5) — **only the failing criteria**. It owns the verify env end to
 end: builds the worktree, boots the declared servers, spawns `test-planner` → `ui-reviewer` →
 `test-reviewer`, runs the inline checks, writes the `## Verification — <branch>` table into the
@@ -150,9 +160,10 @@ tell it which apply; never ask for a check on an undeclared layer):
 - **`web` + `api` declared** → **data provenance** (a fresh account created THIS run with random
   values; rendered == returned == stored — never a mock/demo seed) and the **FE actually calls
   the live api** on data-backed routes; verify **E2E through the UI**, not each half alone.
-- **`web` declared** → `ui-reviewer` drives the real browser for screen/flow/state criteria,
-  a screenshot per criterion, every state (default/empty/loading/error/no-permission), never on
-  the implementer's word.
+- **`web` declared and `ui_review=true`** → `ui-reviewer` drives the real browser for
+  screen/flow/state criteria, a screenshot per criterion, every state
+  (default/empty/loading/error/no-permission), never on the implementer's word. With
+  `ui_review=false` no `ui-reviewer` runs: those criteria are `PM-REVIEW` rows for a human.
 - Plus every entry in the config's `standing_checks_extra` (project lessons already promoted).
 
 ### 5. Resolve (round strategy)
@@ -165,9 +176,11 @@ tell it which apply; never ask for a check on an undeclared layer):
   ```
   Record the PR URL in the task file's verification section. Never merge, never mark ready.
 - **FAIL** (any failing criterion, incl. a UI FAIL, red suite, or `test-reviewer` GAPS) → loop,
-  handing back only the coordinator's `FAILING:` criteria, capped at `--rounds R`:
+  handing back only the coordinator's `FAILING:` criteria, capped at R rounds (`--rounds R`, else
+  the `rounds` setting):
   - **Round 1** — the implementer's first build.
-  - **Middle rounds** — the **same** implementer, given only the failing criteria.
+  - **Middle rounds** — the **same** implementer, given only the failing criteria, while its
+    context is under `implementer_ctx_k`k tokens (§0); past it, a fresh one handed the diff.
   - **Final round (R)** — a **FRESH** implementer, handed the diff (`git diff <base>...<branch>`)
     + a short analysis of *why the previous attempts keep failing* (a new pair of eyes).
   - **Still failing after round R** → append the escalation reason + remaining FAILs to the task
