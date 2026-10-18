@@ -189,10 +189,9 @@ export const register: Register = (on, options) => {
     await togglePane($)
     return { value: undefined }
   })
-  // show never closes: the pane opens (or, up already, is asked again: retitled, the keys asked for). `reopen`
-  // closes a pane that is up first, so its tab goes after the caller's; `owner` marks it as that caller's, for hide.
+  // show never closes: the pane opens (or, up already, is asked again: retitled, the keys asked for); `owner` marks
+  // it as that caller's, for hide.
   on('orch.show', async ($, e) => {
-    if (e?.reopen === true && paneOpen) await closePane($)
     const opened = openPane($, e?.focus === true)
     owner = e?.owner
     await opened
