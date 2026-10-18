@@ -61,13 +61,33 @@ async function placed($: $, path: string): Promise<string | undefined> {
   return entries && !entries.some(x => x.isLink && x.name.toLowerCase() === lower) ? `${dir}/${name}` : undefined
 }
 
-// A Read or Write path as it lands, with the config dir and the plugin's bin/ resolved alike (a dir that doesn't
-// resolve keeps its spelling). ponytail: the two dirs are resolved on every call; cache them if it ever shows.
-async function orchPlace($: $, path: string, cfg: string): Promise<OrchState['placed']> {
+// A Read or Write path as it lands, with the config dir, the plugin's bin/ and the repo resolved alike (a dir that
+// doesn't resolve keeps its spelling). ponytail: the dirs are resolved on every call; cache them if it ever shows.
+async function orchPlace($: $, path: string, cfg: string, repo: string): Promise<OrchState['placed']> {
   const to = path.startsWith('/') ? await placed($, path) : undefined
   if (to === undefined) return null
   const root = (await realPath($, $.plugin.root)) ?? $.plugin.root
-  return { path: to, configDir: (await realPath($, cfg)) ?? cfg, binDir: `${root.replace(/\/$/, '')}/bin/` }
+  return {
+    path: to,
+    configDir: (await realPath($, cfg)) ?? cfg,
+    binDir: `${root.replace(/\/$/, '')}/bin/`,
+    repo: repo && ((await realPath($, repo)) ?? repo),
+  }
+}
+
+// The session's repo (git's toplevel of its cwd), whose .orch/ is the task store /orch reads first; '' when the
+// cwd is in no repo or git fails. Cached per cwd: a `/cd` moves it.
+const repos = new Map<string, string>()
+async function sessionRepo($: $): Promise<string> {
+  const cwd = await $.session.cwd().catch(() => '')
+  if (!cwd) return ''
+  let repo = repos.get(cwd)
+  if (repo === undefined) {
+    const r = await $.process.run(['git', '-C', cwd, 'rev-parse', '--show-toplevel']).catch(() => undefined)
+    repo = r?.exitCode === 0 ? r.stdout.trim() : ''
+    repos.set(cwd, repo)
+  }
+  return repo
 }
 
 // The main loop's model, read live so a /model switch counts at once. ponytail: a model that can't be read is no
@@ -90,8 +110,9 @@ async function orchCheck($: $, e: { tool: string; agentId?: string; [k: string]:
   const cfg = await configDir($)
   const exists = e.tool === 'Write' ? await $.fs.exists(String(e.file_path ?? '')).catch(() => true) : undefined
   const agent = e.tool === 'SendMessage' ? await orchAgent($, String(e.to)) : undefined
-  const where = e.tool === 'Read' || e.tool === 'Write' ? await orchPlace($, String(e.file_path ?? ''), cfg) : undefined
-  return orchGuard(e, { model, binDir: `${$.plugin.root}/bin/`, configDir: cfg, exists, agent, placed: where })
+  const repo = e.tool === 'Read' || e.tool === 'Write' ? await sessionRepo($) : ''
+  const where = e.tool === 'Read' || e.tool === 'Write' ? await orchPlace($, String(e.file_path ?? ''), cfg, repo) : undefined
+  return orchGuard(e, { model, binDir: `${$.plugin.root}/bin/`, configDir: cfg, repo, exists, agent, placed: where })
 }
 
 // ------------------------------------------------------------------ settings

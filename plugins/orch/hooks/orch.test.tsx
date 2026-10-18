@@ -12,7 +12,8 @@ const OPUS = 'claude-opus-5-5'
 const BIN = '/p/bin/'
 const on_: OrchValues = { guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 }
 const main = (tool: string, args: Record<string, unknown> = {}) => ({ tool, ...args })
-const st = (s: Partial<OrchState> = {}): OrchState => ({ model: FABLE, binDir: BIN, configDir: CFG, ...s })
+const REPO = '/repo'
+const st = (s: Partial<OrchState> = {}): OrchState => ({ model: FABLE, binDir: BIN, configDir: CFG, repo: REPO, ...s })
 const SCRATCH = '/private/tmp/claude-501/-Users-u-repo/0b1c-session/scratchpad'
 const PREFIX = 'Orchestrator mode (orch):'
 
@@ -112,7 +113,7 @@ test('Read and Write: a plain absolute ASCII spelling only; the placed path must
   expect(guard('Write', `${SCRATCH}/r.md`, { placed: null })).toMatch(/can't be placed/)
   expect(guard('Read', `${SCRATCH}/r.md`, { placed: null })).toMatch(/can't be placed/)
   // where it lands decides too, against the dirs resolved alike
-  const at = (path: string, configDir = CFG, binDir = BIN) => ({ placed: { path, configDir, binDir } })
+  const at = (path: string, configDir = CFG, binDir = BIN, repo = REPO) => ({ placed: { path, configDir, binDir, repo } })
   expect(guard('Write', '/repo/link/pwn/notes.md', at('/home/u/.claude/skills/pwn/notes.md'))).toMatch(/may Write only/) // symlink into skills
   expect(guard('Write', '/repo/cfglink/agents/pwn.md', at(`${CFG}/agents/pwn.md`))).toMatch(/may Write only/) // into the config dir
   expect(guard('Write', '/other/cfg2/agents/pwn.md', { ...at('/real/cfg2/agents/pwn.md', '/real/cfg2'), configDir: '/other/cfg2' })).toMatch(/may Write only/) // a non-default config dir, linked
@@ -122,6 +123,37 @@ test('Read and Write: a plain absolute ASCII spelling only; the placed path must
   expect(guard('Write', '/tmp/claude-501/-repo/s1/scratchpad/r.ts', at('/private/tmp/claude-501/-repo/s1/scratchpad/r.ts'))).toBeUndefined()
   expect(guard('Write', '/repo/docs/design.md', at('/repo/docs/design.md'))).toBeUndefined()
   expect(guard('Read', `${CFG}/handoffs/a.md`, at('/real/claude/handoffs/a.md', '/real/claude'))).toBeUndefined()
+})
+
+test("Read and Write: the repo's .orch/ task store (config, task files, lessons); nothing beside it or above it", () => {
+  const guard = (tool: string, file_path: string, extra: Partial<OrchState> = {}) =>
+    orchGuard(main(tool, { file_path, content: 'x' }), st({ exists: true, ...extra }), on_)
+  for (const p of [`${REPO}/.orch/config.md`, `${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/tasks/_lessons.md`, `${REPO}/.orch/tasks/T-1.evidence/ac1.png`,
+    `${REPO}//.orch/./tasks/T-1.md`]) {
+    for (const tool of ['Read', 'Write']) expect(guard(tool, p), `${tool} ${p}`).toBeUndefined()
+  }
+  // a .. out of the store, another repo's store, a sibling whose name starts with .orch or ends with it, the dir itself
+  for (const p of [`${REPO}/.orch/../src/a.ts`, `${REPO}/.orch/tasks/../../src/a.ts`, '/other/.orch/x.ts', `${REPO}/.orchard/x.ts`,
+    `${REPO}/x.orch/a.ts`, `${REPO}/src/.orch/a.ts`, `${REPO}/.orch`, '/repo2/.orch/a.ts', '/.orch/a.ts']) {
+    expect(guard('Read', p), p).toMatch(/may not run Read/)
+    expect(guard('Write', p), p).toMatch(/may Write only/)
+  }
+  // an existing .md elsewhere is no new file: the store is the only reason it would pass
+  for (const p of ['/other/.orch/x.md', `${REPO}/.orchard/x.md`]) expect(guard('Write', p), p).toMatch(/may Write only/)
+  // no repo: no store, and '' never makes `/.orch/` one
+  for (const p of [`${REPO}/.orch/config.md`, '/.orch/config.md']) {
+    expect(guard('Read', p, { repo: '' }), p).toMatch(/may not run Read/)
+    expect(guard('Write', p, { repo: '' }), p).toMatch(/may Write only/)
+  }
+  // the deny lists still hold inside the store
+  for (const p of [`${REPO}/.orch/CLAUDE.md`, `${REPO}/.orch/SKILL.md`, `${REPO}/.orch/.claude-plugin/x.json`, `${REPO}/.orch/x/../../src/a.ts`])
+    expect(guard('Write', p), p).toMatch(/may Write only/)
+  // where it lands decides too: a link out of the store is refused; the repo resolved alike passes
+  const at = (path: string, repo = REPO) => ({ placed: { path, configDir: CFG, binDir: BIN, repo } })
+  expect(guard('Write', `${REPO}/.orch/tasks/T-1.md`, at('/elsewhere/src/a.ts'))).toMatch(/may Write only/)
+  expect(guard('Read', `${REPO}/.orch/tasks/T-1.md`, at('/elsewhere/src/a.ts'))).toMatch(/may not run Read/)
+  expect(guard('Write', `${REPO}/.orch/tasks/T-1.md`, at('/real/repo/.orch/tasks/T-1.md', '/real/repo'))).toBeUndefined()
+  expect(guard('Read', `${REPO}/.orch/config.md`, at('/real/repo/.orch/config.md', '/real/repo'))).toBeUndefined()
 })
 
 test('CronCreate and ScheduleWakeup: only /orch, /loop of an allowed prompt, a plain prompt, or a stop', () => {
@@ -308,7 +340,8 @@ function world(on: On) {
   const rec = { model: FABLE as string | undefined, agents: [] as Agent[], files, toasts: [] as string[],
     links: {} as Record<string, string>, dangling: {} as Record<string, string[]>, nowhere: [] as string[], envFails: false,
     config: [] as { key: string; value: unknown }[], opened: [] as string[], focus: [] as (true | undefined)[], closed: [] as string[], runs: [] as string[][],
-    existsFails: false, writeFails: false, notPlaced: false }
+    existsFails: false, writeFails: false, notPlaced: false,
+    cwd: '/tmp' as string, git: {} as Record<string, string>, gitFails: [] as string[] } // git: a cwd's `rev-parse --show-toplevel`; any other cwd is in no repo; gitFails: the cwds where it exits 128 with that stdout anyway
   on('env.get', (_$, e) => {
     if (rec.envFails) throw new Error('env unavailable')
     return { value: env[e.name] }
@@ -332,6 +365,7 @@ function world(on: On) {
     return { value: rec.model }
   })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: rec.cwd }))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('ui.open', (_$, e) => { rec.opened.push(e.id); rec.focus.push(e.focus); return { value: rec.notPlaced ? { isPlaced: false as const, reason: 'no room' } : { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); return { value: undefined } })
@@ -355,6 +389,11 @@ function world(on: On) {
   on('process.run', (_$, e) => {
     rec.runs.push([...e.argv])
     if (e.argv[0] === 'rm') delete files[e.argv.at(-1)!]
+    if (e.argv[0] === 'git') {
+      const top = rec.git[e.argv[2]!]
+      const failed = top === undefined || rec.gitFails.includes(e.argv[2]!)
+      return { value: { exitCode: failed ? 128 : 0, stdout: top === undefined ? '' : `${top}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('classic.SubagentStop', () => ({}))
@@ -458,6 +497,41 @@ test('AC8: the live model decides, so a /model switch counts at once; a subagent
   expect(await frame($, 'guardState')).toEqual({ active: false, model: FABLE })
   await frame($, 'set', { key: 'guard', value: 'fable' })
   expect(denial(await fetch($))).toMatch(/may not run WebFetch/)
+})
+
+test("the task store: the session cwd's git toplevel is the repo whose .orch/ the main loop reads and writes; cached per cwd", async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const read = (file_path: string) => $.tool.call({ tool: 'Read', file_path })
+  const write = (file_path: string) => $.tool.call({ tool: 'Write', file_path, content: 'x' })
+  const gitRuns = () => rec.runs.filter(r => r[0] === 'git')
+  rec.files['/work/app/.orch/config.md'] = '---\n---\n'
+  rec.files['/work/app/.orch/tasks/T-1.ts'] = 'x'
+  // in no repo (git fails): no store
+  rec.cwd = '/work/none'
+  expect(denial(await read('/work/app/.orch/config.md'))).toMatch(/may not run Read/)
+  expect(gitRuns()).toEqual([['git', '-C', '/work/none', 'rev-parse', '--show-toplevel']])
+  // a cwd inside the repo: its toplevel's .orch/ passes, both spellings
+  rec.cwd = '/work/app/src'
+  rec.git['/work/app/src'] = '/work/app'
+  expect(denial(await read('/work/app/.orch/config.md'))).toBeUndefined()
+  expect(denial(await write('/work/app/.orch/tasks/T-1.ts'))).toBeUndefined() // an existing non-.md file: only the store lets it
+  expect(denial(await read('/work/app/.orchard/config.md'))).toMatch(/may not run Read/)
+  expect(denial(await read('/work/app/.orch/../src/a.ts'))).toMatch(/may not run Read/)
+  expect(denial(await read('/work/other/.orch/config.md'))).toMatch(/may not run Read/)
+  expect(gitRuns().length).toBe(2) // once per cwd, not per call
+  // the repo is resolved like the path: a linked repo dir passes when both land inside it
+  rec.links['/work/app'] = '/real/app'
+  expect(denial(await read('/work/app/.orch/config.md'))).toBeUndefined()
+  // the cwd moved (a /cd): asked again
+  rec.cwd = '/work/none'
+  expect(denial(await read('/work/app/.orch/config.md'))).toMatch(/may not run Read/)
+  expect(gitRuns().length).toBe(2) // /work/none is cached as no repo
+  // a git that fails is no repo, whatever it printed
+  rec.cwd = '/work/broken'
+  rec.git['/work/broken'] = '/work/app'
+  rec.gitFails.push('/work/broken')
+  expect(denial(await read('/work/app/.orch/config.md'))).toMatch(/may not run Read/)
 })
 
 test("AC8: another plugin's $.tool.call and $.agent.spawn pass on a guarded Fable main loop; the engine's own are denied", WITH_FRAME, async ($, on) => {
