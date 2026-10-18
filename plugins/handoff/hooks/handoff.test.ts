@@ -370,6 +370,36 @@ test('Handoffs tab lists the folder newest first; enter resumes one by id', asyn
   }
 })
 
+// CLAUDE_CONFIG_DIR moves the handoffs folder, as bin/handoff-path follows it; empty means unset.
+for (const [config, dir] of [['/cfg', '/cfg/handoffs'], ['', DIR]] as const) {
+  test(`the pane lists and opens ${dir} with CLAUDE_CONFIG_DIR ${config ? config : 'empty'}`, async ($, on) => {
+    on('env.get', { name: 'CLAUDE_CONFIG_DIR' }, () => ({ value: config }))
+    on('fs.list', { path: '/cfg/handoffs' }, () => ({
+      value: [{ name: '2026-03-03T00-00_cfcfcfcf.md', kind: 'file' as const, size: 10, mtimeMs: Date.UTC(2026, 2, 3), isLink: false }],
+    }))
+    on('fs.read', { path: '/cfg/handoffs/2026-03-03T00-00_cfcfcfcf.md' }, () => ({ value: '# Title CFG\n' }))
+    const rec = world(on)
+    await start($)
+    await handoff($, 'panel')
+    const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+    await hotkey(ui, '2')
+    const t = await texts(ui)
+    if (config) {
+      expect(t).toContain('Title CFG')
+      expect(t).not.toContain('Title A')
+      expect(t).toContain('1 in /cfg/handoffs') // the folder drawn is the one read
+    } else {
+      expect(t).toContain('Title A')
+      expect(t).not.toContain('Title CFG')
+      expect(t).toContain('2 in ~/.claude/handoffs')
+    }
+    await hotkey(ui, '3')
+    await hotkey(ui, 'o')
+    expect(rec.runs).toContain(`open ${dir}`)
+    await ui.unmount()
+  })
+}
+
 test('Settings tab: threshold field writes handoff.threshold', async ($, on) => {
   const rec = world(on)
   await start($)
