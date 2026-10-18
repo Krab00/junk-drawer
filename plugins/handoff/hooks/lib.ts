@@ -53,14 +53,15 @@ export const S = {
 }
 
 export function loadOptions(options: Record<string, unknown>): void {
-  const num = (v: unknown, d: number) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d)
-  S.threshold = num(options.threshold ?? 85, 85)
-  S.checkEvery = Math.max(1, Math.round(num(options.checkEvery ?? 5, 5)))
+  // a value `set` would refuse falls back to the default, so what loads is what `set` could have stored
+  const num = (f: Field, d: number) => (coerce(f, options[f] ?? d).value as number | undefined) ?? d
+  S.threshold = num('threshold', 85)
+  S.checkEvery = num('checkEvery', 5)
   S.enabled = options.enabled === undefined ? true : Boolean(options.enabled)
   S.autoOn = Boolean(options.autoOn)
   S.armed = S.enabled && S.autoOn
   if (S.armed) S.armedAt ??= Date.now()
-  S.staleDays = num(options.staleDays ?? 30, 30)
+  S.staleDays = num('staleDays', 30)
   S.segment = options.segment === undefined ? true : Boolean(options.segment)
   S.resumeAfterLimit = options.resumeAfterLimit === undefined ? true : Boolean(options.resumeAfterLimit)
 }
@@ -93,13 +94,16 @@ export const SCHEMA: readonly SchemaEntry[] = [
 ]
 export const isField = (key: string): key is Field => SCHEMA.some(f => f.key === key)
 
-// A raw value (typed in the pane or handed to $.handoff.set) to the field's kind; `error` when it does not fit.
+// A raw value (typed in the pane, handed to $.handoff.set or written in the /config menu) to the field's kind;
+// `error` when it does not fit. The value is stored as it comes back, never rounded later: what the row holds is
+// what get answers. threshold: above 0, up to 100; checkEvery: a whole number, 1 or more; staleDays: above 0.
 export type Coerced = { value: number | boolean; error?: undefined } | { error: string; value?: undefined }
+const RANGE = { threshold: 'a number above 0, up to 100', checkEvery: 'a whole number, 1 or more', staleDays: 'a number above 0' }
 export function coerce(field: Field, raw: unknown): Coerced {
   if (field === 'threshold' || field === 'checkEvery' || field === 'staleDays') {
     const value = Number(raw)
-    if (!Number.isFinite(value) || value <= 0 || (field === 'threshold' && value > 100)) return { error: `${String(raw)} is not a valid ${field}` }
-    return { value }
+    const fits = Number.isFinite(value) && value > 0 && (field !== 'threshold' || value <= 100) && (field !== 'checkEvery' || Number.isInteger(value))
+    return fits ? { value } : { error: `${String(raw)} is not a valid ${field} (${RANGE[field]})` }
   }
   return { value: raw === true || raw === 'true' || raw === 'on' }
 }

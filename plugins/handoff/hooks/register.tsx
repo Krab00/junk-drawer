@@ -266,7 +266,7 @@ async function setOption($: $, field: Field, raw: string | number | boolean) {
     return { deny }
   }
   if (field === 'threshold') S.threshold = value as number
-  else if (field === 'checkEvery') S.checkEvery = Math.max(1, Math.round(value as number))
+  else if (field === 'checkEvery') S.checkEvery = value as number
   else if (field === 'staleDays') { S.staleDays = value as number; S.entries = null; void load($) }
   else if (field === 'segment') S.segment = value as boolean
   else if (field === 'autoOn') S.autoOn = value as boolean

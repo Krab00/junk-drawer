@@ -432,6 +432,59 @@ test('$.handoff.set writes handoff.<key> through $.config and get reads it back;
   expect(await frame($, 'get', 'checkEvery')).toBe(5)
 })
 
+test('$.handoff.set: checkEvery is a whole number 1 or more, threshold above 0 up to 100, staleDays above 0; what is stored is what get answers', WITH_FRAME, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const refused = async (key: string, value: unknown, holds: unknown) => {
+    const writes = rec.config.length
+    await expect(frame($, 'set', { key, value }), `${key} ${String(value)}`).rejects.toThrow(new RegExp(`not a valid ${key}`))
+    expect(rec.config.length, `${key} ${String(value)} reached the row`).toBe(writes)
+    expect(await frame($, 'get', key), `${key} after ${String(value)}`).toBe(holds)
+  }
+  const taken = async (key: string, value: unknown, want: number) => {
+    expect(await frame($, 'set', { key, value }), `${key} ${String(value)}`).toBe(want)
+    expect(rec.config.at(-1), `${key} ${String(value)}`).toEqual({ key: `handoff.${key}`, value: want })
+    expect(await frame($, 'get', key), `${key} ${String(value)}`).toBe(want)
+  }
+  // checkEvery: 2.6 is refused, not stored as 2.6 and answered as 3; 1 is the floor, 0 and 0.5 are out
+  await refused('checkEvery', 2.6, 5)
+  await refused('checkEvery', '2.6', 5)
+  await taken('checkEvery', 1, 1)
+  await refused('checkEvery', 0, 1)
+  await refused('checkEvery', 0.5, 1)
+  await refused('checkEvery', -1, 1)
+  await taken('checkEvery', 3, 3)
+  await taken('checkEvery', '7', 7)
+  // threshold: 0 out, 1 in, 100 in, 101 out; a fraction is kept as given (no rounding anywhere)
+  await refused('threshold', 0, 85)
+  await taken('threshold', 1, 1)
+  await taken('threshold', 100, 100)
+  await refused('threshold', 101, 100)
+  await refused('threshold', 100.5, 100)
+  await taken('threshold', 85.5, 85.5)
+  // staleDays: 0 and below out; a fraction kept as given
+  await refused('staleDays', 0, 30)
+  await refused('staleDays', -3, 30)
+  await refused('staleDays', 'Infinity', 30) // above 0 but no number of days
+  await taken('staleDays', 0.5, 0.5)
+})
+
+test('options the engine hands at load that set would refuse fall back to the defaults', { ...WITH_FRAME, options: { checkEvery: 2.6, threshold: 101, staleDays: 0 } }, async ($, on) => {
+  world(on)
+  await start($)
+  expect(await frame($, 'get', 'checkEvery')).toBe(5)
+  expect(await frame($, 'get', 'threshold')).toBe(85)
+  expect(await frame($, 'get', 'staleDays')).toBe(30)
+})
+
+test('options at load on the bounds are taken as given', { ...WITH_FRAME, options: { checkEvery: 1, threshold: 100, staleDays: 0.5 } }, async ($, on) => {
+  world(on)
+  await start($)
+  expect(await frame($, 'get', 'checkEvery')).toBe(1)
+  expect(await frame($, 'get', 'threshold')).toBe(100)
+  expect(await frame($, 'get', 'staleDays')).toBe(0.5)
+})
+
 test('$.handoff.open toggles the pane; a route opens it on that tab or switches the tab while it is up', WITH_FRAME, async ($, on) => {
   const rec = world(on)
   await start($)

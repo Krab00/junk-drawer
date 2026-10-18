@@ -70,14 +70,15 @@ Set them in the Settings tab or in `/config` under plugin `handoff`.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `enabled` | boolean | `true` | The auto handoff at all. Off: the loop cannot be armed (`/ahandoff` and `/handoff auto` say so, `autoOn` is ignored, an armed loop disarms at once and a pending 5h-limit resume is dropped) and the `🪃` segment is hidden. `/handoff`, `/handon` and the pane keep working |
-| `threshold` | number | `85` | Context usage in percent that triggers the handoff |
-| `checkEvery` | number | `5` | How often, in tool calls, usage is read mid-turn |
+| `threshold` | number | `85` | Context usage in percent that triggers the handoff; above 0, up to 100 |
+| `checkEvery` | number | `5` | How often, in tool calls, usage is read mid-turn; a whole number, 1 or more (`2.6` is refused, not rounded) |
 | `autoOn` | boolean | `false` | Arm the loop at every session start |
 | `resumeAfterLimit` | boolean | `true` | Send the continuation prompt 2 minutes after the 5h window resets when a turn died on the limit |
-| `staleDays` | number | `30` | Handoffs older than this are marked stale and removed by `d` |
+| `staleDays` | number | `30` | Handoffs older than this are marked stale and removed by `d`; above 0 |
 | `segment` | boolean | `true` | Show the `🪃` segment in the prompt line |
 
-Scope: user-global; project/session overrides: planned.
+A value outside these is refused by `$.handoff.set` (the Settings tab is stricter still: whole numbers), and a
+refused option at load falls back to its default. Scope: user-global; project/session overrides: planned.
 
 `ctx-limit` stays a separate, manual safeguard. The [junkd](../junkd/README.md) frame shows the main
 rows of this table in its own pane through `$.handoff` (below); it is optional, handoff works without it.
