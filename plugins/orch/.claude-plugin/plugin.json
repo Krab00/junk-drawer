@@ -33,7 +33,7 @@
     "ui_review": {
       "type": "boolean",
       "title": "UI review",
-      "description": "Run ui-reviewer without asking when the project config declares a web capability.",
+      "description": "Run ui-reviewer on the UI criteria when the project config declares a web capability; off, they become PM-REVIEW rows.",
       "default": true
     },
     "inject_rules": {

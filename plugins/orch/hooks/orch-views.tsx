@@ -22,7 +22,7 @@ const HINTS: Record<OrchField, string> = {
   guard: 'hold the main loop to planning and delegating',
   allow_fable_agents: 'an explicit Fable model on a subagent',
   implementer_ctx_k: 'reuse an implementer under this many k tokens',
-  ui_review: 'run ui-reviewer unasked when the config declares web',
+  ui_review: 'ui-reviewer on web UI criteria; off: PM-REVIEW rows',
   inject_rules: 'ORCHESTRATOR.md into the main session at start',
   rounds: 'fix rounds per task; --rounds overrides',
 }

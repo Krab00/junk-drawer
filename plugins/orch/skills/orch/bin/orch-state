@@ -11,6 +11,11 @@
 #   orch-state cfg <key>            # print a top-level key of the config's frontmatter
 # tasks_dir is read from .orch/config.md (legacy fallback: .claude/orch.config.md).
 #   orch-state id <id>              # print <id> if it is a valid task id, else fail (orch-worktree uses it)
+#   orch-state settings             # the plugin's user settings /orch runs with, one key=value per line:
+#                                   # rounds, ui_review, implementer_ctx_k, inject_rules. Read from
+#                                   # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json pluginConfigs["orch@<marketplace>"]
+#                                   # .options (the first orch@ key), clamped as the hooks module does; the defaults
+#                                   # when jq is missing or the file is absent or does not parse. Needs no config.
 set -euo pipefail
 
 # A task id names a file in tasks/, a worktree in .worktrees/ and part of a branch: one plain word.
@@ -20,9 +25,33 @@ _id() {
   echo "$1"
 }
 
-# id and help need no config.
+# _settings: the four settings /orch uses, as applyOrchSettings (hooks/orch-lib.ts) loads them: a number row is
+# rounded and clamped (rounds 1-10, default 3; implementer_ctx_k 50-1000, default 400), a numeric string counts,
+# anything else is the default; a switch is true when missing, else only a JSON true is true.
+_settings() {
+  local out
+  # -s: a file of anything but one JSON value is no settings file; any jq error (no jq, no file, no object where
+  # one belongs) prints the defaults.
+  out=$(jq -rs '
+    def num($k; $lo; $hi; $d): .[$k] as $x
+      | (if ($x | type) == "number" then $x
+         elif ($x | type) == "string" then ($x | gsub("^\\s+|\\s+$"; "") | try tonumber catch null)
+         else null end) as $n
+      | if $n == null or ($n | isinfinite) or ($n | isnan) then $d else [$hi, ([$lo, ($n | round)] | max)] | min end;
+    def sw($k): if has($k) then .[$k] == true else true end;
+    (if length == 1 then .[0] else error end).pluginConfigs
+    | [to_entries[] | select(.key | startswith("orch@"))][0].value.options // {}
+    | "rounds=\(num("rounds"; 1; 10; 3))", "ui_review=\(sw("ui_review"))",
+      "implementer_ctx_k=\(num("implementer_ctx_k"; 50; 1000; 400))", "inject_rules=\(sw("inject_rules"))"
+  ' "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/settings.json" 2>/dev/null) ||
+    out=$'rounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'
+  echo "$out"
+}
+
+# id, settings and help need no config.
 case "${1:-}" in
   id) _id "${2:-}"; exit 0 ;;
+  settings) _settings; exit 0 ;;
   ""|-h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 0 ;;
 esac
 

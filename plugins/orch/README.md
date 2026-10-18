@@ -66,7 +66,7 @@ calibration values that must never be guessed).
 | `/orch chain [N]` | Task-by-task, each branch **stacked** on the previous |
 | `/orch all` | Drain the backlog (chain until no `todo` remains) |
 
-Flags (any mode): `--rounds R` (fix-loop cap, default 3) · `--base <branch>` · `--deep` (fan-out a
+Flags (any mode): `--rounds R` (fix-loop cap, default the `rounds` setting) · `--base <branch>` · `--deep` (fan-out a
 big task via `lead-implementer`) · `--single-pr[=<branch>]` (one integration branch + one draft PR
 for the whole run).
 
@@ -189,7 +189,7 @@ The same rows are in `/config` under plugin `orch`.
 | `guard` | string (`fable`, `always`, `off`) | `fable` | When the guard holds the main loop: on a Fable model, always, or never |
 | `allow_fable_agents` | boolean | `false` | Let the main loop spawn a subagent on an explicit Fable model (the user asked) |
 | `implementer_ctx_k` | number | `400` | Reuse an implementer for a fix round only while its context is under this many k tokens (50–1000) |
-| `ui_review` | boolean | `true` | Run `ui-reviewer` without asking when the config declares `web` |
+| `ui_review` | boolean | `true` | Run `ui-reviewer` on the UI criteria when the config declares `web`; off, they are `PM-REVIEW` rows |
 | `inject_rules` | boolean | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file above when off) |
 | `rounds` | number | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
 
@@ -233,7 +233,8 @@ Three zero-dependency scripts carry the deterministic mechanics (frontmatter is 
 of truth — no separate manifest to drift):
 
 - `bin/orch-state` — task-store CRUD (`list` / `set` / `reset-stale [--blocked]` / `new` /
-  `cfg <key>` / `id <id>`). `list` hides `_lessons.md` and every other `_`-prefixed file (they are
+  `cfg <key>` / `id <id>` / `settings`). `settings` prints `rounds`, `ui_review`, `implementer_ctx_k`
+  and `inject_rules` as `/orch` uses them (read from `settings.json`, clamped like the hooks module). `list` hides `_lessons.md` and every other `_`-prefixed file (they are
   not tasks) and marks a file without a closed frontmatter block `invalid`; `set` refuses it.
 - `bin/orch-worktree` — per-task worktrees under `.worktrees/` (excluded from git status) + stable
   port slots (`port = capability port_base + slot`, registry guarded by a lock for parallel

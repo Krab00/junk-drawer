@@ -17,6 +17,8 @@ not a fix. You are always spawned fresh: never resumed for a second round.
 
 - task id, the implementer's `branch`, the base branch, a verify **slot** (for ports), and the
   absolute path of the plugin's `bin/`.
+- the `ui_review` setting (`true` when not given). `false`: you spawn no `ui-reviewer`; every
+  UI / screen / flow / state criterion is a `PM-REVIEW` row with the reason "ui_review off".
 - the task file path `<tasks_dir>/<id>.md` (acceptance criteria live there).
 - optionally a report path (see the return value).
 - the **config capabilities**: the dev-server run commands, ports, health paths, and per-package
@@ -43,8 +45,8 @@ not a fix. You are always spawned fresh: never resumed for a second round.
    dead server still gets probed so the failure is captured.
 2. **Split the acceptance criteria by modality** (find the criteria section by TITLE, never by
    number):
-   - **UI / screen / flow / state criteria → spawn `ui-reviewer`** (only when `web` is declared
-     and the diff touches web files) with the task id, the verify env web URL, the branch, the
+   - **UI / screen / flow / state criteria → spawn `ui-reviewer`** (only when `web` is declared,
+     `ui_review` is not `false`, and the diff touches web files) with the task id, the verify env web URL, the branch, the
      fresh account you seed in step 5, and the filtered UI criteria. It writes one screenshot per
      criterion into `<tasks_dir>/<id>.evidence/` and returns a verdict table. Without a browser
      tool it marks every row PM-REVIEW with that reason; never fabricate a screenshot for it.
