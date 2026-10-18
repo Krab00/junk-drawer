@@ -94,6 +94,9 @@ export const register: Register = (on, options) => {
     const value = coerce('terse', e.value).value as boolean
     return writeTerse($, value, () => next({ ...e, value }))
   })
+  // `/tldr` with no argument: the sentences setting is the number the command reads (its markdown's own "else 3"
+  // is the default on the hosts without this module). A number, on, off, status pass as typed.
+  on('command.run', { command: 'tldr:tldr' }, (_$, e, next) => next(e.args.trim() === '' ? { ...e, args: String(S.sentences) } : e))
   // The /config menu's own writes pass here too: a value `set` would refuse is refused the same way.
   on('config.set', { key: 'tldr.sentences' }, async (_$, e, next) => {
     const c = coerce('sentences', e.value)

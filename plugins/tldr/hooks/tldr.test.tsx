@@ -276,3 +276,22 @@ test('on the host tldr never sees its own config.set: set terse writes and remov
   expect(rec.config.at(-1)).toEqual({ key: 'tldr.sentences', value: 5 })
   expect(await frame($, 'get', { key: 'sentences' })).toBe(5)
 })
+
+// `/tldr <args>` as the person types it; the world beneath answers what args the command itself received.
+async function tldr($: Engine, args: string): Promise<string | undefined> {
+  const r = (await $.command.run({ command: 'tldr:tldr', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })) as { text?: string }
+  return r.text
+}
+
+test('/tldr with no argument reaches the command with the sentences setting; a number, on, off, status pass as typed', WITH_FRAME, async ($, on) => {
+  world(on)
+  on('command.run', { command: 'tldr:tldr' }, (_$, e) => ({ text: `args=${JSON.stringify(e.args)}` }))
+  await start($)
+  expect(await tldr($, '')).toBe('args="3"') // the default
+  await frame($, 'set', { key: 'sentences', value: 5 })
+  expect(await tldr($, '')).toBe('args="5"')
+  expect(await tldr($, '   '), 'whitespace only is no argument').toBe('args="5"')
+  for (const args of ['2', 'on', 'off', 'status']) expect(await tldr($, args), args).toBe(`args=${JSON.stringify(args)}`)
+  await frame($, 'config', { key: 'tldr.sentences', value: 7 }) // the menu's write too
+  expect(await tldr($, '')).toBe('args="7"')
+})
