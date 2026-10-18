@@ -396,6 +396,17 @@ test('$.handoff.set writes handoff.<key> through $.config and get reads it back;
   expect(rec.config.at(-1)).toEqual({ key: 'handoff.segment', value: false })
   expect(await frame($, 'get', 'segment')).toBe(false)
 
+  // exact bounds: 100 and 1 are in, -5 (and 0, 101 below) are out; 'on' is a true
+  expect(await frame($, 'set', { key: 'threshold', value: 100 })).toBe(100)
+  expect(await frame($, 'set', { key: 'staleDays', value: 1 })).toBe(1) // checkEvery is the row the deny hook below locks
+  expect(await frame($, 'set', { key: 'autoOn', value: 'on' })).toBe(true)
+  expect(rec.config.slice(-3)).toEqual([
+    { key: 'handoff.threshold', value: 100 }, { key: 'handoff.staleDays', value: 1 }, { key: 'handoff.autoOn', value: true },
+  ])
+  await expect(frame($, 'set', { key: 'threshold', value: -5 })).rejects.toThrow(/not a valid threshold/)
+  expect(await frame($, 'get', 'threshold')).toBe(100)
+  expect(await frame($, 'set', { key: 'threshold', value: 70 })).toBe(70)
+
   const writes = rec.config.length
   await expect(frame($, 'set', { key: 'threshold', value: 'abc' })).rejects.toThrow(/not a valid threshold/)
   await expect(frame($, 'set', { key: 'threshold', value: 101 })).rejects.toThrow(/not a valid threshold/)
@@ -425,6 +436,7 @@ test('$.handoff.open toggles the pane; a route opens it on that tab or switches 
   expect(await ui.find({ key: 'row-aaaaaaaa' }), 'the Handoffs tab is up').toBeDefined()
   await ui.unmount()
 
+  await expect(frame($, 'open', { route: 'bogus' })).rejects.toThrow(/no tab bogus/) // unknown route: refused, pane untouched
   await frame($, 'open', { route: 'settings' }) // up already: switch, do not close
   expect(rec.closed).toEqual(['ahandoff'])
   const settings = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })

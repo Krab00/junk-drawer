@@ -3,7 +3,7 @@ import type { RenderSurface, Register } from 'claude-code'
 
 import type { Ahandoff, Handoff } from '../types'
 import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, SCHEMA, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './lib'
-import { Footer, P, Rule, Tabs, fields, type Api, type Ctx, type Elements } from './ui'
+import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './ui'
 import { VIEWS } from './views'
 
 const PANE = 'ahandoff'
@@ -343,6 +343,7 @@ export const register: Register = (on, options) => {
   })
   on('handoff.open', async ($, e) => {
     const route = e?.route
+    if (route !== undefined && !TABS.some(t => t[2] === route)) return { deny: `handoff: no tab ${String(route)}` }
     // A route while the pane is up switches its tab; otherwise the call toggles the pane, as /handoff panel does.
     if (route && S.paneOpen) {
       S.route = route
