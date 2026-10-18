@@ -372,6 +372,7 @@ test("AC4: Commands lists the enabled plugins' slash commands with their one-lin
     { name: 'statusline:init', description: 'Install the status line', source: 'plugin', plugin: 'statusline' }, // off
     { name: 'junkd', description: 'Toggle the junkd pane', source: 'plugin', plugin: 'junkd' },
     { name: 'mine', description: 'A user command', source: 'user' },
+    { name: 'handoff:mine', description: "A user command wearing a plugin's prefix", source: 'user' }, // not the plugin's
     { name: 'mcp__x__prompt', description: 'An MCP prompt', source: 'mcp' },
   ]
   const pane = await openPane($)
@@ -381,6 +382,7 @@ test("AC4: Commands lists the enabled plugins' slash commands with their one-lin
   expect((await pane.find({ type: 'Text', text: 'Save a handoff' }))?.text).toBe('Save a handoff')
   expect((await pane.find({ type: 'Text', text: 'Write .orch/config.md' }))?.text).toBe('Write .orch/config.md')
   expect(await pane.find({ type: 'Text', text: 'Install the status line' })).toBeUndefined()
+  expect(await pane.find({ type: 'Text', text: '/handoff:mine' })).toBeUndefined()
   expect(await pane.find({ type: 'Text', text: 'No commands.' })).toBeUndefined()
 })
 
