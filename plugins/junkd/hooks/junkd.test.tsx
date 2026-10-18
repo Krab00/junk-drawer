@@ -562,6 +562,8 @@ test('AC5: the header is ✚ junkd, the marketplace and the short sha of its che
     const t = (await pane.findAll({ type: 'Text' })).find(x => x.text === heading)
     expect(t?.props.color, heading).toBe('claude')
     expect(t?.props.bold, heading).toBe(true)
+    // its own box that never shrinks, so a long subtitle cannot wrap it ("Plugin" / "s")
+    expect((await pane.find({ type: 'Box', key: `title:${heading}` }))?.props.flexShrink, heading).toBe(0)
   }
   const mark = (await pane.findAll({ type: 'Text' })).find(t => t.text === '✚ junkd')
   expect(mark?.props.color).toBe('claude')
