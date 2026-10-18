@@ -398,6 +398,8 @@ test('$.handoff.set writes handoff.<key> through $.config and get reads it back;
 
   const writes = rec.config.length
   await expect(frame($, 'set', { key: 'threshold', value: 'abc' })).rejects.toThrow(/not a valid threshold/)
+  await expect(frame($, 'set', { key: 'threshold', value: 101 })).rejects.toThrow(/not a valid threshold/)
+  await expect(frame($, 'set', { key: 'checkEvery', value: 0 })).rejects.toThrow(/not a valid checkEvery/)
   await expect(frame($, 'set', { key: 'threshold', value: 70, scope: 'project' })).rejects.toThrow(/scope project/)
   await expect(frame($, 'set', { key: 'nope', value: 1 })).rejects.toThrow(/no setting nope/)
   await expect(frame($, 'get', 'nope')).rejects.toThrow(/no setting nope/)
