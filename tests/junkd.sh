@@ -244,6 +244,11 @@ out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" JUNKD_SETUP_PATH_DIRS
 [ -z "$out" ] || fail "no jq: hook printed output: $out"
 [ "$(cat "$settings")" = '{"theme": "dark"}' ] || fail "no jq: settings.json changed"
 [ ! -e "$stamp" ] || fail "no jq: stamped"
+# a jq only in one of the tool dirs the script adds to PATH (here a dir named through the override) is found
+mkdir -p "$tmp/jqdir" && ln -s "$(command -v jq)" "$tmp/jqdir/jq"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" JUNKD_SETUP_PATH_DIRS="$tmp/jqdir" "$hook" 2>&1) || fail "jq in a tool dir: hook exited non-zero"
+rg -q '^junkd: ' <<<"$out" || fail "jq in a tool dir: expected the junkd: line, got: $out"
+[ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "jq in a tool dir: outputStyle not set"
 reset   # and a missing settings.json is not even created without jq
 out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/bin" JUNKD_SETUP_PATH_DIRS= HOME="$tmp/nohome" "$hook" 2>&1) || fail "no jq, no file: hook exited non-zero"
 [ -z "$out" ] || fail "no jq, no file: hook printed output: $out"
