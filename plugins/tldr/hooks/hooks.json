@@ -1,11 +1,14 @@
 {
+  "modules": [
+    "./index.tsx"
+  ],
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tldr-hook"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/tldr-hook\""
           }
         ]
       }
