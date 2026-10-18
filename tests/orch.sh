@@ -67,6 +67,11 @@ flagged=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULE
 rm "$CLAUDE_CONFIG_DIR/orch/rules-off"
 unflagged=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook")
 [ "$unflagged" = "$(cat "$sheet")" ] || fail "rules-off flag removed: expected the sheet"
+# a directory of that name (what a Write under orch/rules-off/ would leave) is no flag: the sheet still comes
+mkdir -p "$CLAUDE_CONFIG_DIR/orch/rules-off/x"
+dirflag=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "rules-off dir: hook exited non-zero"
+[ "$dirflag" = "$(cat "$sheet")" ] || fail "rules-off as a directory read as the flag: expected the sheet"
+rm -r "$CLAUDE_CONFIG_DIR/orch/rules-off"
 # with no CLAUDE_CONFIG_DIR the flag is read under $HOME/.claude
 mkdir -p "$tmp/home/.claude/orch" && : > "$tmp/home/.claude/orch/rules-off"
 homeflag=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/home" ORCH_INJECT_RULES= "$hook")
