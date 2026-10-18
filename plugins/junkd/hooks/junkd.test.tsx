@@ -600,13 +600,46 @@ test('AC2: a set pane the person closes by hand loses the mark: closing the set 
   expect(rec.closed.slice(before)).toEqual(['handoff', 'junkd', 'orch'])
 })
 
+test("AC2: the person's close of junkd (×, the tab's close) closes the set's feature panes too; one opened on its own stays", { plugins: [PANED_HANDOFF, PANED_ORCH, SHUTTER] }, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await run($, 'junkd')
+  expect(rec.tabs).toEqual(['junkd', 'handoff', 'orch'])
+  await run($, 'shut')
+  expect(rec.tabs).toEqual([])
+  await run($, 'junkd') // the next toggle opens the set again
+  expect(rec.tabs).toEqual(['junkd', 'handoff', 'orch'])
+  await run($, 'handoff-own') // the person closes handoff ...
+  await run($, 'handoff-own') // ... and opens it on its own
+  await run($, 'shut')
+  expect(rec.tabs).toEqual(['handoff'])
+})
+
+test('AC3: settings ▸ with real feature panes leaves that pane alone in the tab row: junkd and the set\'s other pane close', { plugins: [PANED_HANDOFF, PANED_ORCH] }, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await run($, 'junkd')
+  let pane = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  await pane.press({ key: 'pane:handoff' })
+  expect(rec.tabs).toEqual(['handoff'])
+  await pane.unmount()
+  await run($, 'handoff-own') // handoff closed by hand
+  await run($, 'junkd')
+  pane = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  await pane.press({ key: 'pane:orch' })
+  expect(rec.tabs).toEqual(['orch'])
+  await run($, 'junkd') // orch is the person's now: the set opens behind junkd, and closes with orch
+  await run($, 'junkd')
+  expect(rec.tabs).toEqual([])
+})
+
 test('AC3: settings ▸ whose focused show is refused: show, junkd closes, the focused show, one toast with the reason', WITH_NOUNS, async ($, on) => {
   const rec = world(on, fixture(), { nouns: true })
   rec.denyFocusedShow.orch = 'orch: keys refused'
   const pane = await openPane($)
   const at = rec.log.length
   await pane.press({ key: 'pane:orch' })
-  expect(rec.log.slice(at)).toEqual(['orch.show {}', 'ui.close junkd', 'orch.show {"focus":true}'])
+  expect(rec.log.slice(at)).toEqual(['orch.show {}', 'ui.close junkd', 'handoff.hide {"owner":"junkd"}', 'orch.show {"focus":true}'])
   expect(rec.toasts).toEqual(['✗ orch: keys refused'])
 })
 
@@ -806,14 +839,15 @@ test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flip
   expect((await pane.find({ type: 'Input', key: 'set:orch:implementer_ctx_k~1' }))?.props.value).toBe('400')
   expect(rec.toasts).toEqual([])
 
-  // settings ▸, in this order: the feature pane opens (handoff on its Settings tab), junkd closes, the feature pane
-  // opens again asking for the keys; no owner, so it is the person's pane from then on.
+  // settings ▸, in this order: the feature pane opens (handoff on its Settings tab), junkd closes with the set's
+  // other feature pane (only while still the set's), the feature pane opens again asking for the keys; no owner, so
+  // it is the person's pane from then on.
   let at = rec.log.length
   await pane.press({ key: 'pane:handoff' })
-  expect(rec.log.slice(at)).toEqual(['handoff.show {"route":"settings"}', 'ui.close junkd', 'handoff.show {"focus":true,"route":"settings"}'])
+  expect(rec.log.slice(at)).toEqual(['handoff.show {"route":"settings"}', 'ui.close junkd', 'orch.hide {"owner":"junkd"}', 'handoff.show {"focus":true,"route":"settings"}'])
   at = rec.log.length
   await pane.press({ key: 'pane:orch' })
-  expect(rec.log.slice(at)).toEqual(['orch.show {}', 'ui.close junkd', 'orch.show {"focus":true}'])
+  expect(rec.log.slice(at)).toEqual(['orch.show {}', 'ui.close junkd', 'handoff.hide {"owner":"junkd"}', 'orch.show {"focus":true}'])
   expect(rec.toasts).toEqual([])
   expect(rec.opens.map(o => o.id)).toEqual(['junkd']) // junkd is not opened again
 })
@@ -839,7 +873,7 @@ test('AC3: a plugin on in the merged settings shows its section and is marked wh
   // junkd closes before the refusal comes back, so the reason is a toast; the second show is never sent.
   const at = rec.log.length
   await pane.press({ key: 'pane:orch' })
-  expect(rec.log.slice(at)).toEqual(['orch.show {}', 'ui.close junkd'])
+  expect(rec.log.slice(at)).toEqual(['orch.show {}', 'ui.close junkd', 'handoff.hide {"owner":"junkd"}'])
   expect(rec.toasts).toEqual(['✗ orch: no room'])
 })
 
