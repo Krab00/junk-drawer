@@ -9,6 +9,8 @@ import { VIEWS } from './views'
 const PANE = 'ahandoff'
 const EDGE = 2 // empty columns at the pane's right edge (a docked pane's last column may not show)
 const HANDOFF_FILE = /\/handoffs\/[^/]+\.md$/
+// What arming says while the `enabled` setting is off; /handoff, /handon and the pane keep working.
+const OFF = 'handoff: auto handoff is disabled (the enabled setting is off: /config, or the pane\'s Settings tab)'
 
 function redraw($: $) {
   $.ui.invalidate('ui.render')
@@ -175,6 +177,7 @@ async function panel($: $) {
   return {}
 }
 async function auto($: $, prompt: string, pane = true) {
+  if (!S.enabled) return { text: OFF }
   // the pane opens first: only an open made while the command runs is placed at any width
   const opened = pane ? openPane($, 'auto') : undefined
   await arm($)
@@ -209,6 +212,10 @@ function toggle($: $, route?: Route) {
 }
 
 async function arm($: $) {
+  if (!S.enabled) {
+    S.note = `✗ ${OFF}`
+    return void redraw($)
+  }
   S.armed = true
   S.phase = 'idle'
   S.calls = 0
@@ -258,9 +265,18 @@ async function setOption($: $, field: Field, raw: string | number | boolean) {
   else if (field === 'segment') S.segment = value as boolean
   else if (field === 'autoOn') S.autoOn = value as boolean
   else if (field === 'resumeAfterLimit') { S.resumeAfterLimit = value as boolean; if (!value) cancelResume() }
+  else if (field === 'enabled') await applyEnabled($, value as boolean)
   S.note = `✓ ${field} = ${String(value)}`
   await sync($)
   return { value: current(field) } as const
+}
+
+// `enabled` as the row took it. Off disarms the loop (and drops a pending 5h-limit resume), and arm() refuses while
+// it is off, so the loop's hooks need only `S.armed`. On arms nothing: the loop waits for /ahandoff (autoOn arms at
+// load only).
+async function applyEnabled($: $, on: boolean) {
+  S.enabled = on
+  if (!on && S.armed) await disarm($)
 }
 
 // `$.handoff`, the noun other plugins call. The host hands a noun's method exactly one input and the hooks on
@@ -384,6 +400,18 @@ export const register: Register = (on, options) => {
     return auto($, args, false) // ponytail: the short form arms and runs the prompt; the pane is /ahandoff panel
   })
 
+  // The /config menu's own write to the enabled row passes here (a hook never sees its plugin's own `$.config.set`):
+  // read as `set` reads it, and applied once the row took it.
+  on('config.set', { key: 'handoff.enabled' }, async ($, e, next) => {
+    const value = coerce('enabled', e.value).value as boolean
+    const r = await next({ ...e, value })
+    if (r.deny === undefined) {
+      await applyEnabled($, value)
+      await sync($)
+    }
+    return r
+  })
+
   on('tool.call', async ($, e, next) => {
     if (e.agentId) return next(e)
     const isHandoffWrite = e.tool === 'Write' && HANDOFF_FILE.test(String(e.file_path))
@@ -484,7 +512,7 @@ export const register: Register = (on, options) => {
 
   // The status-line segment: 🪃 NN% (green, yellow within 10 points of the threshold, red past it).
   on('ui.render', { component: 'PromptHint' }, ($, e, next) => {
-    if (!S.segment) return next(e)
+    if (!S.enabled || !S.segment) return next(e)
     const { Button, Text } = $.ui.resolve(e)
     const label = !S.armed
       ? '🪃 off'

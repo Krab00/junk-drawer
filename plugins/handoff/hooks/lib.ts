@@ -5,7 +5,7 @@ export type $ = EngineInterface
 export type Phase = 'idle' | 'handoff' | 'clear' | 'resume'
 export type Route = 'auto' | 'handoffs' | 'settings'
 export type Entry = { id: string; path: string; mtimeMs: number; title: string; stale: boolean }
-export type Field = 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
+export type Field = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
 
 // The engine follows `$` only into functions of the hooks module itself, never across an import:
 // every helper that takes `$` (findCommand, homeDir, handoffDir, listHandoffs, sync, persist) lives in register.tsx.
@@ -14,6 +14,7 @@ export type Field = 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' |
 export const DEFAULT_PROMPT = 'Continue after the handoff'
 
 export const S = {
+  enabled: true, // false = no auto loop at all: it cannot be armed, every loop hook passes, no 🪃 segment
   armed: false,
   phase: 'idle' as Phase,
   prompt: DEFAULT_PROMPT, // what the fresh session is told after /handon; `p` in the pane changes it
@@ -55,7 +56,9 @@ export function loadOptions(options: Record<string, unknown>): void {
   const num = (v: unknown, d: number) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d)
   S.threshold = num(options.threshold ?? 85, 85)
   S.checkEvery = Math.max(1, Math.round(num(options.checkEvery ?? 5, 5)))
-  S.autoOn = S.armed = Boolean(options.autoOn)
+  S.enabled = options.enabled === undefined ? true : Boolean(options.enabled)
+  S.autoOn = Boolean(options.autoOn)
+  S.armed = S.enabled && S.autoOn
   if (S.armed) S.armedAt ??= Date.now()
   S.staleDays = num(options.staleDays ?? 30, 30)
   S.segment = options.segment === undefined ? true : Boolean(options.segment)
@@ -80,6 +83,7 @@ export function idOf(name: string): string | null {
 // test checks the defaults through the options the engine fills in from it.
 export type SchemaEntry = { key: Field; type: 'number' | 'boolean'; title: string; default: number | boolean; main: boolean }
 export const SCHEMA: readonly SchemaEntry[] = [
+  { key: 'enabled', type: 'boolean', title: 'Auto handoff: enabled', default: true, main: true },
   { key: 'threshold', type: 'number', title: 'Auto handoff: context threshold (%)', default: 85, main: true },
   { key: 'checkEvery', type: 'number', title: 'Auto handoff: check every N tool calls', default: 5, main: false },
   { key: 'autoOn', type: 'boolean', title: 'Auto handoff: armed at session start', default: false, main: true },
