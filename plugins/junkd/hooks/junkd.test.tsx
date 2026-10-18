@@ -300,7 +300,7 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
     commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], beneath: '', merged: '',
     // `log`: junkd's own pane calls and the feature panes' show/hide, one line each, in the order they arrived.
     log: [] as string[], gits: [] as string[][], denyShow: {} as Record<string, string>, denyFocusedShow: {} as Record<string, string>,
-    held: undefined as Promise<void> | undefined, release: () => {},
+    held: undefined as Promise<void> | undefined, release: () => {}, readGate: undefined as Promise<void> | undefined,
     tabs: [] as string[] } // every plugin's open panes in open order, as the engine draws their tabs
   on('env.get', (_$, e) => ({ value: env[e.name] }))
   on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
@@ -341,7 +341,14 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   // What the engine merged (user, project, local...): the user file alone unless `merged` says otherwise.
-  on('settings.read', () => ({ value: JSON.parse(rec.merged || files[SETTINGS] || '{}') }))
+  // `readGate`: the next read answers what the settings were when it was asked, once the gate opens.
+  on('settings.read', async () => {
+    const value = JSON.parse(rec.merged || files[SETTINGS] || '{}')
+    const gate = rec.readGate
+    rec.readGate = undefined
+    await gate
+    return { value }
+  })
   on('ui.open', (_$, e) => { rec.opens.push({ id: e.id, title: e.title, focus: e.focus }); rec.log.push(`ui.open ${e.id}`); if (!rec.tabs.includes(e.id)) rec.tabs.push(e.id); return { value: { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); rec.log.push(`ui.close ${e.id}`); rec.tabs = rec.tabs.filter(t => t !== e.id); return { value: undefined } })
   on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
@@ -1011,6 +1018,50 @@ test('AC3: 26 booleans -> q skipped, the 25th z, the 26th none; an unsupported t
   expect((await pane.find({ type: 'Text', text: 'unsupported type object' }))?.props.color).toBe('error')
   expect(await pane.find({ type: 'Input', key: 'set:handoff:blob' })).toBeUndefined()
   expect((await pane.find({ type: 'Input', key: 'set:handoff:num' }))?.props.value).toBe('')
+})
+
+// Two presses at once: each press refreshes, so two refreshes run side by side. Each must draw every section once
+// (a section drawn twice is two Inputs under one key, which the engine refuses to draw), and two plugin flips at
+// once must both land in settings.json (one read-modify-write after the other, never two over one temp file).
+test('AC3: two setting presses at once draw each section once, with no render error', WITH_NOUNS, async ($, on) => {
+  const rec = world(on, fixture(), { nouns: true })
+  const pane = await openPane($)
+  await Promise.all([pane.press({ key: 'set:handoff:autoOn' }), pane.press({ key: 'set:tldr:terse' })])
+  expect(await keysOf(pane, 'group:')).toEqual(['group:tldr', 'group:handoff', 'group:orch'])
+  expect(await keysOf(pane, 'setting:')).toEqual([
+    'setting:tldr:terse', 'setting:tldr:sentences',
+    'setting:handoff:threshold', 'setting:handoff:autoOn', 'setting:handoff:resumeAfterLimit', 'setting:handoff:segment',
+    'setting:orch:guard', 'setting:orch:allow_fable_agents', 'setting:orch:implementer_ctx_k',
+  ])
+  expect(rec.calls.filter(c => c.method === 'set')).toHaveLength(2)
+})
+
+test('AC3: a refresh that ends after a newer one is dropped: the pane keeps the newer rows', WITH_NOUNS, async ($, on) => {
+  // The next settings.read after the gate is set answers the merged settings of that moment, but only once the gate
+  // opens: that refresh ends last, with rows older than the one started after it.
+  let open = () => {}
+  const rec = world(on, fixture(), { nouns: true })
+  const pane = await openPane($)
+  expect(await pane.find({ type: 'Box', key: 'group:orch' })).toBeDefined()
+  rec.readGate = new Promise<void>(r => { open = r })
+  const older = pane.press({ key: 'set:tldr:terse' }) // reads orch on, then waits
+  await new Promise(r => setTimeout(r, 50))
+  rec.merged = JSON.stringify({ enabledPlugins: { ...ALL_ON, 'orch@junk-drawer': false } })
+  await pane.press({ key: 'set:handoff:autoOn' }) // reads orch off, ends first
+  open()
+  await older
+  await new Promise(r => setTimeout(r, 50))
+  expect(await pane.find({ type: 'Box', key: 'group:orch' })).toBeUndefined()
+  expect(await keysOf(pane, 'group:')).toEqual(['group:tldr', 'group:handoff'])
+})
+
+test('AC2: two plugin flips at once both land in settings.json, the temp file gone', async ($, on) => {
+  const rec = world(on, fixture())
+  const pane = await openPane($)
+  await Promise.all([pane.press({ key: 'plugin:statusline' }), pane.press({ key: 'plugin:tldr' })])
+  expect(JSON.parse(rec.files[SETTINGS]!).enabledPlugins).toEqual({ ...ALL_ON, 'statusline@junk-drawer': true, 'tldr@junk-drawer': false })
+  expect(Object.keys(rec.files).filter(k => k.endsWith('.junkd-tmp'))).toEqual([])
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ tldr off: run /reload-plugins')
 })
 
 test('AC3: after settings ▸ the next /junkd opens again; a reopen clears the note', { plugins: [FAKE_ORCH_ONE] }, async ($, on) => {

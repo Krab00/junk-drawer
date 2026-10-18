@@ -1,7 +1,7 @@
 {
   "name": "junkd",
   "description": "The frame over the junk-drawer marketplace: /junkd (and the ✚ junkd segment under the prompt) opens and closes a set of tabs (junkd, handoff, orch); the junkd pane has the marketplace's plugins (on/off at user scope), the main settings of handoff, orch and tldr through their $ nouns, and the enabled plugins' commands. Every feature plugin works without it.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "author": {
     "name": "Krab00"
   },

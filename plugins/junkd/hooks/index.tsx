@@ -141,17 +141,21 @@ async function hideOf($: $, noun: Noun, owner?: string): Promise<void> {
 
 // ------------------------------------------------------------------ the pane's data
 
+// Every press refreshes, so two refreshes can run side by side: each builds its rows apart and assigns them once at
+// the end, and only the newest one started assigns at all (an older one, a step behind, is dropped).
+let refreshes = 0
 const refresh = async ($: $) => {
+  const gen = ++refreshes
   try {
     const cfg = await configDir($)
     const { dir, data } = await loadMarketplace($, cfg)
     const user = await readJson($, `${cfg}/settings.json`)
     const merged = (await $.settings.read()) as Json
-    settingsShown = tilde(`${cfg}/settings.json`, await homeDir($))
-    version = await shortSha($, dir)
-    marketplace = String(data.name ?? MARKETPLACE)
-    plugins = ((data.plugins as Json[] | undefined) ?? []).map(entry => {
-      const id = `${entry.name}@${marketplace}`
+    const shown = tilde(`${cfg}/settings.json`, await homeDir($))
+    const sha = await shortSha($, dir)
+    const name = String(data.name ?? MARKETPLACE)
+    const rows: PluginRow[] = ((data.plugins as Json[] | undefined) ?? []).map(entry => {
+      const id = `${entry.name}@${name}`
       const isSelf = entry.name === $.plugin.name
       return {
         name: String(entry.name),
@@ -161,8 +165,8 @@ const refresh = async ($: $) => {
         isActive: isSelf || merged.enabledPlugins?.[id] === true,
       }
     })
-    const active = plugins.filter(p => p.isActive)
-    sections = []
+    const active = rows.filter(p => p.isActive)
+    const groups: Section[] = []
     for (const p of active) {
       if (!isNoun(p.name)) continue
       const schema = await schemaOf($, p.name)
@@ -172,9 +176,15 @@ const refresh = async ($: $) => {
         const value = await getOf($, p.name, f.key).catch(() => f.default)
         fields.push({ key: f.key, type: f.type, title: f.title, ...(f.options ? { options: [...f.options] } : {}), value })
       }
-      sections.push({ plugin: p.name, fields, hasPane: HAS_PANE[p.name] })
+      groups.push({ plugin: p.name, fields, hasPane: HAS_PANE[p.name] })
     }
     const listed = await $.command.list().catch(() => [])
+    if (gen !== refreshes) return
+    settingsShown = shown
+    version = sha
+    marketplace = name
+    plugins = rows
+    sections = groups
     commands = listed
       .filter(c => c.source === 'plugin' && active.some(p => c.plugin === p.name || c.name.startsWith(`${p.name}:`)))
       .map(c => ({ name: c.name, description: c.description }))
@@ -184,7 +194,15 @@ const refresh = async ($: $) => {
   redraw($)
 }
 
-const togglePlugin = async ($: $, name: string) => {
+// One flip after the other: each reads settings.json, changes one entry and writes it back through one temp name,
+// so two flips at once would lose the first or move a temp file the other already moved.
+let flips: Promise<void> = Promise.resolve()
+const togglePlugin = ($: $, name: string): Promise<void> => {
+  const flip = flips.then(() => flipPlugin($, name))
+  flips = flip.catch(() => undefined)
+  return flip
+}
+const flipPlugin = async ($: $, name: string) => {
   try {
     const path = await settingsPath($)
     const user = await readJson($, path)
