@@ -35,6 +35,7 @@ function world(on: On) {
     commands: [] as string[],
     prompts: [] as string[],
     opened: [] as string[],
+    focus: [] as (true | undefined)[], // each open's `focus`, beside `opened`
     closed: [] as string[],
     config: [] as { key: string; value: unknown }[],
     runs: [] as string[],
@@ -56,7 +57,7 @@ function world(on: On) {
   })
   on('prompt.submit', (_$, e) => { rec.prompts.push(e.text); return { text: e.text } })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
-  on('ui.open', (_$, e) => { rec.opened.push(e.id); return { value: { isPlaced: true as const } } })
+  on('ui.open', (_$, e) => { rec.opened.push(e.id); rec.focus.push(e.focus); return { value: { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); return { value: undefined } })
   on('ui.focus', () => ({}))
   on('ui.status', () => ({ value: undefined }))
@@ -121,6 +122,10 @@ const FRAME: Plugin = {
           await $.handoff.open()
           await $.handoff.open()
           answered.push('open')
+          await $.handoff.show()
+          answered.push('show')
+          await $.handoff.hide()
+          answered.push('hide')
           if (typeof (await $.handoff.status()).armed === 'boolean') answered.push('status')
           return { text: JSON.stringify({ ok: answered }) }
         }
@@ -129,6 +134,8 @@ const FRAME: Plugin = {
         if (method === 'get') return { text: JSON.stringify({ ok: await $.handoff.get(input) }) }
         if (method === 'set') return { text: JSON.stringify({ ok: await $.handoff.set(input) }) }
         if (method === 'open') return { text: JSON.stringify({ ok: await $.handoff.open(input) }) }
+        if (method === 'show') return { text: JSON.stringify({ ok: await $.handoff.show(input) }) }
+        if (method === 'hide') return { text: JSON.stringify({ ok: await $.handoff.hide(input) }) }
         return { text: JSON.stringify({ error: `no method ${method}` }) }
       } catch (err) {
         return { text: JSON.stringify({ error: String((err as Error).message ?? err) }) }
@@ -369,10 +376,10 @@ test('a turn that dies on the 5h limit resumes 2 min after the reset; the settin
 // tests/smoke.sh checks each entry's type, title and default against the manifest itself.
 const MANIFEST_KEYS = ['threshold', 'checkEvery', 'autoOn', 'resumeAfterLimit', 'staleDays', 'segment']
 
-test('$.handoff: the five calls exist; schema mirrors the manifest with main on the four frame fields', WITH_FRAME, async ($, on) => {
+test('$.handoff: the seven calls exist; schema mirrors the manifest with main on the four frame fields', WITH_FRAME, async ($, on) => {
   world(on)
   await start($)
-  expect(await frame($, 'members')).toEqual(['schema', 'get', 'set', 'open', 'status'])
+  expect(await frame($, 'members')).toEqual(['schema', 'get', 'set', 'open', 'show', 'hide', 'status'])
 
   const schema = (await frame($, 'schema')) as { key: string; type: string; title: string; default: unknown; main: boolean }[]
   expect(schema.map(f => f.key).sort()).toEqual([...MANIFEST_KEYS].sort())
@@ -442,6 +449,85 @@ test('$.handoff.open toggles the pane; a route opens it on that tab or switches 
   const settings = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
   expect((await settings.findAll({ type: 'Input' })).some(i => /^threshold/.test(i.key ?? '')), 'the Settings tab is up').toBe(true)
   await settings.unmount()
+})
+
+// A close of the pane from outside the module, as the person's mark or ctrl+x x is to it: `/shut` closes it through
+// another plugin's `$.ui.close`, which reaches the pane's own ui.close hook.
+const SHUTTER: Plugin = {
+  name: 'shutter',
+  register(on) {
+    on('command.run', { command: 'shut' }, async $ => { await $.ui.close({ id: 'ahandoff' }); return {} })
+  },
+}
+const shut = ($: Engine) => $.command.run({ command: 'shut', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+test('$.handoff.show opens and never closes; reopen moves the tab after the caller; focus and route as asked', WITH_FRAME, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await frame($, 'show', { owner: 'junkd' })
+  expect(rec.opened).toEqual(['ahandoff'])
+  expect(rec.focus).toEqual([undefined]) // no focus asked: the caller keeps the keys
+  await frame($, 'show', { owner: 'junkd' }) // up already: asked again, never closed
+  expect(rec.opened).toEqual(['ahandoff', 'ahandoff'])
+  expect(rec.closed).toEqual([])
+
+  await frame($, 'show', { reopen: true }) // up: closed first, then opened again
+  expect(rec.closed).toEqual(['ahandoff'])
+  expect(rec.opened).toHaveLength(3)
+  await frame($, 'hide')
+  expect(rec.closed).toHaveLength(2)
+  await frame($, 'show', { reopen: true }) // not up: nothing to close
+  expect(rec.closed).toHaveLength(2)
+  expect(rec.opened).toHaveLength(4)
+
+  await frame($, 'show', { route: 'settings', focus: true })
+  expect(rec.focus.at(-1)).toBe(true)
+  expect(rec.closed).toHaveLength(2)
+  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+  expect((await ui.findAll({ type: 'Input' })).some(i => /^threshold/.test(i.key ?? '')), 'the Settings tab is up').toBe(true)
+  await ui.unmount()
+  await expect(frame($, 'show', { route: 'bogus' })).rejects.toThrow(/no tab bogus/)
+  expect(rec.opened).toHaveLength(5) // the refused route opened nothing
+})
+
+test('$.handoff.hide with an owner closes only the pane that owner showed, while nothing reopened or closed it since', { plugins: [FRAME, SHUTTER] }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await frame($, 'show', { owner: 'junkd' })
+  await frame($, 'hide', { owner: 'other' }) // another owner: left up
+  expect(rec.closed).toEqual([])
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toEqual(['ahandoff'])
+
+  // Closed by its own command, then opened on its own: no longer the owner's.
+  await frame($, 'show', { owner: 'junkd' })
+  await handoff($, 'panel')
+  expect(rec.closed).toHaveLength(2)
+  await handoff($, 'panel')
+  expect(rec.focus.at(-1)).toBe(true) // its own command still asks for the keys
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toHaveLength(2)
+  await frame($, 'hide') // no owner: closes whatever is up
+  expect(rec.closed).toHaveLength(3)
+
+  // The person's close clears the mark too.
+  await frame($, 'show', { owner: 'junkd' })
+  await shut($)
+  expect(rec.closed).toHaveLength(4)
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toHaveLength(4)
+
+  // Opened again by /handoff auto while the owner's pane is up: the person's now.
+  await frame($, 'show', { owner: 'junkd' })
+  await handoff($, 'auto')
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toHaveLength(4)
+
+  // A show without an owner takes the mark away as well.
+  await frame($, 'show', { owner: 'junkd' })
+  await frame($, 'show', {})
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toHaveLength(4)
 })
 
 test('$.handoff.status mirrors armed, percent and phase', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {

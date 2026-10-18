@@ -98,6 +98,11 @@ promise. List `handoff` under `dependencies` in your plugin.json and the engine 
   added later without changing callers.
 - `open({ route? })` — the same path as `/handoff panel` and the 🪃 click: toggles the pane; with a
   route (`auto`, `handoffs`, `settings`) it opens on that tab, or switches the tab while the pane is up.
+- `show({ route?, focus?, reopen?, owner? })` — opens the pane and never closes it: on `route` when
+  given; `focus` asks for the keys; `reopen` closes a pane that is up first, so its tab goes after the
+  caller's; `owner` marks the pane as the caller's (junkd opens its set of panes this way).
+- `hide({ owner? })` — closes the pane; with `owner`, only while the pane is still the one that owner's
+  `show` opened (any other open or close since, the person's included, clears the mark).
 - `status()` — `{ armed, percent, phase }` of the auto loop.
 
 Can a mod read another plugin's `$.config` keys? Yes. There is no `$.config.get`; `$.config.list()`

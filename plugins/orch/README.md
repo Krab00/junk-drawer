@@ -217,6 +217,11 @@ a promise. List `orch` under `dependencies` in your plugin.json and the engine l
   the reason. `scope` takes only `user` today; the field exists so project or session scopes can be
   added later without changing callers.
 - `open()` — the same path as `/orch panel`: toggles the pane.
+- `show({ focus?, reopen?, owner? })` — opens the pane and never closes it: `focus` asks for the keys;
+  `reopen` closes a pane that is up first, so its tab goes after the caller's; `owner` marks the pane
+  as the caller's (junkd opens its set of panes this way).
+- `hide({ owner? })` — closes the pane; with `owner`, only while the pane is still the one that owner's
+  `show` opened (any other open or close since, the person's included, clears the mark).
 - `guardState()` — `{ active, model }`: whether the guard holds the main loop right now, and the
   main-loop model it was judged on.
 
