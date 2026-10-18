@@ -403,7 +403,7 @@ const FRAME: Plugin = {
         // another plugin's own tool calls and spawns: the guard is for the model's, not these
         if (method === 'edit') return { text: JSON.stringify({ ok: await $.tool.call({ tool: 'Edit', file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' }) }) }
         if (method === 'bash') return { text: JSON.stringify({ ok: await $.tool.call({ tool: 'Bash', command: 'git push --force' }) }) }
-        if (method === 'spawn') return { text: JSON.stringify({ ok: await $.agent.spawn({ prompt: 'p', description: 'd', subagentType: 'fork' }) }) }
+        if (method === 'spawn') return { text: JSON.stringify({ ok: await $.agent.spawn({ prompt: 'p', description: 'd', subagentType: 'general-purpose', model: 'fable' }) }) }
         return { text: JSON.stringify({ error: `no method ${method}` }) }
       } catch (err) {
         return { text: JSON.stringify({ error: String((err as Error).message ?? err) }) }
@@ -459,8 +459,16 @@ test("AC8: another plugin's $.tool.call and $.agent.spawn pass on a guarded Fabl
   expect(denial(await edit($))).toMatch(/may not run Edit/)
   expect(denial(await frame($, 'edit'))).toBeUndefined()
   expect(denial(await frame($, 'bash'))).toBeUndefined()
-  expect((await frame($, 'spawn') as { deny?: string }).deny).toBeUndefined()
+  expect((await frame($, 'spawn') as { deny?: string }).deny).toBeUndefined() // a Fable model the guard would refuse the model's own spawn
   expect((await $.agent.spawn({ tool_use_id: 'tu1', prompt: 'p', description: 'd', subagentType: 'fork', provider: { plugin: 'engine', tier: 'core' }, parentModel: FABLE, background: true, fork: true })).deny).toMatch(/a fork/)
+})
+
+test("AC8: with guard always, another plugin's spawn of a Fable model passes where the model's own is refused", { ...WITH_FRAME, options: { guard: 'always' } }, async ($, on) => {
+  world(on)
+  on('agent.spawn', (_$, e) => ({ model: e.model ?? 'opus', agentId: 'sub-1' }))
+  await start($)
+  expect((await $.agent.spawn({ tool_use_id: 'tu1', prompt: 'p', description: 'd', subagentType: 'general-purpose', provider: { plugin: 'engine', tier: 'core' }, parentModel: OPUS, model: 'fable', background: true, fork: false })).deny).toMatch(/would run on fable/)
+  expect((await frame($, 'spawn') as { deny?: string; agentId?: string }).agentId).toBe('sub-1')
 })
 
 test('a Read whose spelling is a root but which lands outside (handoffs linked out) is denied', async ($, on) => {
