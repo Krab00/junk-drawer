@@ -94,8 +94,8 @@ Two more principles hold the whole thing together:
 Step by step, as the shipped `commands/orch.md` runs it:
 
 1. **Sync + select.** `orch-sync pull` refreshes the store from the backend. `orch-state
-   reset-stale` returns any leftover `in_progress`/`blocked` task to `todo` (a killed run, or a
-   task escalated last time, gets a fresh attempt). The selectable pool is every `todo` row whose
+   reset-stale` returns any leftover `in_progress` task to `todo` (a killed run). A `blocked` task
+   stays blocked until the user asks for a retry; then `reset-stale --blocked` gives it a fresh attempt. The selectable pool is every `todo` row whose
    `deps` are all `done`. **Two tasks that touch the same files are never batched together** —
    they split across batches or run as a chain. Picked tasks are set `in_progress`.
 
@@ -370,7 +370,7 @@ error-prone steps that shouldn't be an LLM's job. Keeping them out of the model'
 frontmatter never drifts and ports never collide.
 
 - **`orch-state`** — the canonical task-store CRUD and the *only* writer of status:
-  `list` (id/status/deps table) · `set <id> <status>` · `reset-stale` (`in_progress`/`blocked` →
+  `list` (id/status/deps table) · `set <id> <status>` · `reset-stale [--blocked]` (`in_progress`, with `--blocked` also `blocked` →
   `todo`) · `new <id> [title]` (skeleton task file).
 - **`orch-worktree`** — per-task git worktrees under `.worktrees/` plus **stable port slots**
   (`port = capability port_base + slot`): `add <id> <branch> [base]` · `remove <id>` · `slot <id>`.
