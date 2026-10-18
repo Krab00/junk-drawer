@@ -85,6 +85,14 @@ const FAKE_TLDR: Plugin = {
   },
 }
 const WITH_NOUNS = { plugins: [FAKE_HANDOFF, FAKE_ORCH, FAKE_TLDR] }
+// A close of the junkd pane from outside the module, as the person's q or × is to it (the test's own `$` has no
+// ui.close): `/shut` closes it through another plugin's `$.ui.close`.
+const SHUTTER: Plugin = {
+  name: 'shutter',
+  register(on) {
+    on('command.run', { command: 'shut' }, async $ => { await $.ui.close({ id: 'junkd' }); return {} })
+  },
+}
 
 type Open = { id: string; title?: string; focus?: true }
 type Call = { noun: string; method: string; input: unknown }
@@ -180,7 +188,7 @@ test('AC6: ✚ junkd is drawn under the prompt, alone or beside what is beneath;
   expect(rec.closed).toEqual(['junkd'])
 })
 
-test('AC6: /junkd and /junkd:junkd toggle the pane; q closes it', async ($, on) => {
+test('AC6: /junkd and /junkd:junkd toggle the pane; q closes it; a close by the person is seen, so the next toggle opens', { plugins: [SHUTTER] }, async ($, on) => {
   const rec = world(on, fixture())
   await start($)
   await run($, 'junkd')
@@ -199,6 +207,13 @@ test('AC6: /junkd and /junkd:junkd toggle the pane; q closes it', async ($, on) 
   expect(rec.closed).toEqual(['junkd', 'junkd', 'junkd'])
   await pane.unmount()
 
+  await run($, 'junkd')
+  expect(rec.opens).toHaveLength(4)
+  await run($, 'shut') // the person's q or ×: the engine's close reaches the hook
+  expect(rec.closed).toHaveLength(4)
+  await run($, 'junkd')
+  expect(rec.opens).toHaveLength(5) // opened again, not closed
+  expect(rec.closed).toHaveLength(4)
 })
 
 test('AC2: Plugins lists every marketplace plugin, on/off from user-scope settings.json; 1-9 flip one and the pane says to reload', async ($, on) => {
