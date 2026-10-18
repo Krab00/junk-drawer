@@ -142,6 +142,27 @@ const FAKE_ORCH_ONE: Plugin = {
 }
 // A close of the junkd pane from outside the module, as the person's q or × is to it (the test's own `$` has no
 // ui.close): `/shut` closes it through another plugin's `$.ui.close`.
+// The /config menu's own write path: `/cfg <json>` calls `$.config.set` from another plugin (junkd has no noun, so
+// this is the only way a value reaches its config.set hook) and carries the answer out as text.
+const MENU: Plugin = {
+  name: 'menu',
+  register(on) {
+    on('command.run', { command: 'cfg' }, async ($, e) => {
+      try {
+        return { text: JSON.stringify({ ok: await $.config.set(JSON.parse(e.args)) }) }
+      } catch (err) {
+        return { text: JSON.stringify({ error: String((err as Error).message ?? err) }) }
+      }
+    })
+  },
+}
+// `$.config.set` answers `{ value }` or `{ deny }` (it does not throw); a thrown error is the engine's own.
+async function menuSet($: Engine, key: string, value: unknown): Promise<{ value?: unknown; deny?: string }> {
+  const r = (await $.command.run({ command: 'cfg', args: JSON.stringify({ key, value }), origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })) as { text?: string }
+  const out = JSON.parse(r.text ?? '{}') as { ok?: { value?: unknown; deny?: string }; error?: string }
+  if (out.error !== undefined) throw new Error(out.error)
+  return out.ok ?? {}
+}
 const SHUTTER: Plugin = {
   name: 'shutter',
   register(on) {
@@ -159,9 +180,10 @@ type Call = { noun: string; method: string; input: unknown }
 type Opts = { nouns?: boolean | string[]; env?: Record<string, string>; checkout?: string; panes?: { id: string }[]; mvExit?: number; mvErr?: string; realPath?: Record<string, string>; listThrows?: boolean; hintThrows?: boolean }
 function world(on: On, files: Record<string, string>, o: Opts = {}) {
   const env = o.env ?? { CLAUDE_CONFIG_DIR: CFG, HOME: '/fake/home' }
-  const rec = { files, reads: [] as string[], writes: [] as string[], mvs: [] as string[][], toasts: [] as string[], opens: [] as Open[], closed: [] as string[], calls: [] as Call[],
+  const rec = { files, reads: [] as string[], writes: [] as string[], mvs: [] as string[][], rms: [] as string[][], config: [] as { key: string; value: unknown }[], toasts: [] as string[], opens: [] as Open[], closed: [] as string[], calls: [] as Call[],
     commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], denyOrchOpen: '', beneath: '', merged: '' }
   on('env.get', (_$, e) => ({ value: env[e.name] }))
+  on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('fs.exists', (_$, e) => ({ value: e.path in files }))
   on('fs.read', (_$, e) => {
@@ -177,6 +199,12 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   on('fs.write', (_$, e) => { rec.writes.push(e.path); files[e.path] = e.text; return { value: undefined } })
   on('process.run', (_$, e) => {
     if (e.argv[0] === 'sh') return { value: { exitCode: 0, stdout: '/fake/h2\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    // The output_style flag file's removal (`rm -f -- <flag>`), recorded and applied.
+    if (e.argv[0] === 'rm') {
+      rec.rms.push([...e.argv])
+      delete files[e.argv.at(-1)!]
+      return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     const [bin, , from, to] = e.argv
     expect(bin).toBe('/bin/mv')
     rec.mvs.push([from!, to!])
@@ -676,4 +704,85 @@ test('AC4: command.list throws -> No commands., no note, the rest drawn', async 
   expect((await pane.find({ type: 'Text', text: 'No commands.' }))?.text).toBe('No commands.')
   expect((await pane.find({ key: 'note' }))?.text).toBe('')
   expect(await pane.find({ type: 'Box', key: 'plugin-row:orch' })).toBeDefined()
+})
+
+// ------------------------------------------------------------------ output_style (the flag file scripts/setup.sh reads)
+
+const STYLE_FLAG = `${CFG}/junkd/output-style-off`
+const OFF_AT_LOAD = { plugins: [MENU], options: { output_style: 'off' } }
+const WITH_MENU = { plugins: [MENU] }
+
+test('AC3: output_style off at load writes the flag file at session start; ste (the default) removes it', async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  expect(rec.rms).toEqual([['rm', '-f', '--', STYLE_FLAG]])
+  expect(rec.writes).toEqual([])
+  expect(STYLE_FLAG in rec.files).toBe(false)
+})
+
+test('AC3: output_style off at load: the flag file is written at session start, nothing removed', OFF_AT_LOAD, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  expect(rec.writes).toEqual([STYLE_FLAG])
+  expect(rec.files[STYLE_FLAG]).toBe('')
+  expect(rec.rms).toEqual([])
+})
+
+// The engine holds a stored option to the manifest's `options` before register sees it: ' OFF ' (not spelled
+// `off`) or `blue` reads as the default, ste, and the module's own guard agrees.
+for (const stored of [' OFF ', 'blue']) {
+  test(`AC3: a stored value the options do not name (${JSON.stringify(stored)}) is the default ste: the flag is removed`, { ...WITH_MENU, options: { output_style: stored } }, async ($, on) => {
+    const rec = world(on, fixture())
+    await start($)
+    expect(rec.writes).toEqual([])
+    expect(rec.rms).toEqual([['rm', '-f', '--', STYLE_FLAG]])
+  })
+}
+
+test('AC3: a write to the junkd.output_style row by the /config menu mirrors into the flag file: off writes, ste removes, the spelling is normalised', WITH_MENU, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  expect(await menuSet($, 'junkd.output_style', 'off')).toEqual({ value: 'off' })
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.output_style', value: 'off' })
+  expect(STYLE_FLAG in rec.files).toBe(true)
+  expect(await menuSet($, 'junkd.output_style', 'ste')).toEqual({ value: 'ste' })
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.output_style', value: 'ste' })
+  expect(STYLE_FLAG in rec.files).toBe(false)
+  expect(rec.rms.at(-1)).toEqual(['rm', '-f', '--', STYLE_FLAG])
+  expect(await menuSet($, 'junkd.output_style', ' Off ')).toEqual({ value: 'off' })
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.output_style', value: 'off' }) // the row takes the normalised value
+  expect(STYLE_FLAG in rec.files).toBe(true)
+  expect(await menuSet($, 'junkd.output_style', 'STE')).toEqual({ value: 'ste' })
+  expect(STYLE_FLAG in rec.files).toBe(false)
+  // the next session start writes what the row holds last
+  await menuSet($, 'junkd.output_style', 'off')
+  rec.writes.length = 0
+  await start($)
+  expect(rec.writes).toEqual([STYLE_FLAG])
+})
+
+test('AC3: a value the options do not name is refused, the row and the flag file untouched; another row passes', WITH_MENU, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  for (const bad of ['blue', '', 'ste off', true, 1]) {
+    expect(await menuSet($, 'junkd.output_style', bad), String(bad)).toEqual({ deny: `junkd: ${String(bad)} is not a valid output_style (ste or off)` })
+  }
+  expect(rec.config).toEqual([])
+  expect(STYLE_FLAG in rec.files).toBe(false)
+  expect(rec.writes).toEqual([])
+  expect(await menuSet($, 'tldr.terse', 'off')).toEqual({ value: 'off' }) // not junkd's row: untouched by the hook
+  expect(rec.config).toEqual([{ key: 'tldr.terse', value: 'off' }])
+  expect(rec.writes).toEqual([])
+})
+
+test('AC3: a write another hook refuses leaves the flag file alone, and the next session start keeps the old value', WITH_MENU, async ($, on) => {
+  on('config.set', { key: 'junkd.output_style' }, () => ({ deny: 'locked' }))
+  const rec = world(on, fixture())
+  await start($)
+  expect(await menuSet($, 'junkd.output_style', 'off')).toEqual({ deny: 'locked' })
+  expect(STYLE_FLAG in rec.files).toBe(false)
+  expect(rec.writes).toEqual([])
+  await start($)
+  expect(rec.writes).toEqual([])
+  expect(rec.rms).toHaveLength(2)
 })

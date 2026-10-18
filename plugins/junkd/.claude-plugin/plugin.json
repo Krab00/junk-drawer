@@ -1,7 +1,25 @@
 {
   "name": "junkd",
   "description": "The frame over the junk-drawer marketplace: /junkd (and the ✚ junkd segment under the prompt) toggles one pane with the marketplace's plugins (on/off at user scope), the main settings of handoff, orch and tldr through their $ nouns, and the enabled plugins' commands. Every feature plugin works without it.",
-  "version": "0.1.0",
-  "author": { "name": "Krab00" },
-  "dependencies": ["handoff@junk-drawer", "orch@junk-drawer", "tldr@junk-drawer"]
+  "version": "0.2.0",
+  "author": {
+    "name": "Krab00"
+  },
+  "dependencies": [
+    "handoff@junk-drawer",
+    "orch@junk-drawer",
+    "tldr@junk-drawer"
+  ],
+  "userConfig": {
+    "output_style": {
+      "type": "string",
+      "title": "Output style",
+      "description": "At session start, once per plugin version: make junkd:STE (Simplified Technical English) the output style when ~/.claude/settings.json has no outputStyle yet. off skips the step; a style you chose is never touched either way.",
+      "options": [
+        "ste",
+        "off"
+      ],
+      "default": "ste"
+    }
+  }
 }

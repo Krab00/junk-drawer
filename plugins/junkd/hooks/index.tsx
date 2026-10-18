@@ -5,6 +5,7 @@
 // - Settings: the `main` fields of each enabled plugin that exposes a noun on `$` (handoff, orch, tldr), read
 //   through its schema()/get(), written through its set(); `settings ▸` calls its open().
 // - Commands: the enabled plugins' slash commands as $.command.list() names them.
+// - The `output_style` setting (ste|off): mirrored into the flag file scripts/setup.sh reads at SessionStart.
 // The three nouns are called, never read (the host's rule), so an absent one is a call that throws: caught, and
 // the pane opens without it. Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; tests point it at a fake tree.
 import type { EngineInterface, Register, RenderInput } from 'claude-code'
@@ -46,6 +47,23 @@ async function homeDir($: $): Promise<string> {
 const configDir = async ($: $) => (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`
 // User-scope settings: ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json, the file `enabledPlugins` lives in.
 const settingsPath = async ($: $) => `${await configDir($)}/settings.json`
+
+// ------------------------------------------------------------------ the output_style setting
+
+// The setup step (scripts/setup.sh, SessionStart) is off while the flag file ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/
+// output-style-off exists: a shell hook reads no `$.config`, so the row's truth is mirrored there, at every write
+// to the row and at session start. `ste` (the default) or `off`, as the manifest's options; nothing else is taken.
+let styleIsOff = false
+const STYLE_ERROR = (raw: unknown) => `junkd: ${String(raw)} is not a valid output_style (ste or off)`
+function coerceStyle(raw: unknown): { value: 'ste' | 'off'; error?: undefined } | { error: string; value?: undefined } {
+  const v = String(raw).trim().toLowerCase()
+  return v === 'ste' || v === 'off' ? { value: v } : { error: STYLE_ERROR(raw) }
+}
+async function writeStyleFlag($: $): Promise<void> {
+  const flag = `${await configDir($)}/junkd/output-style-off`
+  if (styleIsOff) await $.fs.write(flag, '')
+  else await $.process.run(['rm', '-f', '--', flag])
+}
 
 // Missing file = {}. A file that does not parse throws, so a later write never replaces it with {}.
 const readJson = async ($: $, path: string): Promise<Json> => ((await $.fs.exists(path)) ? JSON.parse(await $.fs.read(path)) : {})
@@ -198,12 +216,29 @@ const openSettings = async ($: $, plugin: string) => {
   }
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // A value the manifest's options do not name (an edit of the file by hand) is the default.
+  styleIsOff = coerceStyle(options.output_style ?? 'ste').value === 'off'
+
   on('session.start', async ($, e, next) => {
+    await writeStyleFlag($).catch(() => undefined)
     isOpen = (await $.ui.panes()).some(pane => pane.id === PANE)
     await $.command.register({ name: 'junkd', description: 'Toggle the junkd pane: the marketplace plugins, their settings and commands', immediate: true })
     if (isOpen) void refresh($)
     return next(e)
+  })
+
+  // Every write to the output_style row (the /config menu's; junkd has no noun of its own) lands here: a value the
+  // options do not name is refused, one the row took is mirrored into the flag file.
+  on('config.set', { key: 'junkd.output_style' }, async ($, e, next) => {
+    const c = coerceStyle(e.value)
+    if (c.error !== undefined) return { deny: c.error }
+    const r = await next({ ...e, value: c.value })
+    if (r.deny === undefined) {
+      styleIsOff = c.value === 'off'
+      await writeStyleFlag($)
+    }
+    return r
   })
 
   // /junkd (registered above) and /junkd:junkd (commands/junkd.md) both toggle the pane.
