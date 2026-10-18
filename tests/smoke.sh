@@ -106,6 +106,30 @@ handoff_result=$(CODEX_THREAD_ID=codex-id CLAUDE_CODE_SESSION_ID=claude-id CLAUD
     JUNK_DRAWER_RUNTIME=claude "$root/plugins/handoff/bin/handoff-path")
 [ "$(printf '%s\n' "$handoff_result" | tail -1)" = claude-i ]
 
+# $.orch.schema() is a mirror of the orch manifest's userConfig (a hooks module cannot import JSON): every
+# field's key, type, title and default must appear together on one SCHEMA line of orch-lib.ts, the choice row's
+# options too, and the mirror must hold no field the manifest lacks. A string default is spelled 'x' there.
+orch_manifest="$root/plugins/orch/.claude-plugin/plugin.json"
+orch_lib="$root/plugins/orch/hooks/orch-lib.ts"
+for key in $(jq -r '.userConfig | keys[]' "$orch_manifest"); do
+    type=$(jq -r ".userConfig[\"$key\"].type" "$orch_manifest")
+    title=$(jq -r ".userConfig[\"$key\"].title" "$orch_manifest")
+    default=$(jq -c ".userConfig[\"$key\"].default" "$orch_manifest" | tr '"' "'")
+    rg -F "key: '$key'" "$orch_lib" | rg -F "type: '$type'" | rg -F "title: '$title'" | rg -qF "default: $default," ||
+        { echo "orch SCHEMA entry for $key does not match the manifest"; exit 1; }
+    options=$(jq -c ".userConfig[\"$key\"].options // empty" "$orch_manifest" | tr '"' "'" | sed "s/,/, /g")
+    [ -z "$options" ] || rg -F "key: '$key'" "$orch_lib" | rg -qF "options: $options" ||
+        { echo "orch SCHEMA options for $key do not match the manifest"; exit 1; }
+done
+schema_keys=$(rg -o "^  \{ key: '[A-Za-z_]+'" "$orch_lib" | rg -o "'[A-Za-z_]+'" | tr -d "'" | sort)
+[ "$schema_keys" = "$(jq -r '.userConfig | keys[]' "$orch_manifest" | sort)" ] ||
+    { echo "orch SCHEMA keys differ from the manifest's userConfig"; exit 1; }
+# The flag file is the shell-side truth of inject_rules off: the hooks module and scripts/orch-context.sh must
+# both spell it ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/orch/rules-off.
+rg -qF "/orch/rules-off" "$root/plugins/orch/hooks/index.tsx" && rg -qF "CLAUDE_CONFIG_DIR" "$root/plugins/orch/hooks/index.tsx" &&
+    rg -qF '/orch/rules-off' "$root/plugins/orch/skills/orch/scripts/orch-context.sh" ||
+    { echo "orch: the inject_rules flag file is not spelled alike in the hooks module and orch-context.sh"; exit 1; }
+
 project="$tmp/project"
 mkdir -p "$project/.orch" "$project/.orch/tasks"
 git -C "$project" init -q

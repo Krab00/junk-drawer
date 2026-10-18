@@ -141,10 +141,83 @@ main session only:
 
 - a subagent never gets it: the hook exits silently when `CLAUDE_AGENT_ID` is set or the hook
   input carries an `agent_id`;
-- `ORCH_INJECT_RULES=0` in the environment turns the injection off;
+- `ORCH_INJECT_RULES=0` in the environment turns the injection off, and so does the `inject_rules`
+  setting below: off, the hooks module writes the flag file `~/.claude/orch/rules-off` (under
+  `CLAUDE_CONFIG_DIR` when set) and the hook exits silently while it exists;
 - the hook always exits 0, so a missing sheet never blocks a session.
 
 `tests/orch.sh` (run by `tests/smoke.sh`) covers the hook, the agent roster and the bin scripts.
+
+## The main-loop guard (Claude Code only)
+
+`hooks/index.tsx` is the plugin's hooks module. On a Fable main loop the rule sheet says "plan and
+delegate"; the guard enforces it. It checks the main loop's own tool calls only: a subagent's calls
+and another plugin's `$.tool.call` always go through. The `guard` setting says when it is active:
+
+- `fable` (default): while the main-loop model is a Fable. The model is read live, so a `/model`
+  switch counts at once (to Opus: the guard is off; back to Fable: on again). A model that cannot
+  be read is no Fable: the guard fails open and says so once per session.
+- `always`: on every model.
+- `off`: never.
+
+Every denial starts with `Orchestrator mode (orch):` and says what to do instead.
+
+| Tool | The main loop may use it… |
+|---|---|
+| `ListAgents`, `TaskStop`, `AskUserQuestion`, `ToolSearch`, `Skill`, `CronList`, `CronDelete`, `EnterPlanMode`, `ExitPlanMode`, `PushNotification`, `RemoteTrigger` | always |
+| `Agent` | with `model: opus\|sonnet\|haiku`, or as an `orch:` agent type with no `model` (theirs is pinned). Never as a fork or with `inherit`. With a Fable model only when `allow_fable_agents` is on. An `agent.spawn` hook checks the resolved model again (a fork, `inherit`, or no model on a non-`orch:` type would run on the main loop's model). |
+| `SendMessage` | except to a reviewer (`verify-coordinator`, `ui-reviewer`: spawn a new one), to an agent past `implementer_ctx_k` k tokens of context, or to an agent nobody knows. A stopped agent is known by its `SubagentStop`: the module keeps its type and the context tokens of its transcript's last usage record, by id and by name. |
+| `Read` | in the session scratchpad and in `~/.claude/orch/`, `~/.claude/handoffs/` and `~/.claude/projects/*/memory/` |
+| `Write` | in the same places, or to a new `.md` file. Never to settings, Claude Code config (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, anything in a `.claude/` dir, any plugin's `agents`, `commands`, `skills`, `hooks`, `rules`, `output-styles`, a `.claude-plugin/` dir) or this plugin. The path must be a plain absolute ASCII path; symlinks and case aliases are resolved first, and a path that cannot be placed (a link to nothing, a folder that does not resolve) is denied. |
+| `Bash`, `Monitor` | only to run one of this plugin's own `bin/` scripts, by its path under the plugin root, with plain arguments (no quotes, `$`, backticks, `;`, `&`, `\|`, `<`, `>`) |
+| `CronCreate`, `ScheduleWakeup` | only to schedule `/orch` (or `/orch:orch`), `/loop` of an allowed prompt, or a plain prompt, or to stop one |
+| anything else (`Edit`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `LSP`, MCP tools, …) | never |
+
+If the guard itself throws, the call is denied (`Orchestrator mode (orch): guard error`). Known
+gaps: a `context: fork` skill raises no spawn event, so the guard never sees it; a plugin loaded
+from outside a `plugins/` path is not covered by the Write rule. The exact rules are in
+`hooks/orch-lib.ts`, the tests in `hooks/orch.test.tsx` (`claude plugin test plugins/orch`).
+
+### Settings
+
+`/orch panel` toggles the pane: one Settings tab with the six rows (`tab` moves, `enter` saves a
+field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes).
+The same rows are in `/config` under plugin `orch`.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `guard` | `fable` | When the guard holds the main loop: `fable`, `always` or `off` |
+| `allow_fable_agents` | `false` | Let the main loop spawn a subagent on an explicit Fable model (the user asked) |
+| `implementer_ctx_k` | `400` | Reuse an implementer for a fix round only while its context is under this many k tokens (50–1000) |
+| `ui_review` | `true` | Run `ui-reviewer` without asking when the config declares `web` |
+| `inject_rules` | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file above when off) |
+| `rounds` | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
+
+A value that does not fit (a guard word other than the three, a number out of range or not whole)
+is refused on every write path: the pane, `$.orch.set` and the `/config` menu alike.
+
+### API for other plugins
+
+The hooks module adds `$.orch` to the engine's `$`, so another mod (a frame that shows the main
+settings and jumps into the pane) calls it instead of reading this plugin's files. The host hands a
+noun's method one input and answers every call asynchronously, so each takes one object and returns
+a promise. List `orch` under `dependencies` in your plugin.json and the engine lays its contract
+(`types/index.d.ts`, exported as `Orch`) beside the API reference, typed.
+
+- `schema()` — one entry per setting: `{ key, type, title, default, main, options? }`; `main` marks
+  `guard`, `allow_fable_agents` and `implementer_ctx_k`, the three a frame shows first; `guard`
+  carries its `options`.
+- `get({ key })` — the current value of a setting (the `/config` row at load, then every write).
+- `set({ key, value, scope? })` — writes `orch.<key>` through `$.config` and resolves to the stored
+  value; refused (unknown key, a value that does not fit, a `config.set` hook's deny) it rejects with
+  the reason. `scope` takes only `user` today; the field exists so project or session scopes can be
+  added later without changing callers.
+- `open()` — the same path as `/orch panel`: toggles the pane.
+- `guardState()` — `{ active, model }`: whether the guard holds the main loop right now, and the
+  main-loop model it was judged on.
+
+The module is Claude-only: Codex and Kimi run the skills, the bin scripts and the SessionStart hook
+as before.
 
 ## Under the hood
 
