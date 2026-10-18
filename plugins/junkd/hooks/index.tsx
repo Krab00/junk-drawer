@@ -134,9 +134,8 @@ async function showOf($: $, noun: Noun, input: { focus?: true; owner?: string; s
   throw new Error(`${noun}: no pane`)
 }
 async function hideOf($: $, noun: Noun, owner?: string): Promise<void> {
-  const input = owner === undefined ? {} : { owner }
-  if (noun === 'handoff') return $.handoff.hide(input)
-  if (noun === 'orch') return $.orch.hide(input)
+  if (noun === 'handoff') return $.handoff.hide({ owner })
+  if (noun === 'orch') return $.orch.hide({ owner })
   throw new Error(`${noun}: no pane`)
 }
 
@@ -239,7 +238,7 @@ const togglePane = async ($: $) => {
 // Settings tab), junkd closes, and the feature pane asks for the keys again. It is the person's pane from then on.
 // junkd is gone by the time a refusal comes back, so the reason is a toast.
 const openSettings = async ($: $, plugin: string) => {
-  if (!isNoun(plugin) || !HAS_PANE[plugin]) return
+  if (!isNoun(plugin)) return
   note = '' // junkd's last answer is not the feature pane's
   const shown = showOf($, plugin, { settings: true })
   isOpen = false
