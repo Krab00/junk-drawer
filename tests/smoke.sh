@@ -44,7 +44,7 @@ for plugin in "$root"/plugins/*/; do
         # skills read ./commands/*.md as their canonical specification, so it must move too.
         case "$entry" in
             */commands)
-                if ! rg -q -e '\./commands/' "$plugin"skills/*/SKILL.md; then continue; fi
+                if ! rg -q -e '\./commands/' "$plugin"skills/*/SKILL.md 2>/dev/null; then continue; fi
                 ;;
         esac
         [ -L "$entry" ] || { echo "plugin-root helper is not a symlink into skills/: $entry"; exit 1; }
@@ -172,6 +172,30 @@ CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-flag" off >/dev/null
 [ -z "$(CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-hook")" ]
 rg -qF "/tldr-on" "$tldr_mod" && rg -qF "CLAUDE_CONFIG_DIR" "$tldr_mod" ||
     { echo "tldr hooks module does not spell the flag file as tldr-flag does"; exit 1; }
+
+# junkd reads three nouns, one per manifest dependency, and nothing else: every `<p>@junk-drawer` under
+# `dependencies` has its `$.<p>.schema(` call in the hooks module, every `$.<p>.schema(` there names a dependency
+# (schema() is what every noun read starts with) and the pane's own `NOUNS` list is that same set. The
+# marketplace lists junkd, so `/plugin install junkd@junk-drawer` works; the two files the pane reads are
+# spelled as Claude Code lays them.
+junkd_manifest="$root/plugins/junkd/.claude-plugin/plugin.json"
+junkd_mod="$root/plugins/junkd/hooks/index.tsx"
+junkd_deps=$(jq -r '.dependencies[]' "$junkd_manifest" | sed 's/@junk-drawer$//' | sort)
+[ -n "$junkd_deps" ] || { echo "junkd: no dependencies in the manifest"; exit 1; }
+for dep in $junkd_deps; do
+    jq -e --arg d "$dep@junk-drawer" '.dependencies | index($d) != null' "$junkd_manifest" >/dev/null ||
+        { echo "junkd: dependency $dep is not spelled $dep@junk-drawer"; exit 1; }
+    rg -qF "\$.$dep.schema(" "$junkd_mod" || { echo "junkd: dependency $dep has no \$.$dep.schema() call in index.tsx"; exit 1; }
+done
+junkd_nouns=$(rg -o '\$\.[a-z]+\.schema\(' "$junkd_mod" | rg -o '\$\.[a-z]+' | tr -d '$.' | sort -u)
+[ "$junkd_nouns" = "$junkd_deps" ] || { echo "junkd: the nouns index.tsx calls ($(echo $junkd_nouns)) differ from the manifest's dependencies ($(echo $junkd_deps))"; exit 1; }
+junkd_list=$(rg -o "^const NOUNS = \[[^]]*\]" "$junkd_mod" | rg -o "'[a-z]+'" | tr -d "'" | sort)
+[ "$junkd_list" = "$junkd_deps" ] || { echo "junkd: NOUNS in index.tsx differs from the manifest's dependencies"; exit 1; }
+jq -e '.plugins[] | select(.name == "junkd" and .source == "./plugins/junkd")' "$root/.claude-plugin/marketplace.json" >/dev/null ||
+    { echo "marketplace.json does not list junkd at ./plugins/junkd"; exit 1; }
+rg -qF 'CLAUDE_CONFIG_DIR' "$junkd_mod" && rg -qF '/settings.json`' "$junkd_mod" &&
+    rg -qF '/plugins/marketplaces/${MARKETPLACE}`' "$junkd_mod" && rg -qF '/.claude-plugin/marketplace.json`' "$junkd_mod" ||
+    { echo "junkd: settings.json or marketplace.json is not spelled as Claude Code lays it"; exit 1; }
 
 project="$tmp/project"
 mkdir -p "$project/.orch" "$project/.orch/tasks"
