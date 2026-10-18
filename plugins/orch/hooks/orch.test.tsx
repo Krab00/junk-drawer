@@ -100,6 +100,20 @@ test('Write: the Read roots or a new .md file; never settings, loaded config, a 
   expect(kit('/repo/docs/hooks/x.md')).toBeUndefined() // outside any plugins/ path or the marketplace
 })
 
+test("Write: never the module's own control file orch/rules-off (the inject_rules flag), any spelling; the rest of orch/ stays open", () => {
+  const write = (file_path: string, extra: Partial<OrchState> = {}) =>
+    orchGuard(main('Write', { file_path, content: '' }), st({ exists: false, ...extra }), on_)
+  for (const p of [`${CFG}/orch/rules-off`, `${CFG}/orch//rules-off`, `${CFG}/orch/./rules-off`, `${CFG}/Orch/Rules-Off`, `${CFG}/x/../orch/rules-off`])
+    expect(write(p), p).toMatch(/may Write only/)
+  expect(write('/home/u/.claude/orch/rules-off', { configDir: '/home/u/.claude' })).toMatch(/may Write only/)
+  // a link that lands on it
+  expect(write(`${SCRATCH}/flag`, { placed: { path: `${CFG}/orch/rules-off`, configDir: CFG, binDir: BIN, repo: REPO } })).toMatch(/may Write only/)
+  for (const p of [`${CFG}/orch/notes.md`, `${CFG}/orch/rules-off.md`, `${CFG}/orch/rules-offx`, `${CFG}/orch/x/rules-off.md`, `${CFG}/orch/x/rules-off`, `${CFG}/orch/xorch/rules-off`, `${CFG}/orch/-repo/tasks/T-1.md`])
+    expect(write(p), p).toBeUndefined()
+  // Read of it is no write
+  expect(orchGuard(main('Read', { file_path: `${CFG}/orch/rules-off` }), st(), on_)).toBeUndefined()
+})
+
 test('Read and Write: a plain absolute ASCII spelling only; the placed path must pass too', () => {
   const guard = (tool: string, file_path: string, extra: Partial<OrchState> = {}) =>
     orchGuard(main(tool, { file_path, content: 'x' }), st({ exists: false, ...extra }), on_)
