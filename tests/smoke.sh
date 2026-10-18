@@ -48,7 +48,7 @@ done < <(find "$root/plugins" -type l)
 # inside the subtree that gets hashed.
 for plugin in "$root"/plugins/*/; do
     plugin_phys=$(cd -P "$plugin" && pwd)
-    for entry in "$plugin"bin "$plugin"agents "$plugin"commands "$plugin"*.sh; do
+    for entry in "$plugin"bin "$plugin"agents "$plugin"commands "$plugin"scripts "$plugin"*.sh; do
         [ -e "$entry" ] || continue
         # A plugin-root commands/ that no skill reads is Claude-only slash-command surface, not
         # a helper a SKILL.md runs, so it may stay a real directory. orch is the exception: its
@@ -67,6 +67,11 @@ for plugin in "$root"/plugins/*/; do
         esac
     done
 done
+
+# The same for a shell script at any depth: a real *.sh outside skills/ (say plugins/<p>/hooks/x.sh) is a helper
+# the skill hash never sees. hooks/*.tsx, the mods' modules, are no helpers and stay where they are.
+stray=$(find "$root"/plugins -type f -name '*.sh' ! -path '*/skills/*')
+[ -z "$stray" ] || { echo "real *.sh outside skills/ (move it under skills/<name>/, link it from the plugin root):"; printf '%s\n' "$stray"; exit 1; }
 
 cat > "$tmp/codex.jsonl" <<'JSONL'
 {"type":"session_meta","payload":{"cwd":"/tmp/example"}}
