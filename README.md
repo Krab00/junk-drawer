@@ -63,6 +63,36 @@ Invoke Codex workflows by mentioning their skill, for example `$orch-init`, `$or
 
 After installing or updating: `/plugin marketplace update junk-drawer`, then `/reload-plugins`.
 
+## junkd
+
+The optional frame over the marketplace. Every feature plugin stands on its own: `handoff`, `orch`
+and `tldr` keep their commands, panes and `/config` rows whether junkd is installed or not. junkd only
+calls what they export on the engine's `$` (`$.handoff`, `$.orch`, `$.tldr`, see "API for other
+plugins" in each README), so nothing needs it.
+
+Install per host:
+
+- Claude Code: `/plugin install junkd@junk-drawer`, then `/reload-plugins`. The marketplace entry
+  pulls `handoff`, `orch` and `tldr` in as dependencies.
+- Codex, Kimi, OpenCode: no. junkd is a mod (a hooks module, no shell, no skill), and only Claude Code
+  runs mods. The `/junk-drawer` cheatsheet plugin stays the catalog on those hosts; the Kimi marketplace
+  lists junkd only so the id is known, there is nothing to install from it there.
+
+`/junkd`, or a click on the `✚ junkd` segment under the prompt, toggles one pane with three sections:
+
+- **Plugins**: every plugin of the marketplace, on or off at user scope; a number flips one, then
+  `/reload-plugins`.
+- **Settings**: the main settings of the enabled plugins that export a noun (today `handoff`, `orch`,
+  `tldr`), edited in place and validated by the owning plugin; `settings ▸` jumps into that plugin's
+  own pane.
+- **Commands**: the enabled plugins' slash commands with their descriptions.
+
+junkd also ships the `junkd:STE` output style (Simplified Technical English). At session start it
+becomes the default once, and only when `~/.claude/settings.json` has no `outputStyle` yet; a style you
+chose is never touched. To skip that step set `output_style` to `off` in `/config` under plugin
+`junkd`, or pick any style with `/output-style`. Details in
+[`plugins/junkd/README.md`](plugins/junkd/README.md).
+
 ## Install in OpenCode
 
 OpenCode has no plugin layer for this marketplace, but it discovers Agent Skills natively. Install

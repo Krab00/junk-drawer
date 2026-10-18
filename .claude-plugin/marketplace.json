@@ -15,12 +15,12 @@
     {
       "name": "tldr",
       "source": "./plugins/tldr",
-      "description": "Summarize on demand."
+      "description": "Summarize on demand (/tldr N) or keep every reply terse (/tldr on|off). On Claude Code the hooks module exports $.tldr (schema/get/set) for other mods; the junkd frame is optional."
     },
     {
       "name": "handoff",
       "source": "./plugins/handoff",
-      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>); /ahandoff automates handoff → /clear → /handon past a context threshold and resumes after the 5h rate limit."
+      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>); /ahandoff automates handoff → /clear → /handon past a context threshold and resumes after the 5h rate limit. On Claude Code the hooks module exports $.handoff (schema/get/set/open/status) for other mods; the junkd frame is optional."
     },
     {
       "name": "ctx-limit",
@@ -35,7 +35,7 @@
     {
       "name": "orch",
       "source": "./plugins/orch",
-      "description": "Project-agnostic orchestration loop: pick tasks from a canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .claude/orch.config.md. Run /orch:init then /orch."
+      "description": "Project-agnostic orchestration loop: pick tasks from a canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Run /orch:init then /orch. On Claude Code the hooks module exports $.orch (schema/get/set/open/guardState) for other mods; the junkd frame is optional."
     },
     {
       "name": "junkd",
