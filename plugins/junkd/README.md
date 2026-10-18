@@ -1,7 +1,8 @@
 # junkd
 
-The frame over the junk-drawer marketplace, for Claude Code only (a mod: a hooks module, no shell). `/junkd`,
-or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs and closes them together:
+The frame over the junk-drawer marketplace, for Claude Code only (a mod: a hooks module, plus one shell
+SessionStart hook, `scripts/setup.sh`, for the output style below). `/junkd`, or a click on the `✚ junkd`
+segment under the prompt, opens a set of panes as tabs and closes them together:
 
 1. **junkd** — focused, the frame below.
 2. **handoff** — handoff's own pane.
@@ -88,11 +89,12 @@ A setup step makes it the default for a person who never chose a style, and for 
 in the main session only, `scripts/setup.sh` looks at `~/.claude/settings.json` (`$CLAUDE_CONFIG_DIR/settings.json`):
 
 - no `outputStyle` key → the key is set to `junkd:STE` (temp file, then `mv`; the other keys and their order
-  stay) and one line, `junkd: outputStyle set to junkd:STE in …`, is printed. A missing or empty file becomes
+  stay) and one line, `junkd: outputStyle set to junkd:STE in …`, goes into the model's context (a
+  SessionStart hook's stdout; it is not shown on screen). A missing or empty file becomes
   `{"outputStyle": "junkd:STE"}`.
-- an `outputStyle` key with any value → nothing is written, nothing is printed.
-- a file that does not parse, or is not a JSON object → nothing is written, nothing is printed, and the step
-  looks again next session.
+- an `outputStyle` key with any value → nothing is written, nothing is added to the context.
+- a file that does not parse, or is not a JSON object → nothing is written, nothing is added to the context,
+  and the step looks again next session.
 
 The step runs once per plugin version: a stamp, `~/.claude/junkd/setup-<version>.stamp`, is written once the
 key is there (set or found). Delete the key later and it stays deleted until the next version. A `/clear`, a
