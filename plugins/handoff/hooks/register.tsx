@@ -37,13 +37,16 @@ async function homeDir($: $): Promise<string> {
   return home
 }
 
+// Where bin/handoff-path writes: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs` (unset or empty: the home's .claude).
 async function handoffDir($: $): Promise<string> {
-  return `${await homeDir($)}/.claude/handoffs`
+  return `${(await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`}/handoffs`
 }
 
 async function listHandoffs($: $, force?: boolean): Promise<Entry[]> {
   if (S.entries && !force) return S.entries
   const dir = await handoffDir($)
+  const home = await homeDir($)
+  S.dir = home && dir.startsWith(`${home}/`) ? `~${dir.slice(home.length)}` : dir
   let files: Awaited<ReturnType<$['fs']['list']>> = []
   try {
     files = await $.fs.list(dir)

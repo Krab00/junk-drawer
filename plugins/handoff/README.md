@@ -12,7 +12,7 @@ A skills-only install (`npx skills add Krab00/junk-drawer`) has no slash command
 ships as its own skill: `handon` takes the same optional id and delegates to `handoff`. On Claude Code
 that makes it invocable as `/handon <id>` even without the plugin.
 
-Files live in `~/.claude/handoffs/` (outside the plugin cache, so they survive updates). The date + id in each filename make old handoffs greppable.
+Files live in `~/.claude/handoffs/` (`$CLAUDE_CONFIG_DIR/handoffs/` when that is set; outside the plugin cache, so they survive updates). The date + id in each filename make old handoffs greppable.
 
 Session id comes from `$CLAUDE_CODE_SESSION_ID`.
 

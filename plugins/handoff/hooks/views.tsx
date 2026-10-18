@@ -3,7 +3,6 @@
 import { DEFAULT_PROMPT, S, limit, type Entry, type Route } from './lib'
 import { Chosen, Field, Filled, Hidden, P, Rule, Spacer, fit, line, when, type Ctx, type View } from './ui'
 
-const DIR = '~/.claude/handoffs' // ponytail: the folder is fixed by the contract, drawn as is
 
 // What a field holds while typed, before Enter saves it (`null` = show the stored value).
 const draft: Record<string, string | null> = {}
@@ -219,14 +218,14 @@ const handoffs: View = (c) => {
         <Hidden c={c} k="up" hotkey="k" onPress={() => move(c, -1)} />
         <Box flexDirection="row" columnGap={2}>
           <Text bold>Handoffs</Text>
-          <Text color={P.secondary} wrap="truncate">{all ? `${all.length} in ${DIR} · ${S.session.length} this session` : 'loading…'}</Text>
+          <Text color={P.secondary} wrap="truncate">{all ? `${all.length} in ${S.dir} · ${S.session.length} this session` : 'loading…'}</Text>
           <Spacer c={c} />
           <Box flexShrink={0}><Button key="save" plain hotkey="n" label="Save now" onPress={() => void c.api.handoffNow()} /></Box>
         </Box>
         <Field c={c} k="filter" label="Filter" hotkey="f" labelDim placeholder="id, date or words of the title"
           value={S.filter} set={(v) => { S.filter = v; S.selected = 0; S.confirm = null; c.api.refresh() }} onSubmit={() => c.api.refresh()} />
         {!all ? <Text color={P.secondary}>loading…</Text>
-          : all.length === 0 ? <Text color={P.secondary}>{`No handoffs in ${DIR} yet. n: Save now writes one.`}</Text>
+          : all.length === 0 ? <Text color={P.secondary}>{`No handoffs in ${S.dir} yet. n: Save now writes one.`}</Text>
           : rows.length === 0 ? <Text color={P.secondary}>{line(`No handoff matches "${S.filter.trim()}".`)}</Text>
           : (
             <Box flexDirection="column">
@@ -317,7 +316,7 @@ const settings: View = (c) => {
         <Box flexDirection="column">
           <Title c={c} text="Handoff" sub="/handoff and /handon" />
           <Row c={c} w={22} label="Folder">
-            <Text wrap="truncate">{DIR}<Text color={P.secondary}>{S.entries ? ` · ${S.entries.length} files` : ''}</Text></Text>
+            <Text wrap="truncate">{S.dir}<Text color={P.secondary}>{S.entries ? ` · ${S.entries.length} files` : ''}</Text></Text>
           </Row>
           <Num c={c} f="staleDays" hotkey="a" label="Mark stale after" hint="days" />
           <Row c={c} w={22}>

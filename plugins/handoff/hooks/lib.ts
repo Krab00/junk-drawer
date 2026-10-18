@@ -49,6 +49,7 @@ export const S = {
   more: 0,
   session: [] as string[], // ids written in this session
   entries: null as Entry[] | null, // cached list; null = not read yet
+  dir: '~/.claude/handoffs', // the handoffs folder as the pane draws it (the home as ~), set on each read
   version: '0.3.0',
 }
 
