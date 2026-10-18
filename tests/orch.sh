@@ -467,7 +467,7 @@ git -C "$fence" init -q
 ln -s "$tmp/outside" "$fence/.orch/link"
 ln -s "$tmp/outside" "$fence/linked"
 fence_cfg() { printf -- '---\nbackend: adhoc\ntasks_dir: %s\n---\n' "$1" > "$fence/.orch/config.md"; }
-for bad in '../outside' '/tmp/x' '.orch/../../outside' '.orch/tasks/../../../outside' '.orch/link' '.orch/link/new/deep' 'linked' '.git' '.git/tasks' '"../outside"'; do
+for bad in '../outside' '/tmp/x' '.orch/nope/../../../outside' '.orch/../../outside' '.orch/tasks/../../../outside' '.orch/link' '.orch/link/new/deep' 'linked' '.git' '.git/tasks' '"../outside"'; do
     fence_cfg "$bad"
     for cmd in "orch-state list" "orch-state tasks-dir" "orch-state new T-9" "orch-state reset-stale" "orch-sync pull"; do
         if out=$(cd "$fence" && $bin/$cmd 2>&1); then fail "tasks_dir $bad: $cmd ran: $out"; fi
