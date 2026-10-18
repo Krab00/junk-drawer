@@ -181,6 +181,30 @@ gaps: a `context: fork` skill raises no spawn event, so the guard never sees it;
 from outside a `plugins/` path is not covered by the Write rule. The exact rules are in
 `hooks/orch-lib.ts`, the tests in `hooks/orch.test.tsx` (`claude plugin test plugins/orch`).
 
+#### Deliberate differences from the guard this one was ported from
+
+Row by row, against the table above:
+
+- **Always allowed:** `advisor` is not on the list, so it is denied here. It runs on the server and
+  raises no tool call, so in practice nothing changes. The earlier guard's own decision tool is not
+  ported at all (out of scope).
+- **`ScheduleWakeup`:** the earlier guard listed it as always allowed, but its `CronCreate` rule ran
+  first, so it was restricted there too. Here it is off the always list, and the table says what
+  holds: the `CronCreate` rule (only `/orch`, `/loop` of an allowed prompt, a plain prompt, or a
+  stop). Same behaviour, no shadowed entry.
+- **`SendMessage`:** `test-planner` and `test-reviewer` count as reviewers too (they exist only in
+  this plugin), so they are always spawned fresh. The `SubagentStop` records are kept in the
+  module's memory, not on disk: after `/reload-plugins`, an agent that stopped earlier has no token
+  count, so the context cap is not checked for it.
+- **`Read`, `Write`:** the task store is `<repo>/.orch/` in the project, not a folder in the config
+  dir, so the repo's `.orch/` is a root of its own (new here). Writes there take a `.md` only and
+  never an existing `config.md`. The config dir's `orch/` stays a root for scratch state.
+- **`Write`:** stricter on `.claude/`: anything in any `.claude/` dir is refused, not only its
+  loaded folders. In place of protecting a records folder, the module's own control file
+  `orch/rules-off` (and any path under it) is refused.
+- **`Bash`, `Monitor`:** no separate `..` check on the script path. The script name may not hold a
+  `/`, so a `..` cannot lead out of `bin/`.
+
 ### Settings
 
 `/orch panel` toggles the pane: one Settings tab with the six rows (`tab` moves, `enter` saves a
