@@ -32,3 +32,34 @@ flag every turn and, while set, injects a "be terse" instruction into context �
 enforced deterministically each turn. A skill couldn't guarantee that (skills are model-triggered, not
 per-turn). `/tldr off` removes the flag. The flag is global on purpose: turn it on in one tab, every
 session with the plugin goes terse.
+
+## Settings
+
+Two rows in `/config` on Claude Code (`userConfig` in the manifest):
+
+- `terse` (boolean, off) — terse mode, the same switch as `/tldr on|off`.
+- `sentences` (number, 3) — how many sentences a `/tldr` without a number may use.
+
+**The flag file is the shell-side truth.** The per-turn hook is a shell script and runs on every host, and a
+shell hook cannot read `$.config`, so `~/.claude/tldr-on` (or `$CLAUDE_CONFIG_DIR/tldr-on`) is what decides
+terse mode. Flipping `terse` in `/config` or through `$.tldr.set` writes the row *and* the flag file;
+`/tldr on|off` writes the flag file only. When the two disagree the file wins: `$.tldr.get` answers `terse`
+from the file, and the next write puts both back in step.
+
+### API for other plugins
+
+The hooks module adds `$.tldr` to the engine's `$`, so another mod (a frame that shows the settings and
+flips terse mode) calls it instead of reading this plugin's files. The host hands a noun's method one input
+and answers every call asynchronously, so each takes one object and returns a promise. List `tldr` under
+`dependencies` in your plugin.json and the engine lays its contract (`types/index.d.ts`, exported as `Tldr`)
+beside the API reference, typed.
+
+- `schema()` — one entry per setting: `{ key, type, title, default, main }`; both are `main`.
+- `get({ key })` — `terse` from the flag file, `sentences` from the row (at load, then every write).
+- `set({ key, value, scope? })` — writes `tldr.<key>` through `$.config` (and, for `terse`, the flag file) and
+  resolves to the stored value; refused (unknown key, a value that does not fit — `sentences` takes a whole
+  number of 1 or more —, a `config.set` hook's deny) it rejects with the reason. `scope` takes only `user`
+  today; the field exists so project or session scopes can be added later without changing callers.
+
+There is no pane; `/tldr` stays the command on every host. The module is Claude-only: Codex and Kimi run the
+shell hook and `tldr-flag` as before.

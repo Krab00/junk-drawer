@@ -5,6 +5,7 @@ export type $ = EngineInterface
 export type Phase = 'idle' | 'handoff' | 'clear' | 'resume'
 export type Route = 'auto' | 'handoffs' | 'settings'
 export type Entry = { id: string; path: string; mtimeMs: number; title: string; stale: boolean }
+export type Field = 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
 
 // The engine follows `$` only into functions of the hooks module itself, never across an import:
 // every helper that takes `$` (findCommand, homeDir, handoffDir, listHandoffs, sync, persist) lives in register.tsx.
@@ -47,7 +48,7 @@ export const S = {
   more: 0,
   session: [] as string[], // ids written in this session
   entries: null as Entry[] | null, // cached list; null = not read yet
-  version: '0.2.0',
+  version: '0.3.0',
 }
 
 export function loadOptions(options: Record<string, unknown>): void {
@@ -73,3 +74,35 @@ export const DAY = 86_400_000
 export function idOf(name: string): string | null {
   return /_([0-9a-f]{8})\.md$/.exec(name)?.[1] ?? null
 }
+
+// The `$.handoff` contract's schema: a mirror of plugin.json's `userConfig` (a hooks module cannot import JSON).
+// `main` marks the fields a frame plugin shows first. tests/smoke.sh holds every entry to the manifest; the plugin
+// test checks the defaults through the options the engine fills in from it.
+export type SchemaEntry = { key: Field; type: 'number' | 'boolean'; title: string; default: number | boolean; main: boolean }
+export const SCHEMA: readonly SchemaEntry[] = [
+  { key: 'threshold', type: 'number', title: 'Auto handoff: context threshold (%)', default: 85, main: true },
+  { key: 'checkEvery', type: 'number', title: 'Auto handoff: check every N tool calls', default: 5, main: false },
+  { key: 'autoOn', type: 'boolean', title: 'Auto handoff: armed at session start', default: false, main: true },
+  { key: 'resumeAfterLimit', type: 'boolean', title: 'Auto handoff: resume after the 5h rate limit', default: true, main: true },
+  { key: 'staleDays', type: 'number', title: 'Handoffs: mark stale after N days', default: 30, main: false },
+  { key: 'segment', type: 'boolean', title: 'Status line: show the 🪃 segment', default: true, main: true },
+]
+export const isField = (key: string): key is Field => SCHEMA.some(f => f.key === key)
+
+// A raw value (typed in the pane or handed to $.handoff.set) to the field's kind; `error` when it does not fit.
+export type Coerced = { value: number | boolean; error?: undefined } | { error: string; value?: undefined }
+export function coerce(field: Field, raw: unknown): Coerced {
+  if (field === 'threshold' || field === 'checkEvery' || field === 'staleDays') {
+    const value = Number(raw)
+    if (!Number.isFinite(value) || value <= 0 || (field === 'threshold' && value > 100)) return { error: `${String(raw)} is not a valid ${field}` }
+    return { value }
+  }
+  return { value: raw === true || raw === 'true' || raw === 'on' }
+}
+
+// The current value of a field as the mod holds it (options at load, then every set).
+export function current(field: Field): number | boolean {
+  return S[field]
+}
+
+export const status = () => ({ armed: S.armed, percent: S.percent, phase: S.phase })

@@ -1,9 +1,9 @@
 import { atom, update } from 'claude-code'
 import type { RenderSurface, Register } from 'claude-code'
 
-import type { Ahandoff } from '../types'
-import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, idOf, limit, loadOptions, type $, type Entry, type Route } from './lib'
-import { Footer, P, Rule, Tabs, fields, type Api, type Ctx, type Elements } from './ui'
+import type { Ahandoff, Handoff } from '../types'
+import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, SCHEMA, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './lib'
+import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './ui'
 import { VIEWS } from './views'
 
 const PANE = 'ahandoff'
@@ -236,20 +236,21 @@ async function remove($: $, ids: string[]) {
   return paths.length
 }
 
-async function setOption($: $, field: Parameters<Api['set']>[0], raw: string | number | boolean) {
-  let value: string | number | boolean = raw
-  if (field === 'threshold' || field === 'checkEvery' || field === 'staleDays') {
-    value = Number(raw)
-    if (!Number.isFinite(value) || value <= 0 || (field === 'threshold' && value > 100)) {
-      S.note = `✗ ${String(raw)} is not a valid ${field}`
-      return redraw($)
-    }
-  } else if (field === 'autoOn' || field === 'segment' || field === 'resumeAfterLimit') value = raw === true || raw === 'true' || raw === 'on'
-  else return redraw($)
+// Writes one field to its `/config` row (`handoff.<field>`) and mirrors it into S. `{ deny }` when the value
+// does not fit or a hook refused; the pane's note says which either way.
+async function setOption($: $, field: Field, raw: string | number | boolean) {
+  const c = coerce(field, raw)
+  if (c.error !== undefined) {
+    S.note = `✗ ${c.error}`
+    redraw($)
+    return { deny: c.error }
+  }
+  const value = c.value
   const { deny } = await $.config.set({ key: `handoff.${field}`, value })
   if (deny) {
     S.note = `✗ ${deny}`
-    return redraw($)
+    redraw($)
+    return { deny }
   }
   if (field === 'threshold') S.threshold = value as number
   else if (field === 'checkEvery') S.checkEvery = Math.max(1, Math.round(value as number))
@@ -259,6 +260,25 @@ async function setOption($: $, field: Parameters<Api['set']>[0], raw: string | n
   else if (field === 'resumeAfterLimit') { S.resumeAfterLimit = value as boolean; if (!value) cancelResume() }
   S.note = `✓ ${field} = ${String(value)}`
   await sync($)
+  return { value: current(field) } as const
+}
+
+// `$.handoff`, the noun other plugins call. The host hands a noun's method exactly one input and the hooks on
+// it see that input as `e`, so set and open take one object; get, schema and status need no `$` and answer here.
+// `set`'s `scope`: only `user` (the /config row) exists today; the field is there so project/session scopes can
+// be added later without changing callers. The hooks on handoff.set / handoff.open below do the `$` work.
+const NO_HOOK = 'handoff: the hooks module did not answer'
+function handoffNoun(): Handoff {
+  return {
+    schema: async () => SCHEMA.map(f => ({ ...f })),
+    get: async key => {
+      if (!isField(key)) throw new Error(`handoff: no setting ${String(key)}`)
+      return current(key)
+    },
+    set: async () => { throw new Error(NO_HOOK) },
+    open: async () => { throw new Error(NO_HOOK) },
+    status: async () => status(),
+  }
 }
 
 function api($: $): Api {
@@ -302,7 +322,7 @@ function api($: $): Api {
       if (r.exitCode !== 0) S.note = `✗ ${r.stderr.trim() || 'could not open the folder'}`
       redraw($)
     },
-    set: (field, value) => setOption($, field, value),
+    set: async (field, value) => { await setOption($, field, value) },
     refresh: () => {
       redraw($)
       void load($)
@@ -312,6 +332,26 @@ function api($: $): Api {
 
 export const register: Register = (on, options) => {
   loadOptions(options)
+
+  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), handoff: handoffNoun() }))
+  // A `{ deny }` here rejects the caller's promise with the reason (the host's own rule for a noun's event).
+  on('handoff.set', async ($, e) => {
+    if (!isField(e.key)) return { deny: `handoff: no setting ${String(e.key)}` }
+    if (e.scope !== undefined && e.scope !== 'user') return { deny: `handoff: scope ${String(e.scope)} is not supported yet` }
+    const r = await setOption($, e.key, e.value)
+    return r.deny !== undefined ? { deny: r.deny } : { value: r.value }
+  })
+  on('handoff.open', async ($, e) => {
+    const route = e?.route
+    if (route !== undefined && !TABS.some(t => t[2] === route)) return { deny: `handoff: no tab ${String(route)}` }
+    // A route while the pane is up switches its tab; otherwise the call toggles the pane, as /handoff panel does.
+    if (route && S.paneOpen) {
+      S.route = route
+      await sync($)
+      void load($)
+    } else await toggle($, route)
+    return { value: undefined }
+  })
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
