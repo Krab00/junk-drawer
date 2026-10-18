@@ -23,11 +23,19 @@ export type HandoffStatus = { armed: boolean; percent: number; phase: 'idle' | '
 // supported, a `config.set` hook's deny) rejects the promise with the reason.
 export type HandoffSetInput = { key: HandoffField; value: number | boolean | string; scope?: 'user' }
 export type HandoffOpenInput = { route?: HandoffRoute }
+// `show` opens the pane and never closes it (`open` toggles): on `route` when given; `focus` asks for the keys;
+// `reopen` closes a pane that is up first, so its tab goes after the caller's; `owner` marks the pane as the
+// caller's. `hide` closes it; with `owner`, only while the pane is still the one that owner's `show` opened (any
+// other open or close since, the person's included, clears the mark).
+export type HandoffShowInput = { route?: HandoffRoute; focus?: boolean; reopen?: boolean; owner?: string }
+export type HandoffHideInput = { owner?: string }
 export type Handoff = {
   schema(): Promise<HandoffSchemaEntry[]>
   get(key: HandoffField): Promise<number | boolean>
   set(input: HandoffSetInput): Promise<number | boolean>
   open(input?: HandoffOpenInput): Promise<void>
+  show(input?: HandoffShowInput): Promise<void>
+  hide(input?: HandoffHideInput): Promise<void>
   status(): Promise<HandoffStatus>
 }
 

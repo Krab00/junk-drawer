@@ -137,9 +137,14 @@ async function setOption($: $, key: OrchField, raw: unknown) {
   return { value: O[key] }
 }
 
+// Who opened the pane through `$.orch.show({ owner })` (a frame's set of panes); any other open or close clears it,
+// so `hide({ owner })` closes only a pane that owner opened and nobody reopened since.
+let owner: string | undefined
+
 // `$.ui.open` before any await: only an open made while the press or command runs counts as asked.
-async function openPane($: $) {
-  const opened = $.ui.open({ id: PANE, title: 'orch', focus: true })
+async function openPane($: $, focus = true) {
+  const opened = $.ui.open({ id: PANE, title: 'orch', focus: focus || undefined })
+  owner = undefined
   note = ''
   paneOpen = (await opened).isPlaced
   redraw($)
@@ -147,6 +152,7 @@ async function openPane($: $) {
 // The engine does not raise our own `$.ui.close` to our `ui.close` hook, so the flag is cleared here.
 async function closePane($: $) {
   paneOpen = false
+  owner = undefined
   await $.ui.close({ id: PANE })
 }
 const togglePane = ($: $) => (paneOpen ? closePane($) : openPane($))
@@ -167,6 +173,8 @@ export const register: Register = (on, options) => {
       },
       set: async () => { throw new Error(NO_HOOK) },
       open: async () => { throw new Error(NO_HOOK) },
+      show: async () => { throw new Error(NO_HOOK) },
+      hide: async () => { throw new Error(NO_HOOK) },
       guardState: async () => { throw new Error(NO_HOOK) },
     },
   }))
@@ -179,6 +187,21 @@ export const register: Register = (on, options) => {
   })
   on('orch.open', async $ => {
     await togglePane($)
+    return { value: undefined }
+  })
+  // show never closes: the pane opens (or, up already, is asked again: retitled, the keys asked for). `reopen`
+  // closes a pane that is up first, so its tab goes after the caller's; `owner` marks it as that caller's, for hide.
+  on('orch.show', async ($, e) => {
+    if (e?.reopen === true && paneOpen) await closePane($)
+    const opened = openPane($, e?.focus === true)
+    owner = e?.owner
+    await opened
+    return { value: undefined }
+  })
+  // hide closes the pane; with `owner`, only while the pane is still the one that owner's show opened.
+  on('orch.hide', async ($, e) => {
+    if (e?.owner !== undefined && e.owner !== owner) return { value: undefined }
+    await closePane($)
     return { value: undefined }
   })
   on('orch.guardState', async $ => {
@@ -239,6 +262,7 @@ export const register: Register = (on, options) => {
   // The person's closes (q, ×) pass here; ours go through closePane.
   on('ui.close', { id: PANE }, (_$, e, next) => {
     paneOpen = false
+    owner = undefined
     return next(e)
   })
 

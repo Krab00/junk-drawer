@@ -307,7 +307,7 @@ function world(on: On) {
   const files: Record<string, string> = {}
   const rec = { model: FABLE as string | undefined, agents: [] as Agent[], files, toasts: [] as string[],
     links: {} as Record<string, string>, dangling: {} as Record<string, string[]>, nowhere: [] as string[], envFails: false,
-    config: [] as { key: string; value: unknown }[], opened: [] as string[], closed: [] as string[], runs: [] as string[][],
+    config: [] as { key: string; value: unknown }[], opened: [] as string[], focus: [] as (true | undefined)[], closed: [] as string[], runs: [] as string[][],
     existsFails: false, writeFails: false, notPlaced: false }
   on('env.get', (_$, e) => {
     if (rec.envFails) throw new Error('env unavailable')
@@ -333,7 +333,7 @@ function world(on: On) {
   })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
-  on('ui.open', (_$, e) => { rec.opened.push(e.id); return { value: rec.notPlaced ? { isPlaced: false as const, reason: 'no room' } : { isPlaced: true as const } } })
+  on('ui.open', (_$, e) => { rec.opened.push(e.id); rec.focus.push(e.focus); return { value: rec.notPlaced ? { isPlaced: false as const, reason: 'no room' } : { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); return { value: undefined } })
   on('ui.focus', () => ({}))
   on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
@@ -393,6 +393,10 @@ const FRAME: Plugin = {
           await $.orch.open()
           await $.orch.open()
           answered.push('open')
+          await $.orch.show()
+          answered.push('show')
+          await $.orch.hide()
+          answered.push('hide')
           if (typeof (await $.orch.guardState()).active === 'boolean') answered.push('guardState')
           return { text: JSON.stringify({ ok: answered }) }
         }
@@ -400,6 +404,8 @@ const FRAME: Plugin = {
         if (method === 'get') return { text: JSON.stringify({ ok: await $.orch.get(input) }) }
         if (method === 'set') return { text: JSON.stringify({ ok: await $.orch.set(input) }) }
         if (method === 'open') return { text: JSON.stringify({ ok: await $.orch.open() }) }
+        if (method === 'show') return { text: JSON.stringify({ ok: await $.orch.show(input) }) }
+        if (method === 'hide') return { text: JSON.stringify({ ok: await $.orch.hide(input) }) }
         if (method === 'guardState') return { text: JSON.stringify({ ok: await $.orch.guardState() }) }
         if (method === 'config') return { text: JSON.stringify({ ok: await $.config.set(input) }) }
         // another plugin's own tool calls and spawns: the guard is for the model's, not these
@@ -655,10 +661,10 @@ test('allow_fable_agents on lets an explicit Fable through both the Agent rule a
 
 const MANIFEST_KEYS = ['guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds']
 
-test('$.orch: the five calls exist; schema mirrors the manifest; get answers the defaults; guard is the choice row', WITH_FRAME, async ($, on) => {
+test('$.orch: the seven calls exist; schema mirrors the manifest; get answers the defaults; guard is the choice row', WITH_FRAME, async ($, on) => {
   world(on)
   await start($)
-  expect(await frame($, 'members')).toEqual(['schema', 'get', 'set', 'open', 'guardState'])
+  expect(await frame($, 'members')).toEqual(['schema', 'get', 'set', 'open', 'show', 'hide', 'guardState'])
   const schema = (await frame($, 'schema')) as { key: string; type: string; title: string; default: unknown; main: boolean; options?: string[] }[]
   expect(schema.map(f => f.key)).toEqual(MANIFEST_KEYS)
   for (const f of schema) {
@@ -771,6 +777,86 @@ test('/orch panel and $.orch.open toggle the pane; q closes it; a plain /orch pa
   expect(rec.closed.length).toBe(4)
   await orchCmd($, 'panel') // closed by q: the next toggle opens
   expect(rec.opened.length).toBe(4)
+})
+
+// A close of the pane from outside the module, as the person's mark or ctrl+x x is to it: `/shut` closes it through
+// another plugin's `$.ui.close`, which reaches the pane's own ui.close hook.
+const SHUTTER: Plugin = {
+  name: 'shutter',
+  register(on) {
+    on('command.run', { command: 'shut' }, async $ => { await $.ui.close({ id: 'orch' }); return {} })
+  },
+}
+const shut = ($: Engine) => $.command.run({ command: 'shut', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+test('$.orch.show opens and never closes; reopen moves the tab after the caller; focus as asked', WITH_FRAME, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await frame($, 'show', { owner: 'junkd' })
+  expect(rec.opened).toEqual(['orch'])
+  expect(rec.focus).toEqual([undefined]) // no focus asked: the caller keeps the keys
+  await frame($, 'show', { owner: 'junkd' }) // up already: asked again, never closed
+  expect(rec.opened).toEqual(['orch', 'orch'])
+  expect(rec.closed).toEqual([])
+
+  await frame($, 'show', { reopen: true }) // up: closed first, then opened again
+  expect(rec.closed).toEqual(['orch'])
+  expect(rec.opened).toHaveLength(3)
+  await frame($, 'hide')
+  expect(rec.closed).toHaveLength(2)
+  await frame($, 'show', { reopen: true }) // not up: nothing to close
+  expect(rec.closed).toHaveLength(2)
+  expect(rec.opened).toHaveLength(4)
+
+  await frame($, 'show', { focus: true })
+  expect(rec.focus.at(-1)).toBe(true)
+  await orchCmd($, 'panel') // its own toggle: closes the pane show left up
+  expect(rec.closed).toHaveLength(3)
+  await orchCmd($, 'panel')
+  expect(rec.focus.at(-1)).toBe(true) // its own command still asks for the keys
+})
+
+test('$.orch.hide with an owner closes only the pane that owner showed, while nothing reopened or closed it since', { plugins: [FRAME, SHUTTER] }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await frame($, 'show', { owner: 'junkd' })
+  await frame($, 'hide', { owner: 'other' }) // another owner: left up
+  expect(rec.closed).toEqual([])
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toEqual(['orch'])
+
+  // Closed by its own command, then opened on its own: no longer the owner's.
+  await frame($, 'show', { owner: 'junkd' })
+  await orchCmd($, 'panel')
+  expect(rec.closed).toHaveLength(2)
+  await orchCmd($, 'panel')
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toHaveLength(2)
+  await frame($, 'hide') // no owner: closes whatever is up
+  expect(rec.closed).toHaveLength(3)
+
+  // The person's close clears the mark too.
+  await frame($, 'show', { owner: 'junkd' })
+  await shut($)
+  expect(rec.closed).toHaveLength(4)
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toHaveLength(4)
+
+  // A show without an owner takes the mark away as well.
+  await frame($, 'show', { owner: 'junkd' })
+  await frame($, 'show', {})
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toHaveLength(4)
+  await frame($, 'hide')
+  expect(rec.closed).toHaveLength(5)
+
+  // Shown but not placed (a narrow terminal), then opened by /orch panel: the person's now.
+  rec.notPlaced = true
+  await frame($, 'show', { owner: 'junkd' })
+  await orchCmd($, 'panel')
+  expect(rec.opened.at(-1)).toBe('orch')
+  await frame($, 'hide', { owner: 'junkd' })
+  expect(rec.closed).toHaveLength(5)
 })
 
 // Every word drawn: the Texts and the Buttons' labels (a field's title is its hotkey Button).

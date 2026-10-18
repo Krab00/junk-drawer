@@ -21,11 +21,19 @@ export type OrchGetInput = { key: OrchField }
 export type OrchSetInput = { key: OrchField; value: string | number | boolean; scope?: 'user' }
 // Whether the guard holds the main loop right now (`guard` against the live main-loop model), and that model.
 export type OrchGuardState = { active: boolean; model: string }
+// `show` opens the pane and never closes it (`open` toggles): `focus` asks for the keys; `reopen` closes a pane
+// that is up first, so its tab goes after the caller's; `owner` marks the pane as the caller's. `hide` closes it;
+// with `owner`, only while the pane is still the one that owner's `show` opened (any other open or close since, the
+// person's included, clears the mark).
+export type OrchShowInput = { focus?: boolean; reopen?: boolean; owner?: string }
+export type OrchHideInput = { owner?: string }
 export type Orch = {
   schema(): Promise<OrchSchemaEntry[]>
   get(input: OrchGetInput): Promise<string | number | boolean>
   set(input: OrchSetInput): Promise<string | number | boolean>
   open(): Promise<void>
+  show(input?: OrchShowInput): Promise<void>
+  hide(input?: OrchHideInput): Promise<void>
   guardState(): Promise<OrchGuardState>
 }
 

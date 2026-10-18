@@ -188,9 +188,14 @@ async function off($: $) {
   return { text: 'handoff auto off.' }
 }
 
+// Who opened the pane through `$.handoff.show({ owner })` (a frame's set of panes); any other open or close clears
+// it, so `hide({ owner })` closes only a pane that owner opened and nobody reopened since.
+let owner: string | undefined
+
 // `$.ui.open` before any await: only an open made while the press or command runs counts as asked.
-async function openPane($: $, route?: Route) {
-  const opened = $.ui.open({ id: PANE, title: 'handoff', focus: true })
+async function openPane($: $, route?: Route, focus = true) {
+  const opened = $.ui.open({ id: PANE, title: 'handoff', focus: focus || undefined })
+  owner = undefined
   if (route) S.route = route
   S.paneOpen = (await opened).isPlaced
   await sync($)
@@ -200,6 +205,7 @@ async function openPane($: $, route?: Route) {
 // The engine does not raise our own `$.ui.close` to our `ui.close` hook, so we clear the flag here.
 async function closePane($: $) {
   S.paneOpen = false
+  owner = undefined
   await $.ui.close({ id: PANE })
   await sync($)
 }
@@ -277,6 +283,8 @@ function handoffNoun(): Handoff {
     },
     set: async () => { throw new Error(NO_HOOK) },
     open: async () => { throw new Error(NO_HOOK) },
+    show: async () => { throw new Error(NO_HOOK) },
+    hide: async () => { throw new Error(NO_HOOK) },
     status: async () => status(),
   }
 }
@@ -350,6 +358,24 @@ export const register: Register = (on, options) => {
       await sync($)
       void load($)
     } else await toggle($, route)
+    return { value: undefined }
+  })
+  // show never closes: the pane opens (or, up already, is asked again: retitled, its tab switched, the keys asked
+  // for), on `route` when given. `reopen` closes a pane that is up first, so its tab goes after the caller's; `owner`
+  // marks it as that caller's, for hide.
+  on('handoff.show', async ($, e) => {
+    const route = e?.route
+    if (route !== undefined && !TABS.some(t => t[2] === route)) return { deny: `handoff: no tab ${String(route)}` }
+    if (e?.reopen === true && S.paneOpen) await closePane($)
+    const opened = openPane($, route, e?.focus === true)
+    owner = e?.owner
+    await opened
+    return { value: undefined }
+  })
+  // hide closes the pane; with `owner`, only while the pane is still the one that owner's show opened.
+  on('handoff.hide', async ($, e) => {
+    if (e?.owner !== undefined && e.owner !== owner) return { value: undefined }
+    await closePane($)
     return { value: undefined }
   })
 
@@ -479,6 +505,7 @@ export const register: Register = (on, options) => {
   // The person's closes (q, ✕) pass here; ours go through closePane.
   on('ui.close', { id: PANE }, async ($, e, next) => {
     S.paneOpen = false
+    owner = undefined
     return next(e)
   })
 
