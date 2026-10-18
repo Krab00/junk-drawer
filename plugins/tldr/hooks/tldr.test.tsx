@@ -8,7 +8,8 @@ const HOME = '/home/u'
 const FLAG = `${HOME}/.claude/tldr-on` // what bin/tldr-flag writes and bin/tldr-hook reads with no CLAUDE_CONFIG_DIR
 const MANIFEST_KEYS = ['terse', 'sentences'] as const
 
-function world(on: On, env: Record<string, string> = { HOME }) {
+// `fail.write`: no fs.write answers, so the bottom hook throws as a failed write does; `fail.rm`: rm's exit code.
+function world(on: On, env: Record<string, string> = { HOME }, fail: { write?: boolean; rm?: number } = {}) {
   mock.store(on)
   mock.env(on, env)
   const rec = {
@@ -18,12 +19,14 @@ function world(on: On, env: Record<string, string> = { HOME }) {
   }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
-  on('fs.write', (_$, e) => { rec.files.add(e.path); return { value: undefined } })
+  if (!fail.write) on('fs.write', (_$, e) => { rec.files.add(e.path); return { value: undefined } })
   on('fs.exists', (_$, e) => ({ value: rec.files.has(e.path) }))
   on('process.run', (_$, e) => {
     rec.runs.push(e.argv)
-    if (e.argv[0] === 'rm') rec.files.delete(e.argv.at(-1)!)
-    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    const exitCode = e.argv[0] === 'rm' ? (fail.rm ?? 0) : 0
+    if (e.argv[0] === 'rm' && exitCode === 0) rec.files.delete(e.argv.at(-1)!)
+    const stderr = exitCode === 0 ? '' : 'rm: Permission denied'
+    return { value: { exitCode, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } }
   })
   return rec
 }
@@ -210,14 +213,56 @@ test('set sentences: a whole number of 1 or more; a bad value, scope, key or a d
   expect(await frame($, 'get', { key: 'sentences' })).toBe(4)
 })
 
-test('a denied tldr.terse write leaves the flag file alone', WITH_FRAME, async ($, on) => {
+test('a denied tldr.terse write leaves the flag file as it was, by set and by the menu', WITH_FRAME, async ($, on) => {
   on('config.set', { key: 'tldr.terse' }, () => ({ deny: 'locked' }))
   const rec = world(on)
   await start($)
   await expect(frame($, 'set', { key: 'terse', value: true })).rejects.toThrow(/locked/)
   expect(rec.files.size).toBe(0)
   expect(await frame($, 'get', { key: 'terse' })).toBe(false)
+  expect(((await frame($, 'config', { key: 'tldr.terse', value: true })) as { deny?: string }).deny).toBe('locked')
+  expect(rec.files.size, 'menu: the flag written first is taken back').toBe(0)
+
+  rec.files.add(FLAG) // on, then a refused off: the flag removed first is put back
+  await expect(frame($, 'set', { key: 'terse', value: false })).rejects.toThrow(/locked/)
+  expect(rec.files.has(FLAG)).toBe(true)
+  expect(((await frame($, 'config', { key: 'tldr.terse', value: false })) as { deny?: string }).deny).toBe('locked')
+  expect(rec.files.has(FLAG), 'menu: the flag removed first is put back').toBe(true)
+  expect(rec.config).toEqual([])
 })
+
+test('a flag file that cannot be written is a refusal and no row: set rejects, the menu is denied', WITH_FRAME, async ($, on) => {
+  const rec = world(on, { HOME }, { write: true })
+  await start($)
+  await expect(frame($, 'set', { key: 'terse', value: true })).rejects.toThrow(/could not write .*tldr-on/)
+  expect(((await frame($, 'config', { key: 'tldr.terse', value: true })) as { deny?: string }).deny).toMatch(/could not write .*tldr-on/)
+  expect(rec.config, 'no row was written').toEqual([])
+  expect(rec.files.has(FLAG)).toBe(false)
+  expect(await frame($, 'get', { key: 'terse' })).toBe(false)
+})
+
+test('an rm that exits non-zero is a refusal and no row: the flag stays, by set and by the menu', WITH_FRAME, async ($, on) => {
+  const rec = world(on, { HOME }, { rm: 1 })
+  await start($)
+  rec.files.add(FLAG)
+  await expect(frame($, 'set', { key: 'terse', value: false })).rejects.toThrow(/could not remove .*tldr-on: rm: Permission denied/)
+  expect(((await frame($, 'config', { key: 'tldr.terse', value: false })) as { deny?: string }).deny).toMatch(/could not remove/)
+  expect(rec.config, 'no row was written').toEqual([])
+  expect(rec.files.has(FLAG)).toBe(true)
+  expect(await frame($, 'get', { key: 'terse' })).toBe(true)
+})
+
+// One case per spelling the menu may hand: each is read as `set` reads it, the row stores the boolean.
+for (const value of [true, 'true', 'on'] as const) {
+  test(`the /config menu's ${JSON.stringify(value)} for terse writes the flag and stores true`, WITH_FRAME, async ($, on) => {
+    const rec = world(on)
+    await start($)
+    await frame($, 'config', { key: 'tldr.terse', value })
+    expect(rec.files.has(FLAG)).toBe(true)
+    expect(rec.config).toEqual([{ key: 'tldr.terse', value: true }])
+    expect(await frame($, 'get', { key: 'terse' })).toBe(true)
+  })
+}
 
 test('on the host tldr never sees its own config.set: set terse writes and removes the flag, set sentences is what get answers', WITH_FRAME, async ($, on) => {
   const rec = world(on)

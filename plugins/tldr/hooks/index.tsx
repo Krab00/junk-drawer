@@ -20,11 +20,30 @@ async function flagPath($: $): Promise<string> {
   return `${dir}/tldr-on`
 }
 
-// The hook sees presence only: `on` creates the empty file, `off` removes it.
-async function writeFlag($: $, on: boolean): Promise<void> {
+// The hook sees presence only: `on` creates the empty file, `off` removes it. Answers the reason when it could not.
+async function writeFlag($: $, on: boolean): Promise<string | undefined> {
   const flag = await flagPath($)
-  if (on) await $.fs.write(flag, '')
-  else await $.process.run(['rm', '-f', '--', flag])
+  try {
+    if (on) await $.fs.write(flag, '')
+    else {
+      const r = await $.process.run(['rm', '-f', '--', flag])
+      if (r.exitCode !== 0) return `tldr: could not remove ${flag}: ${r.stderr.trim() || `rm exited ${r.exitCode}`}`
+    }
+  } catch (err) {
+    return `tldr: could not write ${flag}: ${(err as Error)?.message ?? String(err)}`
+  }
+  return undefined
+}
+
+// Terse mode, on either path: the flag file first, then the row (`store`). A flag that could not be written stores
+// nothing; a refused row puts the flag back as it was.
+async function writeTerse<R extends { deny?: string }>($: $, on: boolean, store: () => Promise<R>): Promise<R | { deny: string }> {
+  const was = await $.fs.exists(await flagPath($))
+  const failed = await writeFlag($, on)
+  if (failed !== undefined) return { deny: failed }
+  const r = await store()
+  if (r.deny !== undefined) await writeFlag($, was)
+  return r
 }
 
 // A raw value (handed to $.tldr.set) to the field's kind; `error` when it does not fit.
@@ -62,18 +81,18 @@ export const register: Register = (on, options) => {
     const c = coerce(e.key, e.value)
     if (c.error !== undefined) return { deny: c.error }
     // The host sends this write through the other plugins' hooks and skips ours below, so the value is applied here.
-    const { deny } = await $.config.set({ key: `tldr.${e.key}`, value: c.value })
+    const store = () => $.config.set({ key: `tldr.${e.key}`, value: c.value })
+    const { deny } = e.key === 'terse' ? await writeTerse($, c.value === true, store) : await store()
     if (deny !== undefined) return { deny }
-    if (e.key === 'terse') await writeFlag($, c.value === true)
-    else S.sentences = c.value as number
+    if (e.key === 'sentences') S.sentences = c.value as number
     return { value: c.value }
   })
 
   // The /config menu's own writes to a tldr row land here (a hook never sees its plugin's own `$.config.set`).
+  // Read as `set` reads it ('on', 'true', true), the flag first as `set` writes it.
   on('config.set', { key: 'tldr.terse' }, async ($, e, next) => {
-    const r = await next(e)
-    if (r.deny === undefined) await writeFlag($, e.value === true)
-    return r
+    const value = coerce('terse', e.value).value as boolean
+    return writeTerse($, value, () => next({ ...e, value }))
   })
   // The /config menu's own writes pass here too: a value `set` would refuse is refused the same way.
   on('config.set', { key: 'tldr.sentences' }, async (_$, e, next) => {
