@@ -151,7 +151,9 @@ test("Bash and Monitor: only the plugin's own bin/ scripts with plain arguments"
   const escapes = ['git status', '/other/bin/orch-state', `${BIN}orch-state; git push`, `${BIN}orch-state $(rm -rf x)`, `${BIN}x && y`,
     `${BIN}../../../../usr/bin/git push --force origin main`, `${BIN}../../../../bin/sh -c 'git commit -am x'`,
     `${BIN}x/../../sh`, `${BIN}orch-state 'list'`, `"${BIN}orch-state list`, `"${BIN}orch-state  list`, `${BIN}orch-state list\ngit push`, `${BIN}orch-state list | sh`,
-    `${BIN}orch-state list > /etc/x`, `${BIN}orch-state \`id\``, `${BIN}.hidden`, `${BIN}`]
+    `${BIN}orch-state list > /etc/x`, `${BIN}orch-state \`id\``, `${BIN}.hidden`, `${BIN}`,
+    // a foreign command whose arguments name the bin dir: the dir must START the command
+    `git push ${BIN}x`, `cat ${BIN}orch-state; rm -rf /`, `sh ${BIN}orch-state`, `x ${BIN}orch-state list`, `/p/bin2/${BIN}x`]
   for (const c of escapes) {
     expect(orchGuard(main('Bash', { command: c }), st(), on_), c).toMatch(/may not run Bash/)
     expect(orchGuard(main('Monitor', { command: c, description: 'd', timeout_ms: 1 }), st(), on_), c).toMatch(/may not run Monitor/)
