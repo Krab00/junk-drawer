@@ -10,6 +10,8 @@ export type Section = { plugin: string; fields: Field[]; hasPane: boolean }
 export type Command = { name: string; description: string }
 export type PanelData = {
   marketplace: string
+  version: string // the marketplace checkout's short sha, '' when none
+  settingsPath: string // the user-scope settings file, ~ for HOME
   plugins: PluginRow[]
   sections: Section[]
   commands: Command[]
@@ -26,7 +28,7 @@ export type PanelActs = {
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button' | 'Input'>
 
 const EDGE = 2 // a docked pane's last column may not show
-// Theme keys only, never a hex value: the text follows the person's theme.
+// Theme keys only, never a hex value: the text follows the person's theme. The accent is junk-drawer's orange.
 export const P = { accent: 'claude', secondary: 'inactive', dim: 'subtle', ok: 'success', warn: 'warning', bad: 'error' } as const
 export const LETTERS = 'abcdefghijklmnoprstuvwxyz' // q closes
 export const PLUGIN_KEYS = 9 // 1-9 flip a plugin; the tenth on has no hotkey
@@ -64,7 +66,7 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
   )
   const title = (text: string, sub: string) => (
     <Box flexDirection="row" columnGap={1}>
-      <Text bold color={P.secondary}>
+      <Text bold color={P.accent}>
         {text}
       </Text>
       <Text color={P.dim} wrap="truncate-end">
@@ -144,7 +146,7 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
               ✚ junkd
             </Text>
             {'  '}
-            <Text color={P.secondary}>{data.marketplace}</Text>
+            <Text color={P.secondary}>{`${data.marketplace} ${data.version}`.trim()}</Text>
           </Text>
         </Box>
         <Box flexShrink={0} marginLeft={2}>
@@ -155,7 +157,7 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
 
       <Box flexDirection="column" flexGrow={1} marginTop={1} gap={1}>
         <Box flexDirection="column">
-          {title('Plugins', 'user scope, ~/.claude/settings.json')}
+          {title('Plugins', `user scope, ${data.settingsPath}`)}
           {plugins.map(p =>
             row(
               `plugin-row:${p.name}`,

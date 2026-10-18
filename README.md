@@ -78,7 +78,8 @@ Install per host:
   runs mods. The `/junk-drawer` cheatsheet plugin stays the catalog on those hosts; the Kimi marketplace
   lists junkd only so the id is known, there is nothing to install from it there.
 
-`/junkd`, or a click on the `✚ junkd` segment under the prompt, toggles one pane with three sections:
+`/junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs (junkd,
+handoff's, orch's) and closes them together. The junkd pane has three sections:
 
 - **Plugins**: every plugin of the marketplace, on or off at user scope; a number flips one, then
   `/reload-plugins`.
@@ -178,7 +179,7 @@ Known limits of the skills-only install:
 | `ctx-limit` | Context threshold hook with block, warn, or command actions | `$ctx-limit` / `/skill:ctx-limit` |
 | `junk-drawer` | Runtime catalog of the marketplace | `$junk-drawer` / `/skill:junk-drawer` |
 | `orch` | Implementation and independent verification through subagents | `$orch-init`, then `$orch` / `/skill:orch-init`, then `/skill:orch` |
-| `junkd` | The frame over the marketplace (Claude Code only): `/junkd` toggles one pane with every plugin on/off, the main settings of `handoff`, `orch` and `tldr`, and the enabled plugins' commands | — |
+| `junkd` | The frame over the marketplace (Claude Code only): `/junkd` opens and closes a set of tabs (junkd, handoff, orch); the junkd pane has every plugin on/off, the main settings of `handoff`, `orch` and `tldr`, and the enabled plugins' commands | — |
 
 ## Layout
 
