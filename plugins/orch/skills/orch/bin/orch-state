@@ -11,6 +11,7 @@
 #   orch-state cfg <key>            # print a top-level key of the config's frontmatter
 # tasks_dir is read from .orch/config.md (legacy fallback: .claude/orch.config.md).
 #   orch-state id <id>              # print <id> if it is a valid task id, else fail (orch-worktree uses it)
+#   orch-state root                 # print the project root the scripts use (see _root)
 #   orch-state settings             # the plugin's user settings /orch runs with, one key=value per line:
 #                                   # rounds, ui_review, implementer_ctx_k, inject_rules. Read from
 #                                   # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json pluginConfigs["orch@<marketplace>"]
@@ -48,14 +49,27 @@ _settings() {
   echo "$out"
 }
 
-# id, settings and help need no config.
+# _root: the checkout we run in (git's toplevel, else the cwd). A task worktree (<project>/.worktrees/<id>) has no
+# .orch/ of its own (it is untracked): then the nearest enclosing checkout above a /.worktrees/ segment that has
+# one, so <main>/.worktrees/orch/.worktrees/T1 resolves to <main>/.worktrees/orch, never past it to <main>. A root
+# that has .orch/, or none above it does, stays as it is.
+_root() {
+  local r up
+  r=$(git rev-parse --show-toplevel 2>/dev/null) || r=$(pwd)
+  up="$r"
+  while [ ! -e "$up/.orch" ] && [[ "$up" == */.worktrees/* ]]; do up="${up%/.worktrees/*}"; done
+  [ -e "$up/.orch" ] && echo "$up" || echo "$r"
+}
+
+# id, root, settings and help need no config.
 case "${1:-}" in
   id) _id "${2:-}"; exit 0 ;;
+  root) _root; exit 0 ;;
   settings) _settings; exit 0 ;;
   ""|-h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 0 ;;
 esac
 
-root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+root=$(_root)
 config="$root/.orch/config.md"
 [ -f "$config" ] || config="$root/.claude/orch.config.md"
 [ -f "$config" ] || { echo "orch: no config ($root/.orch/config.md) - run orch-init" >&2; exit 2; }

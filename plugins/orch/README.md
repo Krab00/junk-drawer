@@ -237,7 +237,9 @@ of truth — no separate manifest to drift):
 
 - `bin/orch-state` — task-store CRUD (`list` / `set` / `reset-stale [--blocked]` / `new` /
   `cfg <key>` / `id <id>` / `settings`). `settings` prints `rounds`, `ui_review`, `implementer_ctx_k`
-  and `inject_rules` as `/orch` uses them (read from `settings.json`, clamped like the hooks module). `list` hides `_lessons.md` and every other `_`-prefixed file (they are
+  and `inject_rules` as `/orch` uses them (read from `settings.json`, clamped like the hooks module).
+  All three scripts work on the checkout they run in; from a task worktree (`<project>/.worktrees/<id>`,
+  which has no `.orch/`) on the nearest enclosing checkout that has one (`orch-state root` prints it). `list` hides `_lessons.md` and every other `_`-prefixed file (they are
   not tasks) and marks a file without a closed frontmatter block `invalid`; `set` refuses it.
 - `bin/orch-worktree` — per-task worktrees under `.worktrees/` (excluded from git status) + stable
   port slots (`port = capability port_base + slot`, registry guarded by a lock for parallel
