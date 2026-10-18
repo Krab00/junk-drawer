@@ -317,6 +317,62 @@ cp "$project/.orch/config.md" "$run/.orch/config.md"
     [ ! -d "$run/.worktrees/W-1" ] || fail "worktree project: remove left the dir"
 )
 
+# from inside a task worktree (<project>/.worktrees/<id>, which has no .orch/ of its own) the scripts work on the
+# project: list its tasks, its slot registry, its config
+"$bin/orch-worktree" add T-5 task/T-5-x >/dev/null
+(
+    cd "$project/.worktrees/T-5/"
+    [ ! -e .orch ] || fail "task worktree setup: it has a .orch/ of its own"
+    rg -q '^T-1[[:space:]]+todo' <<<"$("$bin/orch-state" list 2>&1)" || fail "task worktree: orch-state list misses the project's T-1"
+    [ "$("$bin/orch-worktree" slot T-2 2>&1)" = 1 ] || fail "task worktree: orch-worktree does not use the project's slot registry"
+    [ ! -e .worktrees ] || fail "task worktree: orch-worktree made a .worktrees/ inside the task worktree"
+    rg -q 'no-op' <<<"$("$bin/orch-sync" pull 2>&1)" || fail "task worktree: orch-sync does not find the project's config"
+    [ "$("$bin/orch-state" root)" = "$project" ] || fail "task worktree: root is $("$bin/orch-state" root), expected $project"
+    mkdir -p sub && cd sub   # a subdir of the task worktree
+    [ "$("$bin/orch-state" root)" = "$project" ] || fail "task worktree subdir: root is not the project"
+)
+"$bin/orch-worktree" remove T-5 >/dev/null
+# the project itself a worktree inside the main checkout's .worktrees/ (<main>/.worktrees/orch), with its own .orch/:
+# its task worktree resolves to it, the nearest checkout with a .orch/, never past it to the main checkout
+git -C "$project" worktree add -q "$project/.worktrees/orchrun" -b orch/nested >/dev/null 2>&1
+nested="$project/.worktrees/orchrun"
+mkdir -p "$nested/.orch/tasks"
+cp "$project/.orch/config.md" "$nested/.orch/config.md"
+(
+    cd "$nested"
+    [ "$("$bin/orch-state" root)" = "$nested" ] || fail "nested project: its own .orch/ is not its root"
+    "$bin/orch-state" new N-1 "Nested" >/dev/null
+    [ -f "$nested/.orch/tasks/N-1.md" ] || fail "nested project: orch-state new wrote outside it"
+    out=$("$bin/orch-worktree" add N-1 task/N-1-x) || fail "nested project: orch-worktree add failed: $out"
+    rg -q "^dir=$nested/.worktrees/N-1$" <<<"$out" || fail "nested project: dir not under it: $out"
+    cd "$nested/.worktrees/N-1"
+    [ "$("$bin/orch-state" root)" = "$nested" ] || fail "nested task worktree: root is $("$bin/orch-state" root), expected $nested"
+    list=$("$bin/orch-state" list)
+    rg -q '^N-1[[:space:]]+todo' <<<"$list" || fail "nested task worktree: list misses N-1"
+    if rg -q '^T-1[[:space:]]' <<<"$list"; then fail "nested task worktree: listed the main checkout's tasks"; fi
+    cd "$nested"
+    "$bin/orch-worktree" remove N-1 >/dev/null
+)
+# outside any repo orch-worktree refuses (nothing is created under the cwd)
+mkdir -p "$tmp/nogit"
+err=$(cd "$tmp/nogit" && "$bin/orch-worktree" slot X-1 2>&1 && echo ACCEPTED || true)
+[ "$err" = "orch: not inside a git repo" ] || fail "orch-worktree outside a repo: $err"
+[ ! -e "$tmp/nogit/.worktrees" ] || fail "orch-worktree outside a repo made .worktrees/"
+# escapes: no .orch/ anywhere above -> the own root stays (and the config is missing); a .worktrees in a name is no
+# /.worktrees/ segment
+git init -q "$tmp/bare"
+git -C "$tmp/bare" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$tmp/bare" worktree add -q "$tmp/bare/.worktrees/X-1" -b x1 >/dev/null 2>&1
+bare=$(cd -P "$tmp/bare" && pwd)
+[ "$(cd "$bare/.worktrees/X-1" && "$bin/orch-state" root)" = "$bare/.worktrees/X-1" ] || fail "no .orch above: root moved"
+if (cd "$bare/.worktrees/X-1" && "$bin/orch-state" list >/dev/null 2>&1); then fail "no .orch above: list found a config"; fi
+mkdir -p "$tmp/a.worktrees/p" && cp -R "$project/.orch" "$tmp/a.worktrees/.orch"
+git init -q "$tmp/a.worktrees/p"
+[ "$(cd "$tmp/a.worktrees/p" && "$bin/orch-state" root)" = "$(cd -P "$tmp/a.worktrees/p" && pwd)" ] || fail "a.worktrees/p: a name ending in .worktrees taken as the segment"
+mkdir -p "$tmp/w/.worktreesX/p" && cp -R "$project/.orch" "$tmp/w/.orch"
+git init -q "$tmp/w/.worktreesX/p"
+[ "$(cd "$tmp/w/.worktreesX/p" && "$bin/orch-state" root)" = "$(cd -P "$tmp/w/.worktreesX/p" && pwd)" ] || fail ".worktreesX/p: a name starting with .worktrees taken as the segment"
+
 # orch-state settings: the user settings /orch runs with, from settings.json pluginConfigs (no config needed)
 settings_json="$CLAUDE_CONFIG_DIR/settings.json"
 defaults=$'rounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'

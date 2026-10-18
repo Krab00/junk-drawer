@@ -11,9 +11,10 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-# root = the checkout we run in (a project that is itself a worktree keeps its own .orch/), the
-# same resolution as orch-state; the common dir only hosts the shared info/exclude.
-root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "orch: not inside a git repo" >&2; exit 2; }
+# root = the checkout we run in (a project that is itself a worktree keeps its own .orch/; from a task
+# worktree, the project's root), orch-state's resolution; the common dir only hosts the shared info/exclude.
+git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "orch: not inside a git repo" >&2; exit 2; }
+root=$("$here/orch-state" root)
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 config="$root/.orch/config.md"
 [ -f "$config" ] || config="$root/.claude/orch.config.md"
