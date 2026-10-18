@@ -7,11 +7,12 @@ export type OrchState = {
   model: string
   binDir: string // `${plugin root}/bin/`
   configDir: string // CLAUDE_CONFIG_DIR or ~/.claude
+  repo: string // the session's git toplevel, whose .orch/ is the task store; '' when the session is in no repo
   exists?: boolean // Write: whether file_path exists already
   agent?: AgentRecord | null // SendMessage: the target, null = no agent of that id or name is known
   // Read/Write: where file_path lands (symlinks, case and Unicode aliases resolved) and the two dirs resolved the
   // same way; null = it can't be placed (its folder doesn't resolve). Left out, only the spelling is checked.
-  placed?: { path: string; configDir: string; binDir: string } | null
+  placed?: { path: string; configDir: string; binDir: string; repo: string } | null
 }
 
 // A mirror of plugin.json's `userConfig` (a hooks module cannot import JSON); tests/smoke.sh holds every entry to
@@ -109,6 +110,9 @@ const inRoots = (path: string, cfg: string) => {
   return SCRATCHPAD.test(path) || (rest !== undefined && (rest.startsWith('orch/') || rest.startsWith('handoffs/') || MEMORY.test(rest)))
 }
 
+// The repo's task store (.orch/: the config, the task files, _lessons.md), which /orch reads and writes first.
+const inStore = (path: string, repo: string) => repo !== '' && under(path, `${repo}/.orch`)
+
 // Write: never the deny list, a `..` path, a .claude dir or the config dir outside the roots, this plugin (its root
 // is bin/'s parent) or a loaded dir anywhere in its marketplace (`<marketplace>/plugins/<name>/bin/`; a plugin may
 // sit at its root).
@@ -122,9 +126,11 @@ const forbidden = (path: string, s: OrchState) => {
 // Read and Write of one spelling of the path, against the dirs spelled alike.
 function pathRule(tool: string, path: string, s: OrchState): string | undefined {
   if (tool === 'Read')
-    return inRoots(path, s.configDir) && !DOTDOT.test(path) ? undefined : deny('Read outside the scratchpad, the orch state dir, the handoffs and the project memory')
-  if (!forbidden(path, s) && (inRoots(path, s.configDir) || (path.endsWith('.md') && s.exists === false))) return undefined
-  return `${PREFIX} the main loop may Write only to the scratchpad, the orch state dir, the handoffs, the project memory or a new .md file, never to settings, Claude Code config (a .claude dir, the skills, agents, rules, commands, hooks of any plugin, CLAUDE.md, AGENTS.md, SKILL.md, anything else in the config dir) or this plugin. For ${path}, ask the user for a target path or delegate.`
+    return (inRoots(path, s.configDir) || inStore(path, s.repo)) && !DOTDOT.test(path)
+      ? undefined
+      : deny("Read outside the scratchpad, the repo's .orch/ task store, the orch state dir, the handoffs and the project memory")
+  if (!forbidden(path, s) && (inRoots(path, s.configDir) || inStore(path, s.repo) || (path.endsWith('.md') && s.exists === false))) return undefined
+  return `${PREFIX} the main loop may Write only to the scratchpad, the repo's .orch/ task store, the orch state dir, the handoffs, the project memory or a new .md file, never to settings, Claude Code config (a .claude dir, the skills, agents, rules, commands, hooks of any plugin, CLAUDE.md, AGENTS.md, SKILL.md, anything else in the config dir) or this plugin. For ${path}, ask the user for a target path or delegate.`
 }
 
 // `<bin>/<script> <plain args>`, one optional pair of quotes around the script path.
