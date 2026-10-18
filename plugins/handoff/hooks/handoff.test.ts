@@ -183,6 +183,49 @@ test('off disarms: tools pass again past the threshold', OPTIONS, async ($, on) 
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
 })
 
+// A handoff written mid-cycle, then the loop stopped before the turn ended: the next cycle must not resume that old id.
+for (const stop of ['off', 'enabled off'] as const) {
+  test(`${stop} after the handoff Write and before the turn ends: the next cycle queues a new handoff, not the old id`, { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+    const rec = world(on)
+    const clock = mock.clock(on)
+    await start($)
+    await handoff($, 'auto')
+    rec.percent = 90
+    expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+    await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_0dd0dd00.md`, content: '# old' })
+    if (stop === 'off') await handoff($, 'off')
+    else {
+      await frame($, 'set', { key: 'enabled', value: false })
+      await frame($, 'set', { key: 'enabled', value: true })
+    }
+    await $.turn.complete({ answer: 'stopped', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    await clock.advance(1)
+
+    await handoff($, 'auto')
+    expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+    const before = rec.commands.length
+    await $.turn.complete({ answer: 'no write', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+    await clock.advance(1)
+    const ran = rec.commands.slice(before)
+    expect(ran, ran.join(' | ')).toContain('handoff:handoff') // the new handoff is asked for
+    expect(ran.some(c => c.startsWith('handoff:handon') || c === 'clear'), ran.join(' | ')).toBe(false)
+  })
+}
+
+test('off while the fresh window is unmeasured: re-armed, the loop checks usage again at once', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await handoff($, 'auto')
+  rec.percent = 90
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(1) // clear → handon: the fresh-window guard is up until session.measure
+  await handoff($, 'off')
+  await handoff($, 'auto')
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+})
+
 test('/ahandoff <prompt> | off is the short form', OPTIONS, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)

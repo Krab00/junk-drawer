@@ -230,10 +230,13 @@ async function arm($: $) {
   await sync($)
 }
 
+// Drops the cycle too: a handoff written but not yet acted on, and the fresh-window guard, are the old loop's.
 async function disarm($: $) {
   S.armed = false
   cancelResume()
   S.phase = 'idle'
+  S.written = null
+  S.fresh = false
   S.armedAt = null
   await persist($)
   await sync($)
