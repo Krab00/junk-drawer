@@ -85,6 +85,61 @@ const FAKE_TLDR: Plugin = {
   },
 }
 const WITH_NOUNS = { plugins: [FAKE_HANDOFF, FAKE_ORCH, FAKE_TLDR] }
+// The edges of a noun: a get that throws (the default stands in), 26 main booleans (LETTERS has 25), a type the pane
+// does not draw, a number with no value and no default, a one-field orch.
+const FAKE_TLDR_BROKEN_GET: Plugin = {
+  name: 'tldr',
+  register(on) {
+    on('engine.create', async (_$, e, next) => ({
+      ...(await next(e)),
+      tldr: {
+        schema: async () => [
+          { key: 'terse', type: 'boolean', title: 'Terse mode', default: false, main: true },
+          { key: 'sentences', type: 'number', title: 'Sentences in a summary', default: 3, main: true },
+        ],
+        get: async (input: { key: string }) => {
+          if (input.key === 'sentences') throw new Error('tldr: get broke')
+          return ({ terse: true } as Record<string, number | boolean>)[input.key]!
+        },
+        set: async () => { throw new Error('tldr: the hooks module did not answer') },
+      },
+    }))
+  },
+}
+const FAKE_HANDOFF_WIDE: Plugin = {
+  name: 'handoff',
+  register(on) {
+    on('engine.create', async (_$, e, next) => ({
+      ...(await next(e)),
+      handoff: {
+        schema: async () => [
+          ...Array.from({ length: 26 }, (_, i) => ({ key: `b${i}`, type: 'boolean', title: `bool ${i}`, default: false, main: true })),
+          { key: 'blob', type: 'object', title: 'An object', default: {}, main: true },
+          { key: 'num', type: 'number', title: 'No value', default: undefined, main: true },
+        ],
+        get: async (key: string) => (key === 'num' ? undefined : key === 'blob' ? {} : false),
+        set: async () => { throw new Error('handoff: the hooks module did not answer') },
+        open: async () => { throw new Error('handoff: the hooks module did not answer') },
+        status: async () => ({ armed: false, percent: 0, phase: 'idle' }),
+      },
+    }))
+  },
+}
+const FAKE_ORCH_ONE: Plugin = {
+  name: 'orch',
+  register(on) {
+    on('engine.create', async (_$, e, next) => ({
+      ...(await next(e)),
+      orch: {
+        schema: async () => [{ key: 'guard', type: 'string', title: 'Main-loop guard', default: 'fable', main: true, options: ['fable', 'always', 'off'] }],
+        get: async () => 'fable',
+        set: async () => { throw new Error('orch: the hooks module did not answer') },
+        open: async () => { throw new Error('orch: the hooks module did not answer') },
+        guardState: async () => ({ active: false, model: 'x' }),
+      },
+    }))
+  },
+}
 // A close of the junkd pane from outside the module, as the person's q or × is to it (the test's own `$` has no
 // ui.close): `/shut` closes it through another plugin's `$.ui.close`.
 const SHUTTER: Plugin = {
@@ -96,27 +151,36 @@ const SHUTTER: Plugin = {
 
 type Open = { id: string; title?: string; focus?: true }
 type Call = { noun: string; method: string; input: unknown }
-// `nouns`: the fake plugins are loaded (WITH_NOUNS), so their events can be hooked; a hook on a noun no plugin
-// provides fails the load.
-function world(on: On, files: Record<string, string>, nouns = false) {
-  const rec = { files, reads: [] as string[], toasts: [] as string[], opens: [] as Open[], closed: [] as string[], calls: [] as Call[],
+// The world's knobs: `nouns` names the fake plugins loaded (true = all three; a hook on a noun no plugin provides
+// fails the load); `env` replaces the config-dir variables; `checkout` answers the checkout's marketplace.json
+// (whatever the engine resolves `<root>/../..` to); `panes` is what session.start finds open; `mvExit`/`mvErr`
+// fail the rename; `realPath` resolves a symlinked path; `listThrows` and `hintThrows` fail $.command.list and
+// the prompt hint beneath.
+type Opts = { nouns?: boolean | string[]; env?: Record<string, string>; checkout?: string; panes?: { id: string }[]; mvExit?: number; mvErr?: string; realPath?: Record<string, string>; listThrows?: boolean; hintThrows?: boolean }
+function world(on: On, files: Record<string, string>, o: Opts = {}) {
+  const env = o.env ?? { CLAUDE_CONFIG_DIR: CFG, HOME: '/fake/home' }
+  const rec = { files, reads: [] as string[], writes: [] as string[], mvs: [] as string[][], toasts: [] as string[], opens: [] as Open[], closed: [] as string[], calls: [] as Call[],
     commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], denyOrchOpen: '', beneath: '', merged: '' }
-  on('env.get', (_$, e) => ({ value: ({ CLAUDE_CONFIG_DIR: CFG, HOME: '/fake/home' } as Record<string, string>)[e.name] }))
+  on('env.get', (_$, e) => ({ value: env[e.name] }))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('fs.exists', (_$, e) => ({ value: e.path in files }))
   on('fs.read', (_$, e) => {
     rec.reads.push(e.path)
+    if (o.checkout && e.path !== MARKETPLACE_JSON && /\/\.claude-plugin\/marketplace\.json$/.test(e.path)) return { value: o.checkout }
     if (!(e.path in files)) throw new Error(`ENOENT ${e.path}`)
     return { value: files[e.path]! }
   })
   on('fs.stat', (_$, e) => {
     if (!(e.path in files)) throw new Error(`ENOENT ${e.path}`)
-    return { value: { kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false, realPath: e.path } }
+    return { value: { kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false, realPath: o.realPath?.[e.path] ?? e.path } }
   })
-  on('fs.write', (_$, e) => { files[e.path] = e.text; return { value: undefined } })
+  on('fs.write', (_$, e) => { rec.writes.push(e.path); files[e.path] = e.text; return { value: undefined } })
   on('process.run', (_$, e) => {
+    if (e.argv[0] === 'sh') return { value: { exitCode: 0, stdout: '/fake/h2\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     const [bin, , from, to] = e.argv
     expect(bin).toBe('/bin/mv')
+    rec.mvs.push([from!, to!])
+    if (o.mvExit) return { value: { exitCode: o.mvExit, stdout: '', stderr: o.mvErr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
     files[to!] = files[from!]!
     delete files[from!]
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -125,28 +189,33 @@ function world(on: On, files: Record<string, string>, nouns = false) {
   on('settings.read', () => ({ value: JSON.parse(rec.merged || files[SETTINGS] || '{}') }))
   on('ui.open', (_$, e) => { rec.opens.push({ id: e.id, title: e.title, focus: e.focus }); return { value: { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); return { value: undefined } })
-  on('ui.panes', () => ({ value: [] }))
+  on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  on('command.list', () => ({ value: rec.commands }))
+  on('command.list', () => { if (o.listThrows) throw new Error('list broke'); return { value: rec.commands } })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   // The engine's own drawing where the mod passes; under the prompt, another plugin's hint when `beneath` names one.
   on('ui.render', ($, e) => {
+    if (e.component === 'PromptHint' && o.hintThrows) throw new Error('no hint beneath')
     const { Box, Text } = $.ui.resolve(e)
     return e.component === 'PromptHint' && rec.beneath ? <Text>{rec.beneath}</Text> : <Box key="engine" />
   })
-  if (!nouns) return rec
-  // Each noun's set and open, answered beneath the fake plugins: recorded, and answered as the real one would.
-  on('handoff.set', (_$, e) => { rec.calls.push({ noun: 'handoff', method: 'set', input: e }); return { value: e.value as number | boolean } })
-  on('handoff.open', (_$, e) => { rec.calls.push({ noun: 'handoff', method: 'open', input: e }); return { value: undefined } })
-  on('orch.set', (_$, e) => {
-    rec.calls.push({ noun: 'orch', method: 'set', input: e })
-    return e.key === 'implementer_ctx_k' && e.value === '0' ? { deny: `orch: 0 is not a valid implementer_ctx_k` } : { value: e.value }
-  })
-  on('orch.open', (_$, e) => {
-    rec.calls.push({ noun: 'orch', method: 'open', input: e })
-    return rec.denyOrchOpen ? { deny: rec.denyOrchOpen } : { value: undefined }
-  })
-  on('tldr.set', (_$, e) => { rec.calls.push({ noun: 'tldr', method: 'set', input: e }); return { value: e.value as number | boolean } })
+  // Each loaded noun's set and open, answered beneath the fake plugins: recorded, and answered as the real one would.
+  const nouns = o.nouns === true ? ['handoff', 'orch', 'tldr'] : o.nouns ?? []
+  if (nouns.includes('handoff')) {
+    on('handoff.set', (_$, e) => { rec.calls.push({ noun: 'handoff', method: 'set', input: e }); return { value: e.value as number | boolean } })
+    on('handoff.open', (_$, e) => { rec.calls.push({ noun: 'handoff', method: 'open', input: e }); return { value: undefined } })
+  }
+  if (nouns.includes('orch')) {
+    on('orch.set', (_$, e) => {
+      rec.calls.push({ noun: 'orch', method: 'set', input: e })
+      return e.key === 'implementer_ctx_k' && e.value === '0' ? { deny: `orch: 0 is not a valid implementer_ctx_k` } : { value: e.value }
+    })
+    on('orch.open', (_$, e) => {
+      rec.calls.push({ noun: 'orch', method: 'open', input: e })
+      return rec.denyOrchOpen ? { deny: rec.denyOrchOpen } : { value: undefined }
+    })
+  }
+  if (nouns.includes('tldr')) on('tldr.set', (_$, e) => { rec.calls.push({ noun: 'tldr', method: 'set', input: e }); return { value: e.value as number | boolean } })
   return rec
 }
 
@@ -164,6 +233,36 @@ async function openPane($: Engine) {
   await hint.press({ key: 'junkd-toggle' })
   return $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
 }
+
+const keysOf = async (pane: Awaited<ReturnType<typeof openPane>>, prefix: string) => (await pane.findAll({ type: 'Box' })).map(b => b.key).filter(k => k?.startsWith(prefix))
+
+// First in the file: the module caches `home` once HOME is read, so the case without HOME runs before any other.
+test('paths: CLAUDE_CONFIG_DIR and HOME unset -> `sh -c echo $HOME`, trimmed, then /.claude', async ($, on) => {
+  const files: Record<string, string> = {
+    ['/fake/h2/.claude/plugins/marketplaces/junk-drawer/.claude-plugin/marketplace.json']: JSON.stringify({ name: 'junk-drawer', plugins: [entry('p1', 'x')] }),
+    ['/fake/h2/.claude/settings.json']: JSON.stringify({ enabledPlugins: {} }),
+  }
+  const rec = world(on, files, { env: {} })
+  const pane = await openPane($)
+  expect(rec.reads[1]).toBe('/fake/h2/.claude/plugins/marketplaces/junk-drawer/.claude-plugin/marketplace.json')
+  expect(rec.reads[2]).toBe('/fake/h2/.claude/settings.json')
+  expect(await pane.find({ type: 'Box', key: 'plugin-row:p1' })).toBeDefined()
+})
+
+test('paths: CLAUDE_CONFIG_DIR unset -> $HOME/.claude for the reads and the flip write', async ($, on) => {
+  const H = '/fake/home/.claude'
+  const files: Record<string, string> = {
+    [`${H}/plugins/marketplaces/junk-drawer/.claude-plugin/marketplace.json`]: JSON.stringify({ name: 'junk-drawer', plugins: [entry('p1', 'x')] }),
+    [`${H}/settings.json`]: JSON.stringify({ enabledPlugins: {} }),
+  }
+  const rec = world(on, files, { env: { HOME: '/fake/home' } })
+  const pane = await openPane($)
+  expect(rec.reads[1]).toBe(`${H}/plugins/marketplaces/junk-drawer/.claude-plugin/marketplace.json`)
+  expect(rec.reads[2]).toBe(`${H}/settings.json`)
+  await pane.press({ key: 'plugin:p1' })
+  expect(rec.mvs).toEqual([[`${H}/settings.json.junkd-tmp`, `${H}/settings.json`]])
+  expect(JSON.parse(files[`${H}/settings.json`]!)).toEqual({ enabledPlugins: { 'p1@junk-drawer': true } })
+})
 
 test('AC6: ✚ junkd is drawn under the prompt, alone or beside what is beneath; a click opens, the next closes', async ($, on) => {
   const rec = world(on, fixture())
@@ -273,7 +372,7 @@ test('AC2: a tenth plugin has no hotkey; 1-9 stay with the first nine; the pane 
 })
 
 test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flips a boolean through that plugin's set; enter saves a number or a choice; settings ▸ calls open", WITH_NOUNS, async ($, on) => {
-  const rec = world(on, fixture(), true)
+  const rec = world(on, fixture(), { nouns: true })
   const pane = await openPane($)
 
   // Each section: a blank row (marginTop), a dim rule, its name bold in the accent colour; handoff and orch have
@@ -354,7 +453,7 @@ test("AC3: Settings shows each loaded, enabled noun's main fields; a letter flip
 })
 
 test('AC3: a plugin on in the merged settings shows its section and is marked when off at user scope; one off in the merged settings shows none, even while its hooks are loaded; a refused open keeps the pane', WITH_NOUNS, async ($, on) => {
-  const rec = world(on, fixture({ 'handoff@junk-drawer': true, 'orch@junk-drawer': true, 'tldr@junk-drawer': false }), true)
+  const rec = world(on, fixture({ 'handoff@junk-drawer': true, 'orch@junk-drawer': true, 'tldr@junk-drawer': false }), { nouns: true })
   rec.merged = JSON.stringify({ enabledPlugins: { 'handoff@junk-drawer': true, 'orch@junk-drawer': false, 'tldr@junk-drawer': true } })
   rec.denyOrchOpen = 'orch: no room'
   const pane = await openPane($)
@@ -377,7 +476,7 @@ test('AC3: a plugin on in the merged settings shows its section and is marked wh
 })
 
 test("AC4: Commands lists the enabled plugins' slash commands with their one-line descriptions, from $.command.list()", WITH_NOUNS, async ($, on) => {
-  const rec = world(on, fixture(), true)
+  const rec = world(on, fixture(), { nouns: true })
   rec.commands = [
     { name: 'clear', description: 'Clear the conversation', source: 'builtin' },
     { name: 'tldr:tldr', description: 'TL;DR of the last message', source: 'plugin', plugin: 'tldr' },
@@ -414,4 +513,167 @@ test('AC5: with none of handoff, orch and tldr loaded, /junkd opens with Plugins
   expect((await pane.find({ type: 'Text', text: '/junkd' }))?.text).toBe('/junkd')
   expect((await pane.find({ key: 'note' }))?.text).toBe('')
   expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  tab move  q close')
+})
+
+test('AC6: PromptHint with nothing beneath (next throws) -> the toggle alone, and it still opens', async ($, on) => {
+  const rec = world(on, fixture(), { hintThrows: true })
+  const hint = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...HINT })
+  expect((await hint.find({ type: 'Button', key: 'junkd-toggle' }))?.text).toBe('✚ junkd')
+  await hint.press({ key: 'junkd-toggle' })
+  expect(rec.opens.map(o => o.id)).toEqual(['junkd'])
+})
+
+test('AC6: session.start with the pane already placed -> it is refreshed, and the first /junkd closes it', async ($, on) => {
+  const rec = world(on, fixture(), { panes: [{ id: 'junkd' }] })
+  await start($)
+  await run($, 'junkd')
+  expect(rec.closed).toEqual(['junkd'])
+  expect(rec.opens).toEqual([])
+  await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE }) // flushes the start's refresh
+  expect(rec.reads[1]).toBe(MARKETPLACE_JSON)
+  expect(rec.reads).toContain(SETTINGS)
+})
+
+test('the mobile surface gets the engine pane, not ours', async ($, on) => {
+  world(on, fixture())
+  const pane = await $.ui.mount({ plugin: 'junkd', surface: 'mobile' as never, ...PANE })
+  expect(await pane.find({ key: 'engine' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'Plugins' })).toBeUndefined()
+  expect(await pane.find({ type: 'Button', key: 'close' })).toBeUndefined()
+})
+
+test('AC2: a checkout marketplace two levels up wins; the cache copy is never read', async ($, on) => {
+  const files = fixture()
+  const rec = world(on, files, { checkout: JSON.stringify({ name: 'checkout-mk', plugins: [entry('onlyme', 'x'), entry('junkd', 'self')] }) })
+  const pane = await openPane($)
+  expect(await pane.find({ type: 'Box', key: 'plugin-row:onlyme' })).toBeDefined()
+  expect(await pane.find({ type: 'Box', key: 'plugin-row:statusline' })).toBeUndefined()
+  expect(rec.reads).not.toContain(MARKETPLACE_JSON)
+  expect((await pane.find({ type: 'Text', text: /checkout-mk$/ }))?.text).toBe('✚ junkd  checkout-mk')
+})
+
+test('AC2: no marketplace.json anywhere -> the pane opens with the error note and no rows', async ($, on) => {
+  const files = fixture()
+  delete files[MARKETPLACE_JSON]
+  const rec = world(on, files)
+  const pane = await openPane($)
+  expect(rec.opens.map(o => o.id)).toEqual(['junkd'])
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✗ Error: junk-drawer marketplace.json not found')
+  expect(await keysOf(pane, 'plugin-row:')).toEqual([])
+  expect((await pane.find({ key: 'no-settings' }))?.text).toBe('no settings: none of handoff, orch, tldr is loaded')
+  expect((await pane.find({ type: 'Text', text: 'No commands.' }))?.text).toBe('No commands.')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys tab move  q close')
+})
+
+test('AC2: a broken marketplace.json is the note; an empty object draws no rows and the default name', async ($, on) => {
+  const files = fixture()
+  files[MARKETPLACE_JSON] = '{ nope'
+  world(on, files)
+  const pane = await openPane($)
+  expect((await pane.find({ key: 'note' }))?.text).toMatch(/^✗ /)
+  expect(await keysOf(pane, 'plugin-row:')).toEqual([])
+  await pane.unmount()
+  files[MARKETPLACE_JSON] = '{}'
+  const pane2 = await openPane($) // closes, then
+  await pane2.unmount()
+  const pane3 = await openPane($)
+  expect((await pane3.find({ key: 'note' }))?.text).toBe('')
+  expect(await keysOf(pane3, 'plugin-row:')).toEqual([])
+  expect((await pane3.find({ type: 'Text', text: /junk-drawer$/ }))?.text).toBe('✚ junkd  junk-drawer')
+  expect((await pane3.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys tab move  q close')
+})
+
+test('AC2: no settings.json yet -> created with enabledPlugins only, the temp file gone', async ($, on) => {
+  const files = fixture()
+  delete files[SETTINGS]
+  const rec = world(on, files)
+  const pane = await openPane($)
+  expect((await pane.find({ type: 'Button', key: 'plugin:statusline' }))?.text).toBe('on')
+  await pane.press({ key: 'plugin:statusline' })
+  expect(files[SETTINGS]).toBe(`${JSON.stringify({ enabledPlugins: { 'statusline@junk-drawer': true } }, null, 2)}\n`)
+  expect(Object.keys(files).filter(k => k.endsWith('.junkd-tmp'))).toEqual([])
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ statusline on: run /reload-plugins')
+  expect(rec.writes).toEqual([`${SETTINGS}.junkd-tmp`])
+})
+
+test('AC2: settings.json is a symlink -> written beside the real file, through the link', async ($, on) => {
+  const files = fixture()
+  files['/fake/real/settings.json'] = files[SETTINGS]!
+  const rec = world(on, files, { realPath: { [SETTINGS]: '/fake/real/settings.json' } })
+  const pane = await openPane($)
+  await pane.press({ key: 'plugin:statusline' })
+  expect(rec.writes).toEqual(['/fake/real/settings.json.junkd-tmp'])
+  expect(rec.mvs).toEqual([['/fake/real/settings.json.junkd-tmp', '/fake/real/settings.json']])
+  expect(JSON.parse(files['/fake/real/settings.json']!).enabledPlugins['statusline@junk-drawer']).toBe(true)
+  expect(JSON.parse(files[SETTINGS]!).enabledPlugins['statusline@junk-drawer']).toBeUndefined()
+})
+
+test('AC2: mv fails -> the note names stderr, the file stays, no reload row', async ($, on) => {
+  const files = fixture()
+  const before = files[SETTINGS]
+  world(on, files, { mvExit: 1, mvErr: 'mv: denied' })
+  const pane = await openPane($)
+  await pane.press({ key: 'plugin:statusline' })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✗ Error: mv: denied')
+  expect(files[SETTINGS]).toBe(before)
+  expect(await pane.find({ type: 'Text', text: 'run /reload-plugins to apply' })).toBeUndefined()
+})
+
+test('AC2: mv fails with empty stderr -> `mv exited N`', async ($, on) => {
+  world(on, fixture(), { mvExit: 3 })
+  const pane = await openPane($)
+  await pane.press({ key: 'plugin:statusline' })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✗ Error: mv exited 3')
+})
+
+test('AC3: only tldr loaded -> one section, no empty note, a-a; a get that throws shows the default', { plugins: [FAKE_TLDR_BROKEN_GET] }, async ($, on) => {
+  world(on, fixture(), { nouns: ['tldr'] })
+  const pane = await openPane($)
+  expect(await keysOf(pane, 'group:')).toEqual(['group:tldr'])
+  expect(await pane.find({ key: 'no-settings' })).toBeUndefined()
+  expect((await pane.find({ type: 'Input', key: 'set:tldr:sentences' }))?.props.value).toBe('3') // the default: get threw
+  expect((await pane.find({ type: 'Button', key: 'set:tldr:terse' }))?.text).toBe('off') // get said true
+  expect((await pane.find({ key: 'note' }))?.text).toBe('')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-a setting  tab move  q close')
+})
+
+test('AC3: 26 booleans -> q skipped, the 25th z, the 26th none; an unsupported type is named; no value -> empty input', { plugins: [FAKE_HANDOFF_WIDE] }, async ($, on) => {
+  world(on, fixture(), { nouns: ['handoff'] })
+  const pane = await openPane($)
+  const hk = async (i: number) => (await pane.find({ type: 'Button', key: `set:handoff:b${i}` }))?.props.hotkey
+  expect(await hk(0)).toBe('a')
+  expect(await hk(15)).toBe('p')
+  expect(await hk(16)).toBe('r')
+  expect(await hk(24)).toBe('z')
+  expect(await hk(25)).toBeUndefined()
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-z setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: 'unsupported type object' }))?.props.color).toBe('error')
+  expect(await pane.find({ type: 'Input', key: 'set:handoff:blob' })).toBeUndefined()
+  expect((await pane.find({ type: 'Input', key: 'set:handoff:num' }))?.props.value).toBe('')
+})
+
+test('AC3: after settings ▸ the next /junkd opens again; a reopen clears the note', { plugins: [FAKE_ORCH_ONE] }, async ($, on) => {
+  const rec = world(on, fixture(), { nouns: ['orch'] })
+  await start($)
+  const pane = await openPane($)
+  await pane.press({ key: 'set:orch:guard=off' })
+  expect(rec.calls).toEqual([{ noun: 'orch', method: 'set', input: { key: 'guard', value: 'off' } }])
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ orch.guard = "off"')
+  await pane.press({ key: 'pane:orch' })
+  expect(rec.calls[1]).toEqual({ noun: 'orch', method: 'open', input: {} })
+  expect(rec.closed).toEqual(['junkd'])
+  await pane.unmount()
+  await run($, 'junkd')
+  expect(rec.opens.map(o => o.id)).toEqual(['junkd', 'junkd'])
+  expect(rec.closed).toEqual(['junkd'])
+  const pane2 = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  expect((await pane2.find({ key: 'note' }))?.text).toBe('')
+})
+
+test('AC4: command.list throws -> No commands., no note, the rest drawn', async ($, on) => {
+  world(on, fixture(), { listThrows: true })
+  const pane = await openPane($)
+  expect((await pane.find({ type: 'Text', text: 'No commands.' }))?.text).toBe('No commands.')
+  expect((await pane.find({ key: 'note' }))?.text).toBe('')
+  expect(await pane.find({ type: 'Box', key: 'plugin-row:orch' })).toBeDefined()
 })
