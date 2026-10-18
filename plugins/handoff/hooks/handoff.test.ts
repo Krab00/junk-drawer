@@ -400,6 +400,26 @@ for (const [config, dir] of [['/cfg', '/cfg/handoffs'], ['', DIR]] as const) {
   })
 }
 
+// The home is drawn as ~ only where the folder is inside it: a sibling whose name starts with the home's is not.
+for (const [config, drawn] of [['/home/u2/.claude', '/home/u2/.claude/handoffs'], ['/home/u/cfg', '~/cfg/handoffs']] as const) {
+  test(`HOME ${HOME} with CLAUDE_CONFIG_DIR ${config} draws ${drawn}`, async ($, on) => {
+    on('env.get', { name: 'CLAUDE_CONFIG_DIR' }, () => ({ value: config }))
+    on('fs.list', { path: `${config}/handoffs` }, () => ({
+      value: [{ name: '2026-03-03T00-00_cfcfcfcf.md', kind: 'file' as const, size: 10, mtimeMs: Date.UTC(2026, 2, 3), isLink: false }],
+    }))
+    on('fs.read', { path: `${config}/handoffs/2026-03-03T00-00_cfcfcfcf.md` }, () => ({ value: '# Title CFG\n' }))
+    world(on)
+    await start($)
+    await handoff($, 'panel')
+    const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+    await hotkey(ui, '2')
+    const t = await texts(ui)
+    expect(t).toContain(`1 in ${drawn}`)
+    expect(t).not.toContain('~2/')
+    await ui.unmount()
+  })
+}
+
 test('Settings tab: threshold field writes handoff.threshold', async ($, on) => {
   const rec = world(on)
   await start($)

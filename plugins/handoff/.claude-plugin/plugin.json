@@ -1,7 +1,7 @@
 {
   "name": "handoff",
   "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /ahandoff [prompt] (= /handoff auto) hands off automatically at a context threshold (handoff → /clear → /handon → continue) and resumes a turn that died on the 5h rate limit 2 minutes after the window resets; /handoff panel opens the pane.",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "author": {
     "name": "Krab00"
   },
