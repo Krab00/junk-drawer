@@ -61,7 +61,7 @@ Tabs switch with `1`, `2` and `3`. `q` closes the pane.
 |---|---|---|
 | 1 Auto | Armed or off, a context bar against the threshold, the continuation prompt, the last handoff and this session's handoffs | `a` arm or `o` off, `p` set prompt, `n` handoff now, `r` resume last |
 | 2 Handoffs | Every file in `~/.claude/handoffs`, newest first, with id, time and title; stale ones in yellow | `j`/`k` move, `enter` handon, `v` view (`b` back), `c` copy id, `x` delete (press twice), `f` filter, `m` show more, `n` save now |
-| 3 Settings | The settings below, the handoffs folder and its file count, the version | `t` threshold, `e` check every, `s` arm at start, `l` resume after 5h limit, `a` stale days, `d` delete stale, `o` open folder, `g` segment |
+| 3 Settings | The settings below, the handoffs folder and its file count, the version | `u` enabled, `t` threshold, `e` check every, `s` arm at start, `l` resume after 5h limit, `a` stale days, `d` delete stale, `o` open folder, `g` segment |
 
 ### Settings
 
@@ -69,6 +69,7 @@ Set them in the Settings tab or in `/config` under plugin `handoff`.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
+| `enabled` | boolean | `true` | The auto handoff at all. Off: the loop cannot be armed (`/ahandoff` and `/handoff auto` say so, `autoOn` is ignored, an armed loop disarms at once and a pending 5h-limit resume is dropped) and the `🪃` segment is hidden. `/handoff`, `/handon` and the pane keep working |
 | `threshold` | number | `85` | Context usage in percent that triggers the handoff |
 | `checkEvery` | number | `5` | How often, in tool calls, usage is read mid-turn |
 | `autoOn` | boolean | `false` | Arm the loop at every session start |
@@ -89,8 +90,8 @@ noun's method one input and answers every call asynchronously, so each takes one
 promise. List `handoff` under `dependencies` in your plugin.json and the engine lays its contract
 (`types/index.d.ts`, exported as `Handoff`) beside the API reference, typed.
 
-- `schema()` — one entry per setting: `{ key, type, title, default, main }`; `main` marks `threshold`,
-  `autoOn`, `resumeAfterLimit` and `segment`, the four a frame shows first.
+- `schema()` — one entry per setting: `{ key, type, title, default, main }`; `main` marks `enabled`,
+  `threshold`, `autoOn`, `resumeAfterLimit` and `segment`, the five a frame shows first (`enabled` leads).
 - `get(key)` — the current value of a setting (the `/config` row at load, then every `set`).
 - `set({ key, value, scope? })` — writes `handoff.<key>` through `$.config` and resolves to the stored
   value; refused (unknown key, a value that does not fit, a `config.set` hook's deny) it rejects with

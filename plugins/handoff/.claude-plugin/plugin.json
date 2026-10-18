@@ -1,12 +1,18 @@
 {
   "name": "handoff",
   "description": "Save a session handoff to disk and restore it in a fresh session by id. /handoff saves and returns an id; /handon <id> resumes; /ahandoff [prompt] (= /handoff auto) hands off automatically at a context threshold (handoff → /clear → /handon → continue) and resumes a turn that died on the 5h rate limit 2 minutes after the window resets; /handoff panel opens the pane.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "author": {
     "name": "Krab00"
   },
   "types": "./types/index.d.ts",
   "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Auto handoff: enabled",
+      "description": "Off: no auto handoff at all (no threshold check, no 5h-limit resume, no 🪃 segment); /handoff, /handon and the pane still work.",
+      "default": true
+    },
     "threshold": {
       "type": "number",
       "title": "Auto handoff: context threshold (%)",

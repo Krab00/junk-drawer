@@ -1,6 +1,6 @@
 // The pane's drawing side, shared by every view (port of owl-post's ui.tsx, minimum needed).
 import type { ElementTable } from 'claude-code'
-import { S, type Route } from './lib'
+import { S, type Field, type Route } from './lib'
 
 // Theme keys only, never a hex value: the colours follow the user's theme.
 export const P = {
@@ -28,7 +28,7 @@ export type Api = {
   remove(id: string): Promise<void>
   deleteStale(): Promise<void>
   openFolder(): Promise<void>
-  set(field: 'threshold' | 'checkEvery' | 'autoOn' | 'staleDays' | 'segment' | 'resumeAfterLimit', value: string | number | boolean): Promise<void>
+  set(field: Field, value: string | number | boolean): Promise<void>
   refresh(): void
 }
 
