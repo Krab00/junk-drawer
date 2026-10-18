@@ -251,15 +251,19 @@ const togglePane = async ($: $) => {
   await Promise.all([opened, ...SET.map(n => showOf($, n, { owner: PANE }).catch(() => undefined))])
 }
 
+// The set's other feature panes, closed with junkd when junkd goes some other way than a second toggle (the
+// person's close, settings ▸); `hide({ owner })` closes only a pane still marked the set's.
+const hideSet = ($: $, except?: Noun) => SET.filter(n => n !== except).map(n => hideOf($, n, PANE).catch(() => undefined))
+
 // settings ▸: the press leaves junkd holding the keys, and the engine shows and focuses another pane only while no
 // pane holds them (`focus` is a request, refused without a word). So the feature pane opens first (handoff on its
-// Settings tab), junkd closes, and the feature pane asks for the keys again. It is the person's pane from then on.
-// junkd is gone by the time a refusal comes back, so the reason is a toast.
+// Settings tab), junkd closes with the set's other feature pane, and the feature pane asks for the keys again. It
+// is the person's pane from then on. junkd is gone by the time a refusal comes back, so the reason is a toast.
 const openSettings = async ($: $, plugin: string) => {
   if (!isNoun(plugin)) return
   const shown = showOf($, plugin, { settings: true })
   isOpen = false
-  await $.ui.close({ id: PANE })
+  await Promise.all([$.ui.close({ id: PANE }), ...hideSet($, plugin)])
   try {
     await shown
     await showOf($, plugin, { settings: true, focus: true })
@@ -321,10 +325,15 @@ export const register: Register = (on, options) => {
     )
   })
 
-  // The person's closes (q, ×) pass here; ours go through togglePane.
-  on('ui.close', { id: PANE }, (_$, e, next) => {
+  // The person's closes (×, the tab's close; another plugin's $.ui.close) pass here: the set goes with junkd, each
+  // feature pane only while it is still the set's. Our own closes (togglePane, settings ▸) clear isOpen first and
+  // close the set themselves, so one that comes back here does nothing more.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const isPersons = isOpen
     isOpen = false
-    return next(e)
+    const r = await next(e)
+    if (isPersons) await Promise.all(hideSet($))
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e: RenderInput<'Pane'>, next) => {

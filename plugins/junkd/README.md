@@ -9,8 +9,9 @@ or a click on the `✚ junkd` segment under the prompt, opens a set of panes as 
 
 The feature panes open through their plugin's noun (`$.handoff.show`, `$.orch.show`), marked as the set's.
 A feature pane already open on its own closes first and opens again behind junkd's tab, so its tab never
-comes first. `q` or a second `/junkd` closes all three, but only a feature pane that is still the set's: one
-you closed and opened again on your own (`/handoff panel`, `/orch panel`, `/ahandoff`, the 🪃 click) stays.
+comes first, and from then on it is the set's. `q`, a second `/junkd`, or closing junkd's tab by hand (`×`)
+closes all three, but only a feature pane that is still the set's: one you closed and opened again on your own
+(`/handoff panel`, `/orch panel`, `/ahandoff`, the 🪃 click) stays.
 A plugin that is off or not installed is left out of the set.
 
 Where the set sits depends on the layout. Only in the fullscreen layout (`"tui": "fullscreen"` in
@@ -32,8 +33,9 @@ a git checkout). The junkd pane has three sections, their titles in junk-drawer'
   picked with `tab` and `enter`. The plugin validates what it gets, and a refusal shows in the note line.
   Each row: the key, its title, the control on the right (a switch as an `on`/`off` pill and its letter, a
   choice as its options with the current one inverse, a number as a field). `settings ▸` opens the plugin's
-  pane (`show()`: handoff on its Settings tab, orch its pane), closes junkd, then asks again with `focus`, so
-  the feature pane ends with the keys; tldr has no pane and no button. A plugin that is off, or whose hooks
+  pane (`show()`: handoff on its Settings tab, orch its pane), closes junkd and the set's other feature pane
+  (while it is still the set's), then asks again with `focus`, so the feature pane ends alone with the keys; it
+  is yours from then on. tldr has no pane and no button. A plugin that is off, or whose hooks
   are not loaded, shows no section.
 - **Commands** — the enabled plugins' slash commands with their one-line descriptions, as the engine lists
   them (`$.command.list()`, filtered to the plugins on in this session).
@@ -62,8 +64,8 @@ goes on without it.
 | `a`… | Flip the n-th boolean setting through its plugin's `set` (letters follow the drawn order; `q` is skipped) |
 | `tab` | Move between the number fields and the choice buttons |
 | `enter` | Save the number field, or pick the focused choice |
-| `settings ▸` | Open that plugin's own pane (`show()`); junkd closes so it can take the keys |
-| `q` | Close the set (`/junkd` or the `✚ junkd` segment toggles it) |
+| `settings ▸` | Open that plugin's own pane (`show()`); junkd and the set's other pane close so it can take the keys |
+| `q` | Close the set (`/junkd` or the `✚ junkd` segment toggles it; closing junkd's tab closes it too) |
 
 ## Settings
 
