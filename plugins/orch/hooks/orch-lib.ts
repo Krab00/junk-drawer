@@ -88,9 +88,10 @@ const DOTDOT = /(^|\/)\.\.(\/|$)/
 // Never written, even inside a root: settings and whatever Claude Code loads as config or instructions (a new skill
 // or agent would be live in this session): a .claude dir (the config dir's own roots aside), any plugin under a
 // plugins/ path (a marketplace's, the plugin cache, a --plugin-dir checkout), a .claude-plugin/ manifest dir, and
-// this module's own control state (orch/rules-off, the inject_rules flag). Case-insensitive: macOS paths are.
+// this module's own control state (orch/rules-off, the inject_rules flag, or anything under that name: a directory
+// there would read as the flag). Case-insensitive: macOS paths are.
 const NEVER_WRITE =
-  /\/orch\/rules-off$|\/\.claude\/settings[^/]*\.json$|\/plugins\/(.*\/)?(agents|commands|skills|hooks|rules|output-styles)\/|\/\.claude-plugin\/|(^|\/)(CLAUDE|CLAUDE\.local|AGENTS|SKILL)\.md$/i
+  /\/orch\/rules-off(\/|$)|\/\.claude\/settings[^/]*\.json$|\/plugins\/(.*\/)?(agents|commands|skills|hooks|rules|output-styles)\/|\/\.claude-plugin\/|(^|\/)(CLAUDE|CLAUDE\.local|AGENTS|SKILL)\.md$/i
 const DOT_CLAUDE = /\/\.claude\//i
 const LOADED = /\/(agents|commands|skills|hooks|rules|output-styles)\//i
 const SCRIPT = /^([A-Za-z0-9][A-Za-z0-9._-]*)([\s\S]*)$/ // a file right in bin/: no slash, so no `..` can lead out of it

@@ -125,6 +125,12 @@ const redraw = ($: $) => $.ui.invalidate('ui.render')
 // can read (a shell hook reads no `$.config`), written at every change of the row and at session start.
 async function writeRulesFlag($: $): Promise<void> {
   const flag = `${await configDir($)}/orch/rules-off`
+  // Something that is no file under the flag's name (a directory) is not ours: the hook reads only a file (`-f`), so
+  // it is left alone and said once, never written over or removed.
+  if ((await $.fs.exists(flag)) && (await $.fs.stat(flag)).kind !== 'file') {
+    $.ui.toast(`orch: ${flag} is not a file, so the inject_rules setting is not mirrored there; remove it`)
+    return
+  }
   if (O.inject_rules) await $.process.run(['rm', '-f', '--', flag])
   else await $.fs.write(flag, '')
 }

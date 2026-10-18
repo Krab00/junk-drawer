@@ -28,7 +28,7 @@ setting=$(jq -rs '(if length == 1 then .[0] else error end).pluginConfigs
 case "$setting" in
     true) ;;
     false) exit 0 ;;
-    *) [ ! -e "$cfg/orch/rules-off" ] || exit 0 ;;
+    *) [ ! -f "$cfg/orch/rules-off" ] || exit 0 ;;   # a file only: a directory of that name is no flag
 esac
 
 # cd -P: this script is reached through the plugin-root symlink scripts -> skills/orch/scripts,

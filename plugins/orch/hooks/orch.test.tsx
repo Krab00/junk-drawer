@@ -103,7 +103,9 @@ test('Write: the Read roots or a new .md file; never settings, loaded config, a 
 test("Write: never the module's own control file orch/rules-off (the inject_rules flag), any spelling; the rest of orch/ stays open", () => {
   const write = (file_path: string, extra: Partial<OrchState> = {}) =>
     orchGuard(main('Write', { file_path, content: '' }), st({ exists: false, ...extra }), on_)
-  for (const p of [`${CFG}/orch/rules-off`, `${CFG}/orch//rules-off`, `${CFG}/orch/./rules-off`, `${CFG}/Orch/Rules-Off`, `${CFG}/x/../orch/rules-off`])
+  // the file, and any path under that name: a directory there would read as the flag
+  for (const p of [`${CFG}/orch/rules-off`, `${CFG}/orch//rules-off`, `${CFG}/orch/./rules-off`, `${CFG}/Orch/Rules-Off`, `${CFG}/x/../orch/rules-off`,
+    `${CFG}/orch/rules-off/x.md`, `${CFG}/orch/Rules-Off/x.md`, `${CFG}/orch/rules-off/a/b.md`, `${CFG}/orch/rules-off//x.md`])
     expect(write(p), p).toMatch(/may Write only/)
   expect(write('/home/u/.claude/orch/rules-off', { configDir: '/home/u/.claude' })).toMatch(/may Write only/)
   // a link that lands on it
@@ -359,7 +361,7 @@ function world(on: On) {
   const rec = { model: FABLE as string | undefined, agents: [] as Agent[], files, toasts: [] as string[],
     links: {} as Record<string, string>, dangling: {} as Record<string, string[]>, nowhere: [] as string[], envFails: false,
     config: [] as { key: string; value: unknown }[], opened: [] as string[], focus: [] as (true | undefined)[], closed: [] as string[], runs: [] as string[][],
-    existsFails: false, writeFails: false, notPlaced: false,
+    existsFails: false, writeFails: false, notPlaced: false, dirs: [] as string[], // dirs: folders that exist (fs.exists true, stat kind dir)
     cwd: '/tmp' as string, git: {} as Record<string, string>, gitFails: [] as string[] } // git: a cwd's `rev-parse --show-toplevel`; any other cwd is in no repo; gitFails: the cwds where it exits 128 with that stdout anyway
   on('env.get', (_$, e) => {
     if (rec.envFails) throw new Error('env unavailable')
@@ -371,7 +373,7 @@ function world(on: On) {
   on('fs.stat', (_$, e) => {
     const p = e.path.length > 1 ? e.path.replace(/\/$/, '') : e.path
     if (rec.nowhere.includes(p)) return { value: { kind: 'other' as const, size: 0, mtimeMs: 0, isLink: true } } // the engine's own shape
-    const isFile = p in files
+    const isFile = p in files && !rec.dirs.includes(p)
     const realPath = Object.entries(rec.links).reduce((q, [from, to]) => (q === from || q.startsWith(`${from}/`) ? to + q.slice(from.length) : q), p)
     if (!isFile && (/[^/]\.[A-Za-z0-9]+$/.test(p) || realPath.startsWith('/missing'))) throw new Error(`ENOENT ${p}`)
     return { value: { kind: isFile ? ('file' as const) : ('dir' as const), size: 0, mtimeMs: 0, isLink: false, realPath } }
@@ -394,7 +396,7 @@ function world(on: On) {
   on('tool.call', () => ({ result: 'ok', text: 'ok' }))
   on('fs.exists', (_$, e) => {
     if (rec.existsFails) throw new Error('EACCES')
-    return { value: e.path in files }
+    return { value: e.path in files || rec.dirs.includes(e.path) }
   })
   on('fs.read', (_$, e) => {
     if (!(e.path in files)) throw new Error('ENOENT')
@@ -834,6 +836,22 @@ test('inject_rules mirrors into the flag file scripts/orch-context.sh checks: of
   expect(FLAG in rec.files).toBe(true)
   await frame($, 'set', { key: 'inject_rules', value: 'on' })
   expect(FLAG in rec.files).toBe(false)
+})
+
+test('a directory under the flag name is never written over or removed: one toast, and the shell hook (-f) ignores it', { ...WITH_FRAME, options: { inject_rules: false } }, async ($, on) => {
+  const rec = world(on)
+  const FLAG = `${CFG}/orch/rules-off`
+  rec.dirs.push(FLAG)
+  await start($)
+  expect(FLAG in rec.files, 'no flag written over the directory').toBe(false)
+  expect(rec.toasts.filter(t => t.includes(`${FLAG} is not a file`)).length).toBe(1)
+  await frame($, 'set', { key: 'inject_rules', value: true })
+  expect(rec.runs.some(r => r[0] === 'rm' && r.includes(FLAG)), 'never removed').toBe(false)
+  expect(await frame($, 'get', { key: 'inject_rules' })).toBe(true) // the row still takes the value
+  // a real file there is ours: written and removed as before
+  rec.dirs.length = 0
+  await frame($, 'set', { key: 'inject_rules', value: false })
+  expect(FLAG in rec.files).toBe(true)
 })
 
 test('a denied inject_rules write leaves the flag file alone', WITH_FRAME, async ($, on) => {
