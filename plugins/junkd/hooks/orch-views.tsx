@@ -3,7 +3,8 @@
 // elements, the current values, the note and the actions. Own copies of the few parts: a plugin imports nothing
 // from another plugin's hooks.
 import type { ElementTable, RenderInput } from 'claude-code'
-import type { OrchField, OrchSchemaEntry } from '../types'
+import type { JunkdOrchField as OrchField } from '../types'
+import type { OrchSchemaEntry } from './orch-lib'
 import { ORCH_RANGE, SCHEMA, type OrchValues } from './orch-lib'
 
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button' | 'Input'>
@@ -19,6 +20,7 @@ const LETTERS = 'abcdefghijklmnoprstuvwxyz' // q closes
 export const TAB: [string, string, 'settings'][] = [['1', 'Settings', 'settings']]
 // The manifest's `title` names the row; `description` is drawn beside it in these shorter words.
 const HINTS: Record<OrchField, string> = {
+  enabled: 'the guard and the rule sheet; off: neither',
   guard: 'hold the main loop to planning and delegating',
   allow_fable_agents: 'an explicit Fable model on a subagent',
   implementer_ctx_k: 'reuse an implementer under this many k tokens',

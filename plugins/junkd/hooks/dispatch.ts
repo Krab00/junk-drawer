@@ -1,0 +1,49 @@
+// From a settings key or a pane name to the feature that owns it. The engine follows `$` into another file's
+// function only when it is called by name, so each group is spelled out with its own `if` (see feature.ts).
+import type { JunkdKey, JunkdValue } from '../types'
+import { coreGet, coreSet } from './core'
+import type { $, HideInput, OpenInput, SetResult, ShowInput } from './feature'
+import { handoffGet, handoffHide, handoffOpen, handoffSet, handoffShow } from './handoff'
+import { orchGet, orchHide, orchOpen, orchSet, orchShow } from './orch'
+import { SCHEMA, entryOf } from './settings'
+import { tldrGet, tldrSet } from './tldr'
+
+export type FeaturePane = 'handoff' | 'orch'
+
+// One row's current value. The key is a row of SCHEMA (the caller checked).
+export async function getSetting($: $, key: JunkdKey): Promise<JunkdValue> {
+  const { group, field } = entryOf(key)
+  if (group === 'core') return coreGet($, field)
+  if (group === 'handoff') return handoffGet($, field)
+  if (group === 'orch') return orchGet($, field)
+  return tldrGet($, field)
+}
+
+// Validates, writes the row and applies it: the feature's own rules. The key is a row of SCHEMA (the caller checked).
+export async function setSetting($: $, key: JunkdKey, raw: unknown): Promise<SetResult> {
+  const { group, field } = entryOf(key)
+  if (group === 'core') return coreSet($, field, raw)
+  if (group === 'handoff') return handoffSet($, field, raw)
+  if (group === 'orch') return orchSet($, field, raw)
+  return tldrSet($, field, raw)
+}
+
+// Every row's current value, by key, in manifest order.
+export async function allSettings($: $): Promise<Record<JunkdKey, JunkdValue>> {
+  const out = {} as Record<JunkdKey, JunkdValue>
+  for (const f of SCHEMA) out[f.key] = await getSetting($, f.key)
+  return out
+}
+
+export async function showPane($: $, pane: FeaturePane, input: ShowInput = {}): Promise<void> {
+  if (pane === 'handoff') return handoffShow($, input)
+  return orchShow($, input)
+}
+export async function hidePane($: $, pane: FeaturePane, input: HideInput = {}): Promise<void> {
+  if (pane === 'handoff') return handoffHide($, input)
+  return orchHide($, input)
+}
+export async function openPane($: $, pane: FeaturePane, input: OpenInput = {}): Promise<void> {
+  if (pane === 'handoff') return handoffOpen($, input)
+  return orchOpen($, input)
+}

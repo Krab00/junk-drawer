@@ -1,6 +1,16 @@
 // The orch mod's `$`-free half: the settings and the main-loop guard. index.tsx does the awaits (the main loop's
 // model, the config dir, whether a Write target exists, the SendMessage target's record) and passes the values in.
-import type { OrchField, OrchGuard, OrchSchemaEntry } from '../types'
+import type { JunkdOrchField as OrchField, JunkdOrchGuard as OrchGuard } from '../types'
+
+// One row of the orch group as this file and orch-views.tsx read it: the field (not the `orch_` row key).
+export type OrchSchemaEntry = {
+  key: OrchField
+  type: 'string' | 'number' | 'boolean'
+  title: string
+  default: string | number | boolean
+  main: boolean
+  options?: readonly string[]
+}
 
 export type AgentRecord = { type?: string; tokens?: number } // SendMessage target: agent type, context tokens
 export type OrchState = {
@@ -18,6 +28,7 @@ export type OrchState = {
 // A mirror of plugin.json's `userConfig` (a hooks module cannot import JSON); tests/smoke.sh holds every entry to
 // the manifest. `main` marks the three a frame plugin shows first. `guard` is the manifest's string-with-options row.
 export const SCHEMA: readonly OrchSchemaEntry[] = [
+  { key: 'enabled', type: 'boolean', title: 'Orchestrator: enabled', default: true, main: true },
   { key: 'guard', type: 'string', title: 'Main-loop guard', default: 'fable', main: true, options: ['fable', 'always', 'off'] },
   { key: 'allow_fable_agents', type: 'boolean', title: 'Allow Fable subagents', default: false, main: true },
   { key: 'implementer_ctx_k', type: 'number', title: 'Implementer context cap (k tokens)', default: 400, main: true },
@@ -28,8 +39,8 @@ export const SCHEMA: readonly OrchSchemaEntry[] = [
 export const isField = (key: unknown): key is OrchField => SCHEMA.some(f => f.key === key)
 // The two number rows take a whole number in these bounds; the manifest has no min/max field, so they live here.
 export const ORCH_RANGE: Record<'implementer_ctx_k' | 'rounds', readonly [number, number]> = { implementer_ctx_k: [50, 1000], rounds: [1, 10] }
-export type OrchValues = { guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number }
-export const O: OrchValues = { guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 }
+export type OrchValues = { enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number }
+export const O: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 }
 
 // A raw value (typed in the pane, handed to $.orch.set, or written in the /config menu) to the field's kind;
 // `error` when it does not fit. The one check for every write path.
@@ -50,6 +61,7 @@ export function coerce(key: OrchField, raw: unknown): Coerced {
 // The options the engine fills in from the manifest at load: a key left out or of the wrong type keeps the default,
 // a number out of range is clamped (a load is no write, so nothing is refused).
 export function applyOrchSettings(v: Record<string, unknown>): void {
+  O.enabled = v.enabled === undefined ? true : v.enabled === true
   const g = coerce('guard', v.guard)
   O.guard = g.error === undefined ? (g.value as OrchGuard) : 'fable'
   O.allow_fable_agents = v.allow_fable_agents === true

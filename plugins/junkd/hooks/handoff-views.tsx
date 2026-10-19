@@ -1,7 +1,7 @@
 // The panel's three tabs (Auto, Handoffs, Settings) as `View`s: each reads `S` and calls
 // `c.api`, register.tsx draws the tabs, the rule and the footer around what they return.
-import { DEFAULT_PROMPT, S, limit, type Entry, type Route } from './lib'
-import { Chosen, Field, Filled, Hidden, P, Rule, Spacer, fit, line, when, type Ctx, type View } from './ui'
+import { DEFAULT_PROMPT, S, limit, type Entry, type Route } from './handoff-lib'
+import { Chosen, Field, Filled, Hidden, P, Rule, Spacer, fit, line, when, type Ctx, type View } from './handoff-ui'
 
 
 // What a field holds while typed, before Enter saves it (`null` = show the stored value).

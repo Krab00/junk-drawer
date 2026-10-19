@@ -1,6 +1,6 @@
 // The pane's drawing side, shared by every view (port of owl-post's ui.tsx, minimum needed).
 import type { ElementTable } from 'claude-code'
-import { S, type Field, type Route } from './lib'
+import { S, type Field, type Route } from './handoff-lib'
 
 // Theme keys only, never a hex value: the colours follow the user's theme.
 export const P = {
