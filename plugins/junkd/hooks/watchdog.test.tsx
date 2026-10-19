@@ -525,10 +525,20 @@ async function frame($: Engine, method: string, input?: unknown): Promise<unknow
   return out.ok
 }
 
+// clock.every is dispatched once per period, so the spy counts periods: one live timer asks exactly one per tick.
+const periods = async ($: Engine, w: World, n = 1) => {
+  const before = await watchdogTimers($)
+  await ticks(w, n)
+  return (await watchdogTimers($)) - before
+}
+
 test('the timer: one 30 s interval at session start while orch and the watchdog are on', SPIED, async ($, on) => {
   const w = world(on)
   await start($)
   expect(await watchdogTimers($)).toBe(1)
+  expect(await periods($, w, 3)).toBe(3)
+  await start($) // a second session start keeps the one timer
+  expect(await periods($, w, 2)).toBe(2)
 })
 
 for (const options of [{ orch_watchdog: false }, { orch_enabled: false }]) {
@@ -552,20 +562,25 @@ test('the timer follows the rows: watchdog off cancels it and clears the alarms,
   await ticks(w, 1)
   await w.clock.advance(16 * MINUTE)
   expect(w.rec.toasts.filter(t => /stalled/.test(t))).toHaveLength(1)
+  expect(await hintText($)).toMatch(/⚠ 1 stalled/)
   await frame($, 'set', { key: 'orch_watchdog', value: false })
   const toasts = w.rec.toasts.length
-  await w.clock.advance(60 * MINUTE)
+  const lists = w.rec.lists
+  await w.clock.advance(TICK_MS) // the period already asked may still resolve: its tick does nothing
+  expect(await periods($, w, 120)).toBe(0)
   expect(w.rec.toasts.length).toBe(toasts)
-  expect(await watchdogTimers($)).toBe(1)
+  expect(w.rec.lists).toBe(lists)
   // the segment is gone while off
   expect(await hintText($)).not.toMatch(/⚠/)
   await frame($, 'set', { key: 'orch_watchdog', value: true })
-  expect(await watchdogTimers($)).toBe(2)
+  expect(await periods($, w)).toBe(1)
   await frame($, 'set', { key: 'orch_watchdog', value: true }) // on again: still the one timer
-  expect(await watchdogTimers($)).toBe(2)
+  expect(await periods($, w)).toBe(1)
   await frame($, 'set', { key: 'orch_enabled', value: false })
+  await w.clock.advance(TICK_MS)
+  expect(await periods($, w, 4)).toBe(0)
   await frame($, 'set', { key: 'orch_enabled', value: true })
-  expect(await watchdogTimers($)).toBe(3)
+  expect(await periods($, w, 2)).toBe(2)
 })
 
 const HINT = { component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '' } } as const
@@ -908,7 +923,8 @@ test('the rows by the /config menu: each spelling of a switch, the minutes clamp
   await frame($, 'config', { key: 'junkd.orch_idle_stop_minutes', value: 500 })
   expect(w.rec.config.at(-1)).toEqual({ key: 'junkd.orch_idle_stop_minutes', value: 120 })
   expect(await frame($, 'get', { key: 'orch_idle_stop_minutes' })).toBe(120)
-  await expect(frame($, 'config', { key: 'junkd.orch_stall_minutes', value: 'soon' })).rejects.toThrow(/soon is not a valid stall_minutes/)
+  expect(await frame($, 'config', { key: 'junkd.orch_stall_minutes', value: 'soon' })).toEqual({ deny: 'soon is not a valid stall_minutes (minutes, 1–120)' })
+  expect(await frame($, 'get', { key: 'orch_stall_minutes' })).toBe(15)
   await frame($, 'config', { key: 'junkd.orch_stall_minutes', value: '0' })
   expect(await frame($, 'get', { key: 'orch_stall_minutes' })).toBe(1)
   // the bound moved to 1 minute: an agent idle 61 s stalls
