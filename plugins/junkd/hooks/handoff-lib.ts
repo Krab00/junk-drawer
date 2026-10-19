@@ -93,7 +93,7 @@ export const SCHEMA: readonly SchemaEntry[] = [
   { key: 'staleDays', type: 'number', title: 'Handoffs: mark stale after N days', default: 30, main: false },
   { key: 'segment', type: 'boolean', title: 'Status line: show the 🪃 segment', default: true, main: true },
 ]
-export const isField = (key: string): key is Field => SCHEMA.some(f => f.key === key)
+export const isField = (key: unknown): key is Field => SCHEMA.some(f => f.key === key)
 
 // A raw value (typed in the pane, handed to $.handoff.set or written in the /config menu) to the field's kind;
 // `error` when it does not fit. The value is stored as it comes back, never rounded later: what the row holds is

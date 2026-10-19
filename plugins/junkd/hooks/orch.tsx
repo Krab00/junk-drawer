@@ -1,16 +1,17 @@
-// Plugin orch's hooks module: the main-loop guard of orchestrator mode (tool.call, agent.spawn), the settings pane
-// (/orch panel) and `$.orch` for other plugins. The engine follows `$` only into functions of this file, never
-// across an import, so every function that takes `$` lives here; the `$`-free parts are orch-lib.ts (settings,
-// the guard's rules) and orch-views.tsx (the pane).
-import type { EngineInterface, Register, RenderInput } from 'claude-code'
-import type { OrchField, OrchGuard } from '../types'
-import { O, PREFIX, SCHEMA, applyOrchSettings, coerce, guardActive, isField, orchGuard, orchSpawn, transcriptTokens, type AgentRecord, type OrchState } from './orch-lib'
+// orch: the main-loop guard of orchestrator mode (tool.call, agent.spawn), the settings pane (/junkd:orch panel)
+// and the `orch` settings group. The `$`-free parts are orch-lib.ts (settings, the guard's rules) and orch-views.tsx
+// (the pane). index.tsx runs orchToolDeny inside the one tool.call hook and orchStart at session start.
+// CONTRACT (T11): the slice ports the enabled gate, the flag path under ${CLAUDE_CONFIG_DIR}/junkd/ and the names.
+import type { EngineInterface, On, RenderInput, ToolCallInput } from 'claude-code'
+import type { JunkdOrchField as OrchField, JunkdOrchGuard as OrchGuard } from '../types'
+import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
+import { O, PREFIX, applyOrchSettings, coerce, guardActive, isField, orchGuard, orchSpawn, transcriptTokens, type AgentRecord, type OrchState } from './orch-lib'
 import { orchView, type Els } from './orch-views'
+import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 
 type $ = EngineInterface
 
 const PANE = 'orch'
-const NO_HOOK = 'orch: the hooks module did not answer'
 
 let home = ''
 async function homeDir($: $): Promise<string> {
@@ -20,7 +21,9 @@ async function homeDir($: $): Promise<string> {
   return home
 }
 // Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; tests point it at a fake tree.
-const configDir = async ($: $) => (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`
+async function configDir($: $) {
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`
+}
 
 // ------------------------------------------------------------------ the guard's inputs
 
@@ -119,7 +122,9 @@ async function orchCheck($: $, e: { tool: string; agentId?: string; [k: string]:
 
 let note = ''
 let paneOpen = false
-const redraw = ($: $) => $.ui.invalidate('ui.render')
+function redraw($: $) {
+  return $.ui.invalidate('ui.render')
+}
 
 // inject_rules off is the flag file scripts/orch-context.sh falls back to when settings.json holds no value it
 // can read (a shell hook reads no `$.config`), written at every change of the row and at session start.
@@ -143,7 +148,7 @@ async function apply($: $, key: OrchField, value: OrchGuard | number | boolean):
   redraw($)
 }
 
-// Writes one field to its `/config` row (`orch.<field>`) and mirrors it into O. `{ deny }` when the value does not
+// Writes one field to its `/config` row (`junkd.orch_<field>`) and mirrors it into O. `{ deny }` when the value does not
 // fit or a hook refused; the pane's note says which either way.
 async function setOption($: $, key: OrchField, raw: unknown) {
   const c = coerce(key, raw)
@@ -152,7 +157,7 @@ async function setOption($: $, key: OrchField, raw: unknown) {
     redraw($)
     return { deny: c.error }
   }
-  const { deny } = await $.config.set({ key: `orch.${key}`, value: c.value })
+  const { deny } = await $.config.set({ key: configKey(keyOf('orch', key)), value: c.value })
   if (deny !== undefined) {
     note = `✗ ${deny}`
     redraw($)
@@ -182,64 +187,60 @@ async function closePane($: $) {
   owner = undefined
   await $.ui.close({ id: PANE })
 }
-const togglePane = ($: $) => (paneOpen ? closePane($) : openPane($))
+function togglePane($: $) {
+  return (paneOpen ? closePane($) : openPane($))
+}
 
-export const register: Register = (on, options) => {
-  applyOrchSettings(options)
+// ------------------------------------------------------------------ what index.tsx and dispatch.ts call
 
-  // `$.orch`, the noun other plugins call. The host hands a noun's method exactly one input and forbids the noun
-  // capturing `$`: schema and get need none and answer here; set, open and guardState are answered by the hooks on
-  // orch.set / orch.open / orch.guardState below.
-  on('engine.create', async (_$, e, next) => ({
-    ...(await next(e)),
-    orch: {
-      schema: async () => SCHEMA.map(f => ({ ...f, ...(f.options ? { options: [...f.options] } : {}) })),
-      get: async (input: { key: OrchField }) => {
-        if (!isField(input?.key)) throw new Error(`orch: no setting ${String(input?.key)}`)
-        return O[input.key]
-      },
-      set: async () => { throw new Error(NO_HOOK) },
-      open: async () => { throw new Error(NO_HOOK) },
-      show: async () => { throw new Error(NO_HOOK) },
-      hide: async () => { throw new Error(NO_HOOK) },
-      guardState: async () => { throw new Error(NO_HOOK) },
-    },
-  }))
-  // A `{ deny }` here rejects the caller's promise with the reason (the host's own rule for a noun's event).
-  on('orch.set', async ($, e) => {
-    if (!isField(e?.key)) return { deny: `orch: no setting ${String(e?.key)}` }
-    if (e.scope !== undefined && e.scope !== 'user') return { deny: `orch: scope ${String(e.scope)} is not supported yet` }
-    const r = await setOption($, e.key, e.value)
-    return r.deny !== undefined ? { deny: r.deny } : { value: r.value }
-  })
-  on('orch.open', async $ => {
-    await togglePane($)
-    return { value: undefined }
-  })
-  // show never closes: the pane opens (or, up already, is asked again: retitled, the keys asked for); `owner` marks
-  // it as that caller's, for hide.
-  on('orch.show', async ($, e) => {
-    const opened = openPane($, e?.focus === true)
-    owner = e?.owner
-    await opened
-    return { value: undefined }
-  })
-  // hide closes the pane; with `owner`, only while the pane is still the one that owner's show opened.
-  on('orch.hide', async ($, e) => {
-    if (e?.owner !== undefined && e.owner !== owner) return { value: undefined }
-    await closePane($)
-    return { value: undefined }
-  })
-  on('orch.guardState', async $ => {
-    const model = O.guard === 'off' ? await $.session.model().catch(() => '') : O.guard === 'fable' ? await liveModel($) : await $.session.model().catch(() => '')
-    return { value: { active: guardActive(model), model } }
-  })
+export async function orchGet(_$: $, field: string): Promise<string | number | boolean> {
+  return (O as Record<string, string | number | boolean>)[field]!
+}
+export async function orchSet($: $, field: string, raw: unknown): Promise<SetResult> {
+  if (!isField(field)) return { deny: `junkd: no setting ${keyOf('orch', field)}` }
+  const r = await setOption($, field, raw)
+  return r.deny !== undefined ? { deny: r.deny } : { value: r.value }
+}
+// open toggles the pane (orch has no tabs: a route is refused).
+export async function orchOpen($: $, input: OpenInput = {}): Promise<void> {
+  if (input.route !== undefined) throw new Error(`junkd: the orch pane has no tab ${String(input.route)}`)
+  await togglePane($)
+}
+// show never closes: the pane opens (or, up already, is asked again: retitled, the keys asked for); `owner` marks
+// it as that caller's, for hide.
+export async function orchShow($: $, input: ShowInput = {}): Promise<void> {
+  const opened = openPane($, input.focus === true)
+  owner = input.owner
+  await opened
+}
+// hide closes the pane; with `owner`, only while the pane is still the one that owner's show opened.
+export async function orchHide($: $, input: HideInput = {}): Promise<void> {
+  if (input.owner !== undefined && input.owner !== owner) return
+  await closePane($)
+}
+export async function orchStart($: $): Promise<void> {
+  await writeRulesFlag($).catch(() => undefined)
+}
+export async function orchGuardState($: $): Promise<{ active: boolean; model: string }> {
+  const model = O.guard === 'fable' ? await liveModel($) : await $.session.model().catch(() => '')
+  return { active: guardActive(model), model }
+}
+// The guard: the model's own calls on the main loop (index.tsx asks only for those). A deny's reason, or undefined.
+export async function orchToolDeny($: $, e: ToolCallInput): Promise<string | undefined> {
+  return orchCheck($, e as unknown as { tool: string; agentId?: string; [k: string]: unknown })
+}
+// tool.call's .catch: a hook that throws is skipped and the tool runs, so a guarded main loop refuses instead.
+export function orchCatchDeny(agentId?: string): string | undefined {
+  return O.guard !== 'off' && !agentId ? `${PREFIX} guard error` : undefined
+}
+
+export function registerOrch(on: On, options: Record<string, unknown>): void {
+  applyOrchSettings(groupOptions(options, 'orch'))
 
   // The /config menu's own writes to an orch row pass here (a hook never sees its plugin's own `$.config.set`): a
   // value `set` would refuse is refused the same way, and one the row took lands in O through `apply`.
-  on('config.set', async ($, e, next) => {
-    if (!e.key.startsWith('orch.')) return next(e)
-    const key = e.key.slice(5)
+  on('config.set', { key: configKeys('orch') }, async ($, e, next) => {
+    const key = fieldOf('orch', e.key)
     if (!isField(key)) return next(e)
     const c = coerce(key, e.value)
     if (c.error !== undefined) return { deny: c.error }
@@ -248,20 +249,8 @@ export const register: Register = (on, options) => {
     return r
   })
 
-  on('session.start', async ($, e, next) => {
-    await writeRulesFlag($).catch(() => undefined)
-    return next(e)
-  })
-
-  // The guard: the model's own calls on the main loop (not another plugin's $.tool.call, not a subagent's). A hook
-  // that throws is skipped and the tool runs, so the .catch refuses instead on a guarded main loop.
-  on('tool.call', async ($, e, next) => {
-    const deny = next.origin.plugin === 'engine' ? await orchCheck($, e) : undefined
-    return deny ? { deny } : next(e)
-  }).catch(($, e, next) => (next.called ? next(e) : O.guard !== 'off' && !e.agentId ? { deny: `${PREFIX} guard error` } : next(e)))
-
-  // The spawn as the engine resolved it (fork, model), behind the Agent rule of the guard above; the model's own
-  // spawns only, as for tool.call.
+  // The spawn as the engine resolved it (fork, model), behind the Agent rule of the guard; the model's own spawns
+  // only, as for tool.call.
   on('agent.spawn', async ($, e, next) => {
     const deny = next.origin.plugin === 'engine' ? orchSpawn(e) : undefined
     return deny ? { deny } : next(e)
@@ -278,8 +267,8 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // /orch panel toggles the pane; anything else is the plain /orch.
-  on('command.run', { command: 'orch:orch' }, async ($, e, next) => {
+  // /junkd:orch panel toggles the pane; anything else is the plain skill.
+  on('command.run', { command: 'junkd:orch' }, async ($, e, next) => {
     if (e.args.trim() !== 'panel') return next(e)
     await togglePane($)
     return {}

@@ -1,10 +1,17 @@
+// handoff: /junkd:handoff, /junkd:handon, /junkd:ahandoff, the auto handoff loop (a context threshold, the 5h-limit
+// resume), the 🪃 segment and its pane. The `$`-free parts are handoff-lib.ts (state, options), handoff-ui.tsx and
+// handoff-views.tsx (the pane). index.tsx runs handoffStart at session start, handoffToolCall inside the one tool.call
+// hook and handoffSegment inside the one PromptHint render.
+// CONTRACT (T11): the slice ports the names (/junkd:*, junkd.handoff_* rows) and the tests.
 import { atom, update } from 'claude-code'
-import type { RenderSurface, Register } from 'claude-code'
+import type { Next, On, RenderInput, RenderSurface, ToolCallInput } from 'claude-code'
 
-import type { Ahandoff, Handoff } from '../types'
-import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, SCHEMA, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './lib'
-import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './ui'
-import { VIEWS } from './views'
+import type { JunkdAhandoff as Ahandoff } from '../types'
+import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
+import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
+import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, SCHEMA, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
+import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
+import { VIEWS } from './handoff-views'
 
 const PANE = 'ahandoff'
 const EDGE = 2 // empty columns at the pane's right edge (a docked pane's last column may not show)
@@ -18,7 +25,7 @@ function redraw($: $) {
 
 const STORE = 'ahandoff'
 
-const view = atom({ plugin: 'handoff', key: 'ahandoff' } as const, {
+const view = atom({ plugin: 'junkd', key: 'ahandoff' } as const, {
   on: false, phase: 'idle', percent: 0, threshold: 85, checkEvery: 5,
   prompt: '', lastId: '', count: 0, route: 'auto', paneOpen: false,
 } satisfies Ahandoff)
@@ -265,7 +272,7 @@ async function setOption($: $, field: Field, raw: string | number | boolean) {
     return { deny: c.error }
   }
   const value = c.value
-  const { deny } = await $.config.set({ key: `handoff.${field}`, value })
+  const { deny } = await $.config.set({ key: configKey(keyOf('handoff', field)), value })
   if (deny) {
     S.note = `✗ ${deny}`
     redraw($)
@@ -294,26 +301,6 @@ async function apply($: $, field: Field, value: number | boolean) {
 async function applyEnabled($: $, on: boolean) {
   S.enabled = on
   if (!on && S.armed) await disarm($)
-}
-
-// `$.handoff`, the noun other plugins call. The host hands a noun's method exactly one input and the hooks on
-// it see that input as `e`, so set and open take one object; get, schema and status need no `$` and answer here.
-// `set`'s `scope`: only `user` (the /config row) exists today; the field is there so project/session scopes can
-// be added later without changing callers. The hooks on handoff.set / handoff.open below do the `$` work.
-const NO_HOOK = 'handoff: the hooks module did not answer'
-function handoffNoun(): Handoff {
-  return {
-    schema: async () => SCHEMA.map(f => ({ ...f })),
-    get: async key => {
-      if (!isField(key)) throw new Error(`handoff: no setting ${String(key)}`)
-      return current(key)
-    },
-    set: async () => { throw new Error(NO_HOOK) },
-    open: async () => { throw new Error(NO_HOOK) },
-    show: async () => { throw new Error(NO_HOOK) },
-    hide: async () => { throw new Error(NO_HOOK) },
-    status: async () => status(),
-  }
 }
 
 function api($: $): Api {
@@ -365,64 +352,110 @@ function api($: $): Api {
   }
 }
 
-export const register: Register = (on, options) => {
-  loadOptions(options)
+// ------------------------------------------------------------------ what index.tsx and dispatch.ts call
 
-  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), handoff: handoffNoun() }))
-  // A `{ deny }` here rejects the caller's promise with the reason (the host's own rule for a noun's event).
-  on('handoff.set', async ($, e) => {
-    if (!isField(e.key)) return { deny: `handoff: no setting ${String(e.key)}` }
-    if (e.scope !== undefined && e.scope !== 'user') return { deny: `handoff: scope ${String(e.scope)} is not supported yet` }
-    const r = await setOption($, e.key, e.value)
-    return r.deny !== undefined ? { deny: r.deny } : { value: r.value }
-  })
-  on('handoff.open', async ($, e) => {
-    const route = e?.route
-    if (route !== undefined && !TABS.some(t => t[2] === route)) return { deny: `handoff: no tab ${String(route)}` }
-    // A route while the pane is up switches its tab; otherwise the call toggles the pane, as /handoff panel does.
-    if (route && S.paneOpen) {
-      S.route = route
-      await sync($)
-      void load($)
-    } else await toggle($, route)
-    return { value: undefined }
-  })
-  // show never closes: the pane opens (or, up already, is asked again: retitled, its tab switched, the keys asked
-  // for), on `route` when given; `owner` marks it as that caller's, for hide.
-  on('handoff.show', async ($, e) => {
-    const route = e?.route
-    if (route !== undefined && !TABS.some(t => t[2] === route)) return { deny: `handoff: no tab ${String(route)}` }
-    const opened = openPane($, route, e?.focus === true)
-    owner = e?.owner
-    await opened
-    return { value: undefined }
-  })
-  // hide closes the pane; with `owner`, only while the pane is still the one that owner's show opened.
-  on('handoff.hide', async ($, e) => {
-    if (e?.owner !== undefined && e.owner !== owner) return { value: undefined }
-    await closePane($)
-    return { value: undefined }
-  })
+const checkRoute = (route: unknown) => {
+  if (route !== undefined && !TABS.some(t => t[2] === route)) throw new Error(`handoff: no tab ${String(route)}`)
+}
 
-  on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'ahandoff',
-      description: 'Auto handoff at a context threshold: handoff → /clear → /handon → continue. off stops, panel toggles the pane.',
-      argumentHint: '[prompt] | off | panel',
-    })
-    const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string }; resumeAt?: number } | undefined
-    if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /handoff:handon ${saved.pending.id}`)
-    if (saved?.resumeAt && saved.resumeAt > Date.now()) {
-      const how = S.enabled ? 're-arm with /ahandoff' : 'auto handoff is disabled: turn the enabled setting on (/config, or the pane\'s Settings tab), then /ahandoff'
-      $.ui.toast(`handoff: a 5h-limit resume was due at ${hhmm(saved.resumeAt)} — ${how}`)
-    }
-    if (saved?.resumeAt) await $.store.set(STORE, { ...saved, resumeAt: undefined })
+export async function handoffGet(_$: $, field: string): Promise<number | boolean> {
+  return current(field as Field)
+}
+export async function handoffSet($: $, field: string, raw: unknown): Promise<SetResult> {
+  if (!isField(field)) return { deny: `junkd: no setting ${keyOf('handoff', field)}` }
+  const r = await setOption($, field, raw as string | number | boolean)
+  return r.deny !== undefined ? { deny: r.deny } : { value: r.value }
+}
+// A route while the pane is up switches its tab; otherwise the call toggles the pane, as /junkd:handoff panel does.
+export async function handoffOpen($: $, input: OpenInput = {}): Promise<void> {
+  const route = input.route
+  checkRoute(route)
+  if (route && S.paneOpen) {
+    S.route = route
     await sync($)
-    return next(e)
-  })
+    void load($)
+  } else await toggle($, route)
+}
+// show never closes: the pane opens (or, up already, is asked again: retitled, its tab switched, the keys asked
+// for), on `route` when given; `owner` marks it as that caller's, for hide.
+export async function handoffShow($: $, input: ShowInput = {}): Promise<void> {
+  checkRoute(input.route)
+  const opened = openPane($, input.route, input.focus === true)
+  owner = input.owner
+  await opened
+}
+// hide closes the pane; with `owner`, only while the pane is still the one that owner's show opened.
+export async function handoffHide($: $, input: HideInput = {}): Promise<void> {
+  if (input.owner !== undefined && input.owner !== owner) return
+  await closePane($)
+}
+export function handoffStatus() {
+  return status()
+}
 
-  // /handoff panel | auto [prompt] | off — anything else is the plain /handoff.
-  on('command.run', { command: 'handoff:handoff' }, async ($, e, next) => {
+export async function handoffStart($: $): Promise<void> {
+  const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string }; resumeAt?: number } | undefined
+  if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /handoff:handon ${saved.pending.id}`)
+  if (saved?.resumeAt && saved.resumeAt > Date.now()) {
+    const how = S.enabled ? 're-arm with /ahandoff' : 'auto handoff is disabled: turn the enabled setting on (/config, or the pane\'s Settings tab), then /ahandoff'
+    $.ui.toast(`handoff: a 5h-limit resume was due at ${hhmm(saved.resumeAt)} — ${how}`)
+  }
+  if (saved?.resumeAt) await $.store.set(STORE, { ...saved, resumeAt: undefined })
+  await sync($)
+}
+
+export async function handoffToolCall($: $, e: ToolCallInput, next: Next<'tool.call'>) {
+  if (e.agentId) return next(e)
+  const isHandoffWrite = e.tool === 'Write' && HANDOFF_FILE.test(String(e.file_path))
+  if (!S.armed) {
+    if (!isHandoffWrite) return next(e)
+    const r = await next(e)
+    record(String(e.file_path))
+    await sync($)
+    return r
+  }
+  if (S.phase === 'idle' && !S.fresh && ++S.calls % S.checkEvery === 0) {
+    const { context } = await $.session.usage()
+    S.tokens = context.tokens ?? S.tokens
+    const percent = context.percent ?? 0
+    if (percent >= limit()) S.phase = 'handoff'
+    await sync($, percent)
+  }
+  if (S.phase !== 'handoff') return next(e)
+  const isHandoffPath = e.tool === 'Bash' && /handoff-path/.test(String(e.command))
+  const isHandoffSkill = e.tool === 'Skill' && /handoff/.test(String((e as { skill?: unknown }).skill))
+  if (isHandoffWrite) S.written = String(e.file_path)
+  if (isHandoffWrite || isHandoffPath || isHandoffSkill) return next(e)
+  return {
+    deny: 'ahandoff: context limit reached. Stop the current work now. Call the Skill tool with skill "handoff:handoff" and follow it (run its bin/handoff-path, then Write the handoff markdown to the path it prints — include task ids, branch, worktree, round and what to do next). Then end the turn with one line. Every other tool is denied until the handoff is written.',
+  }
+}
+
+// The status-line segment: 🪃 NN% (green, yellow within 10 points of the threshold, red past it). undefined while
+// handoff is off or the segment setting is.
+export function handoffSegment($: $, e: RenderInput<'PromptHint'>) {
+  if (!S.enabled || !S.segment) return undefined
+  const { Button, Text } = $.ui.resolve(e)
+  const label = !S.armed
+    ? '🪃 off'
+    : S.blocked && S.resumeAt ? `🪃 limit → ${hhmm(S.resumeAt)}`
+    : S.phase === 'handoff' ? '🪃 handoff…' : S.phase === 'idle' ? `🪃 ${S.percent}%` : '🪃 resume…'
+  const color = !S.armed || S.phase !== 'idle'
+    ? P.secondary
+    : S.blocked ? P.warn
+    : S.percent >= limit() ? P.bad : S.percent >= limit() - 10 ? P.warn : P.ok
+  return (
+    <Button key="handoff-segment" plain label={label} onPress={() => void toggle($)}>
+      <Text color={color}>{label}</Text>
+    </Button>
+  )
+}
+
+export function registerHandoff(on: On, options: Record<string, unknown>): void {
+  loadOptions(groupOptions(options, 'handoff'))
+
+  // /junkd:handoff panel | auto [prompt] | off — anything else is the plain skill.
+  on('command.run', { command: 'junkd:handoff' }, async ($, e, next) => {
     const [sub = '', ...rest] = e.args.trim().split(/\s+/)
     if (sub === 'panel') return panel($)
     if (sub === 'auto') return auto($, rest.join(' '))
@@ -430,51 +463,25 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // /ahandoff [prompt] | off | panel — the short form: anything else is the prompt.
-  on('command.run', { command: 'ahandoff' }, async ($, e) => {
+  // /junkd:ahandoff [prompt] | off | panel — the short form: anything else is the prompt. Its skill's text runs
+  // only when this module is not loaded.
+  on('command.run', { command: 'junkd:ahandoff' }, async ($, e) => {
     const args = e.args.trim()
     if (args === 'panel') return panel($)
     if (args === 'off') return off($)
-    return auto($, args, false) // ponytail: the short form arms and runs the prompt; the pane is /ahandoff panel
+    return auto($, args, false) // ponytail: the short form arms and runs the prompt; the pane is /junkd:ahandoff panel
   })
 
   // The /config menu's own writes to every handoff row pass here (a hook never sees its plugin's own
   // `$.config.set`): read as `set` reads it, refused where `set` refuses, and applied live once the row took it.
-  on('config.set', { key: /^handoff\./ }, async ($, e, next) => {
-    const field = e.key.slice('handoff.'.length)
+  on('config.set', { key: configKeys('handoff') }, async ($, e, next) => {
+    const field = fieldOf('handoff', e.key)
     if (!isField(field)) return next(e)
     const c = coerce(field, e.value)
     if (c.error !== undefined) return { deny: c.error }
     const r = await next({ ...e, value: c.value })
     if (r.deny === undefined) await apply($, field, c.value)
     return r
-  })
-
-  on('tool.call', async ($, e, next) => {
-    if (e.agentId) return next(e)
-    const isHandoffWrite = e.tool === 'Write' && HANDOFF_FILE.test(String(e.file_path))
-    if (!S.armed) {
-      if (!isHandoffWrite) return next(e)
-      const r = await next(e)
-      record(String(e.file_path))
-      await sync($)
-      return r
-    }
-    if (S.phase === 'idle' && !S.fresh && ++S.calls % S.checkEvery === 0) {
-      const { context } = await $.session.usage()
-      S.tokens = context.tokens ?? S.tokens
-      const percent = context.percent ?? 0
-      if (percent >= limit()) S.phase = 'handoff'
-      await sync($, percent)
-    }
-    if (S.phase !== 'handoff') return next(e)
-    const isHandoffPath = e.tool === 'Bash' && /handoff-path/.test(String(e.command))
-    const isHandoffSkill = e.tool === 'Skill' && /handoff/.test(String((e as { skill?: unknown }).skill))
-    if (isHandoffWrite) S.written = String(e.file_path)
-    if (isHandoffWrite || isHandoffPath || isHandoffSkill) return next(e)
-    return {
-      deny: 'ahandoff: context limit reached. Stop the current work now. Call the Skill tool with skill "handoff:handoff" and follow it (run its bin/handoff-path, then Write the handoff markdown to the path it prints — include task ids, branch, worktree, round and what to do next). Then end the turn with one line. Every other tool is denied until the handoff is written.',
-    }
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -547,25 +554,6 @@ export const register: Register = (on, options) => {
     S.paneOpen = false
     owner = undefined
     return next(e)
-  })
-
-  // The status-line segment: 🪃 NN% (green, yellow within 10 points of the threshold, red past it).
-  on('ui.render', { component: 'PromptHint' }, ($, e, next) => {
-    if (!S.enabled || !S.segment) return next(e)
-    const { Button, Text } = $.ui.resolve(e)
-    const label = !S.armed
-      ? '🪃 off'
-      : S.blocked && S.resumeAt ? `🪃 limit → ${hhmm(S.resumeAt)}`
-      : S.phase === 'handoff' ? '🪃 handoff…' : S.phase === 'idle' ? `🪃 ${S.percent}%` : '🪃 resume…'
-    const color = !S.armed || S.phase !== 'idle'
-      ? P.secondary
-      : S.blocked ? P.warn
-      : S.percent >= limit() ? P.bad : S.percent >= limit() - 10 ? P.warn : P.ok
-    return (
-      <Button key="handoff-segment" plain label={label} onPress={() => void toggle($)}>
-        <Text color={color}>{label}</Text>
-      </Button>
-    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e, next) => {

@@ -1,17 +1,13 @@
 {
   "name": "junkd",
-  "description": "The frame over the junk-drawer marketplace: /junkd (and the ✚ junkd segment under the prompt) opens and closes a set of tabs (junkd, handoff, orch); the junkd pane has the marketplace's plugins (on/off at user scope), the main settings of handoff, orch and tldr through their $ nouns, and the enabled plugins' commands. Every feature plugin works without it.",
-  "version": "0.2.3",
+  "description": "One plugin for handoff, orch and tldr, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff and orch tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr) and the commands. The hooks module exports $.junkd for other mods.",
+  "version": "0.3.0",
   "author": {
     "name": "Krab00"
   },
-  "dependencies": [
-    "handoff@junk-drawer",
-    "orch@junk-drawer",
-    "tldr@junk-drawer"
-  ],
+  "types": "./types/index.d.ts",
   "userConfig": {
-    "output_style": {
+    "core_output_style": {
       "type": "string",
       "title": "Output style",
       "description": "At session start, once per plugin version: make junkd:STE (Simplified Technical English) the output style when ~/.claude/settings.json has no outputStyle yet. off skips the step; a style you chose is never touched either way.",
@@ -20,6 +16,113 @@
         "off"
       ],
       "default": "ste"
+    },
+    "handoff_enabled": {
+      "type": "boolean",
+      "title": "Auto handoff: enabled",
+      "description": "Off: no auto handoff at all (no threshold check, no 5h-limit resume, no 🪃 segment); /junkd:handoff, /junkd:handon and the pane still work.",
+      "default": true
+    },
+    "handoff_threshold": {
+      "type": "number",
+      "title": "Auto handoff: context threshold (%)",
+      "description": "Past this context usage the auto handoff kicks in (handoff → /clear → /junkd:handon → continue).",
+      "default": 85
+    },
+    "handoff_checkEvery": {
+      "type": "number",
+      "title": "Auto handoff: check every N tool calls",
+      "description": "How often, in tool calls, the context usage is read mid-turn.",
+      "default": 5
+    },
+    "handoff_autoOn": {
+      "type": "boolean",
+      "title": "Auto handoff: armed at session start",
+      "description": "Start every session with the auto handoff loop armed.",
+      "default": false
+    },
+    "handoff_resumeAfterLimit": {
+      "type": "boolean",
+      "title": "Auto handoff: resume after the 5h rate limit",
+      "description": "When an armed loop's turn dies on the 5-hour limit, send the continuation prompt 2 minutes after the window resets.",
+      "default": true
+    },
+    "handoff_staleDays": {
+      "type": "number",
+      "title": "Handoffs: mark stale after N days",
+      "description": "Handoffs older than this are drawn as stale in the pane and removed by Delete stale.",
+      "default": 30
+    },
+    "handoff_segment": {
+      "type": "boolean",
+      "title": "Status line: show the 🪃 segment",
+      "description": "Show the context percentage segment in the prompt hint line; a click opens the pane.",
+      "default": true
+    },
+    "orch_enabled": {
+      "type": "boolean",
+      "title": "Orchestrator: enabled",
+      "description": "Off: no main-loop guard and no rule sheet at session start, whatever guard and inject_rules say; /junkd:orch still runs when you ask for it.",
+      "default": true
+    },
+    "orch_guard": {
+      "type": "string",
+      "title": "Main-loop guard",
+      "description": "When the main loop is held to planning and delegating: on a Fable model, always, or never.",
+      "options": [
+        "fable",
+        "always",
+        "off"
+      ],
+      "default": "fable"
+    },
+    "orch_allow_fable_agents": {
+      "type": "boolean",
+      "title": "Allow Fable subagents",
+      "description": "Let the main loop spawn a subagent on an explicit Fable model (the person asked for it).",
+      "default": false
+    },
+    "orch_implementer_ctx_k": {
+      "type": "number",
+      "title": "Implementer context cap (k tokens)",
+      "description": "Reuse an implementer for a fix round only while its context is under this many thousand tokens.",
+      "default": 400
+    },
+    "orch_ui_review": {
+      "type": "boolean",
+      "title": "UI review",
+      "description": "Run ui-reviewer on the UI criteria when the project config declares a web capability; off, they become PM-REVIEW rows.",
+      "default": true
+    },
+    "orch_inject_rules": {
+      "type": "boolean",
+      "title": "Inject orchestrator rules",
+      "description": "Print ORCHESTRATOR.md into the main session at session start (the SessionStart hook).",
+      "default": true
+    },
+    "orch_rounds": {
+      "type": "number",
+      "title": "Fix rounds",
+      "description": "Fix rounds per task; --rounds overrides it for one run.",
+      "default": 3
+    },
+    "tldr_enabled": {
+      "type": "boolean",
+      "title": "TL;DR: enabled",
+      "description": "Off: the per-turn terse hook stays silent whatever terse mode says; /junkd:tldr N still summarizes.",
+      "default": true
+    },
+    "tldr_terse": {
+      "type": "boolean",
+      "title": "Terse mode",
+      "description": "Keep every reply terse, in all sessions, until off: the same switch as /junkd:tldr on|off. The flag file ~/.claude/junkd/tldr-on is what the per-turn hook reads.",
+      "default": false
+    },
+    "tldr_sentences": {
+      "type": "number",
+      "title": "Sentences in a summary",
+      "description": "How many sentences a /junkd:tldr without a number may use.",
+      "default": 3
     }
   }
 }

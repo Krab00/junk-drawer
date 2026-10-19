@@ -1,34 +1,26 @@
-// Plugin junkd's hooks module: the /junkd pane, the frame over the junk-drawer marketplace. The engine follows `$`
-// only into functions of this file, never across an import, so every function that takes `$` lives here; the
-// drawing is junkd-views.tsx, fed closures over `$`.
-// - The set: /junkd, ✚ junkd and q open and close junkd, handoff and orch together as tabs; each feature pane
-//   through its noun's show/hide (another plugin's pane is its own to open), marked as the set's, so closing the
-//   set leaves a feature pane opened on its own alone.
-// - Plugins: every plugin of the marketplace, on or off at user scope (settings.json `enabledPlugins`); 1-9 flip one.
-// - Settings: the `main` fields of each enabled plugin that exposes a noun on `$` (handoff, orch, tldr), read
-//   through its schema()/get(), written through its set(); `settings ▸` calls its open().
+// The /junkd frame: /junkd, ✚ junkd and q open and close junkd, handoff and orch together as tabs; the junkd pane
+// has the marketplace's plugins (on/off at user scope), every settings group (core, handoff, orch, tldr) and the
+// commands. The drawing is junkd-views.tsx, fed closures over `$`.
+// - The set: each feature pane through dispatch.ts's showPane/hidePane, marked as the set's (SET_OWNER), so closing
+//   the set leaves a feature pane opened on its own alone.
+// - Settings: the `main` rows of each group (settings.ts), read and written through dispatch.ts; `settings ▸` opens
+//   the group's pane (handoff, orch).
 // - Commands: the enabled plugins' slash commands as $.command.list() names them.
-// - The `output_style` setting (ste|off): mirrored into the flag file scripts/setup.sh reads at SessionStart.
-// The three nouns are called, never read (the host's rule), so an absent one is a call that throws: caught, and
-// the pane opens without it. Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; tests point it at a fake tree.
-import type { EngineInterface, Register, RenderInput } from 'claude-code'
+// CONTRACT (T11): the slice ports the Plugins/Settings sections to the new layout (groups' enabled rows first).
+import type { JunkdGroup } from '../types'
+import type { On, RenderInput } from 'claude-code'
+import { getSetting, hidePane, setSetting, showPane, type FeaturePane } from './dispatch'
+import { SET_OWNER, type $ } from './feature'
 import { panelView, type Command, type Els, type Field, type PluginRow, type Section } from './junkd-views'
+import { GROUPS, isKey, keyOf, rowsOf } from './settings'
 
-// One entry of a noun's schema(): the shape handoff, orch and tldr share (orch's choice row carries `options`).
-type Entry = { key: string; type: string; title: string; default: unknown; main: boolean; options?: readonly string[] }
-
-type $ = EngineInterface
 type Json = Record<string, any>
 
 const PANE = 'junkd'
 const MARKETPLACE = 'junk-drawer'
-// The plugins whose noun the Settings section reads, and whether open() exists on it (tldr has no pane).
-const NOUNS = ['handoff', 'orch', 'tldr'] as const
-type Noun = (typeof NOUNS)[number]
-const HAS_PANE: Record<Noun, boolean> = { handoff: true, orch: true, tldr: false }
-// The feature panes of the set, in tab order after junkd's (tldr has no pane).
-const SET: readonly Noun[] = ['handoff', 'orch']
-const isNoun = (name: string): name is Noun => (NOUNS as readonly string[]).includes(name)
+// The groups with a pane of their own, which `settings ▸` opens; the feature panes of the set, in tab order.
+const SET: readonly FeaturePane[] = ['handoff', 'orch']
+const hasPane = (group: string): group is FeaturePane => (SET as readonly string[]).includes(group)
 
 let isOpen = false
 let isChanged = false
@@ -39,10 +31,10 @@ let settingsShown = '~/.claude/settings.json' // the user-scope settings file as
 let plugins: PluginRow[] = []
 let sections: Section[] = []
 let commands: Command[] = []
-const redraw = ($: $) => $.ui.invalidate('ui.render')
-// A refused noun call rejects with `junkd: $.<noun>.<method>: <reason>` (the host names the call); the note shows
-// the reason. Any other error, its message.
-const reason = (err: unknown) => ((err as Error)?.message ?? String(err)).replace(/^junkd: \$\.\w+\.\w+: /, '')
+function redraw($: $) {
+  return $.ui.invalidate('ui.render')
+}
+const reason = (err: unknown) => (err as Error)?.message ?? String(err)
 
 let home = ''
 async function homeDir($: $): Promise<string> {
@@ -51,34 +43,23 @@ async function homeDir($: $): Promise<string> {
   if (!home) home = (await $.process.run(['sh', '-c', 'echo $HOME'])).stdout.trim()
   return home
 }
-const configDir = async ($: $) => (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`
+async function configDir($: $) {
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`
+}
 // User-scope settings: ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json, the file `enabledPlugins` lives in.
-const settingsPath = async ($: $) => `${await configDir($)}/settings.json`
+async function settingsPath($: $) {
+  return `${await configDir($)}/settings.json`
+}
 // A path under HOME spelled from ~, as the person reads it.
 const tilde = (path: string, h: string) => (h && path.startsWith(`${h}/`) ? `~${path.slice(h.length)}` : path)
 
-// ------------------------------------------------------------------ the output_style setting
-
-// The setup step (scripts/setup.sh, SessionStart) is off while the flag file ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/
-// output-style-off exists: a shell hook reads no `$.config`, so the row's truth is mirrored there, at every write
-// to the row and at session start. `ste` (the default) or `off`, as the manifest's options; nothing else is taken.
-let styleIsOff = false
-const STYLE_ERROR = (raw: unknown) => `junkd: ${String(raw)} is not a valid output_style (ste or off)`
-function coerceStyle(raw: unknown): { value: 'ste' | 'off'; error?: undefined } | { error: string; value?: undefined } {
-  const v = String(raw).trim().toLowerCase()
-  return v === 'ste' || v === 'off' ? { value: v } : { error: STYLE_ERROR(raw) }
-}
-async function writeStyleFlag($: $): Promise<void> {
-  const flag = `${await configDir($)}/junkd/output-style-off`
-  if (styleIsOff) await $.fs.write(flag, '')
-  else await $.process.run(['rm', '-f', '--', flag])
-}
-
 // Missing file = {}. A file that does not parse throws, so a later write never replaces it with {}.
-const readJson = async ($: $, path: string): Promise<Json> => ((await $.fs.exists(path)) ? JSON.parse(await $.fs.read(path)) : {})
+async function readJson($: $, path: string): Promise<Json> {
+  return ((await $.fs.exists(path)) ? JSON.parse(await $.fs.read(path)) : {})
+}
 
 // Temp + rename, so Claude Code never reads a half-written settings.json. Writes through a symlink.
-const writeJson = async ($: $, path: string, data: Json) => {
+async function writeJson($: $, path: string, data: Json) {
   const real = (await $.fs.stat(path, { resolve: true }).catch(() => undefined))?.realPath ?? path
   const tmp = `${real}.junkd-tmp`
   await $.fs.write(tmp, `${JSON.stringify(data, null, 2)}\n`)
@@ -88,7 +69,7 @@ const writeJson = async ($: $, path: string, data: Json) => {
 
 // A checkout (--plugin-dir, or the repo itself) has the marketplace two levels up; an installed copy lives in the
 // plugin cache under the config dir.
-const loadMarketplace = async ($: $, cfg: string): Promise<{ dir: string; data: Json }> => {
+async function loadMarketplace($: $, cfg: string): Promise<{ dir: string; data: Json }> {
   for (const dir of [`${$.plugin.root}/../..`, `${cfg}/plugins/marketplaces/${MARKETPLACE}`]) {
     const text = await $.fs.read(`${dir}/.claude-plugin/marketplace.json`).catch(() => undefined)
     if (text !== undefined) return { dir, data: JSON.parse(text) as Json }
@@ -96,47 +77,9 @@ const loadMarketplace = async ($: $, cfg: string): Promise<{ dir: string; data: 
   throw new Error(`${MARKETPLACE} marketplace.json not found`)
 }
 // The header's sha: `git rev-parse --short HEAD` in the marketplace's folder; none where git fails or is missing.
-const shortSha = async ($: $, dir: string): Promise<string> => {
+async function shortSha($: $, dir: string): Promise<string> {
   const git = await $.process.run(['git', '-C', dir, 'rev-parse', '--short', 'HEAD']).catch(() => undefined)
   return git?.exitCode === 0 ? git.stdout.trim() : ''
-}
-
-// ------------------------------------------------------------------ the nouns, spelled one by one
-
-// The host lets a noun's method be called, never read: an absent noun is a call that throws, so each is tried.
-async function schemaOf($: $, noun: Noun): Promise<readonly Entry[] | undefined> {
-  try {
-    if (noun === 'handoff') return await $.handoff.schema()
-    if (noun === 'orch') return await $.orch.schema()
-    return await $.tldr.schema()
-  } catch {
-    return undefined
-  }
-}
-// The dependency's own key type is not known here (its contract is typed beside the API reference only once the
-// engine lays it), so the key passes as the host sees it: one input, validated by the noun.
-async function getOf($: $, noun: Noun, key: string): Promise<unknown> {
-  if (noun === 'handoff') return $.handoff.get(key as never)
-  if (noun === 'orch') return $.orch.get({ key: key as never })
-  return $.tldr.get({ key: key as never })
-}
-async function setOf($: $, noun: Noun, key: string, value: unknown): Promise<unknown> {
-  if (noun === 'handoff') return $.handoff.set({ key: key as never, value: value as never })
-  if (noun === 'orch') return $.orch.set({ key: key as never, value: value as never })
-  return $.tldr.set({ key: key as never, value: value as never })
-}
-// show opens a feature pane and never closes it: on its Settings tab for handoff when `settings`; `focus` asks for
-// the keys; `owner` marks it as the set's. hide closes it; with `owner`, only while it is still the set's.
-async function showOf($: $, noun: Noun, input: { focus?: true; owner?: string; settings?: true }): Promise<void> {
-  const { settings, ...rest } = input
-  if (noun === 'handoff') return $.handoff.show(settings ? { ...rest, route: 'settings' } : rest)
-  if (noun === 'orch') return $.orch.show(rest)
-  throw new Error(`${noun}: no pane`)
-}
-async function hideOf($: $, noun: Noun, owner?: string): Promise<void> {
-  if (noun === 'handoff') return $.handoff.hide({ owner })
-  if (noun === 'orch') return $.orch.hide({ owner })
-  throw new Error(`${noun}: no pane`)
 }
 
 // ------------------------------------------------------------------ the pane's data
@@ -144,7 +87,7 @@ async function hideOf($: $, noun: Noun, owner?: string): Promise<void> {
 // Every press refreshes, so two refreshes can run side by side: each builds its rows apart and assigns them once at
 // the end, and only the newest one started assigns at all (an older one, a step behind, is dropped).
 let refreshes = 0
-const refresh = async ($: $) => {
+async function refresh($: $) {
   const gen = ++refreshes
   try {
     const cfg = await configDir($)
@@ -167,16 +110,13 @@ const refresh = async ($: $) => {
     })
     const active = rows.filter(p => p.isActive)
     const groups: Section[] = []
-    for (const p of active) {
-      if (!isNoun(p.name)) continue
-      const schema = await schemaOf($, p.name)
-      if (!schema) continue
+    for (const group of GROUPS) {
       const fields: Field[] = []
-      for (const f of schema.filter(f => f.main)) {
-        const value = await getOf($, p.name, f.key).catch(() => f.default)
-        fields.push({ key: f.key, type: f.type, title: f.title, ...(f.options ? { options: [...f.options] } : {}), value })
+      for (const f of rowsOf(group).filter(f => f.main)) {
+        const value = await getSetting($, f.key).catch(() => f.default)
+        fields.push({ key: f.field, type: f.type, title: f.title, ...(f.options ? { options: [...f.options] } : {}), value })
       }
-      groups.push({ plugin: p.name, fields, hasPane: HAS_PANE[p.name] })
+      groups.push({ plugin: group, fields, hasPane: hasPane(group) })
     }
     const listed = await $.command.list().catch(() => [])
     if (gen !== refreshes) return
@@ -197,12 +137,12 @@ const refresh = async ($: $) => {
 // One flip after the other: each reads settings.json, changes one entry and writes it back through one temp name,
 // so two flips at once would lose the first or move a temp file the other already moved.
 let flips: Promise<void> = Promise.resolve()
-const togglePlugin = ($: $, name: string): Promise<void> => {
+function togglePlugin($: $, name: string): Promise<void> {
   const flip = flips.then(() => flipPlugin($, name))
   flips = flip.catch(() => undefined)
   return flip
 }
-const flipPlugin = async ($: $, name: string) => {
+async function flipPlugin($: $, name: string) {
   try {
     const path = await settingsPath($)
     const user = await readJson($, path)
@@ -218,12 +158,13 @@ const flipPlugin = async ($: $, name: string) => {
   await refresh($)
 }
 
-// A value typed or flipped in the pane goes to the plugin's set, which validates it; a refusal is the note.
-const setValue = async ($: $, plugin: string, key: string, value: unknown) => {
-  if (!isNoun(plugin)) return
+// A value typed or flipped in the pane goes to its group's set, which validates it; a refusal is the note.
+async function setValue($: $, group: string, field: string, value: unknown) {
+  const key = keyOf(group as JunkdGroup, field)
+  if (!isKey(key)) return
   try {
-    const stored = await setOf($, plugin, key, value)
-    note = `✓ ${plugin}.${key} = ${JSON.stringify(stored)}`
+    const r = await setSetting($, key, value)
+    note = r.deny !== undefined ? `✗ ${r.deny}` : `✓ ${group}.${field} = ${JSON.stringify(r.value)}`
   } catch (err) {
     note = `✗ ${reason(err)}`
   }
@@ -233,100 +174,77 @@ const setValue = async ($: $, plugin: string, key: string, value: unknown) => {
 // /junkd, ✚ junkd and q: junkd (focused), handoff and orch as one set of tabs. Tabs go in open order (the engine has
 // no position option), so junkd's `$.ui.open` comes before any await: only an open made while the press or command
 // runs counts as asked. A feature pane already open on its own would keep its tab ahead of junkd's: each closes
-// first (hide), then both open again in the set's order, marked as the set's (ponytail: they open after an await,
-// so where the engine does not count them as asked, below 144 columns they wait undrawn until opened by hand).
-// Closing the set closes junkd and each feature pane only while it is still the set's: one the person closed and
-// opened again on its own stays. An absent noun (its plugin off) is a call that throws: the set goes without it.
-const togglePane = async ($: $) => {
+// first, then both open again in the set's order, marked as the set's (ponytail: they open after an await, so where
+// the engine does not count them as asked, below 144 columns they wait undrawn until opened by hand). Closing the
+// set closes junkd and each feature pane only while it is still the set's: one the person closed and opened again
+// on its own stays.
+export async function panelToggle($: $): Promise<void> {
   if (isOpen) {
     isOpen = false
-    await Promise.all([$.ui.close({ id: PANE }), ...SET.map(n => hideOf($, n, PANE).catch(() => undefined))])
+    await Promise.all([$.ui.close({ id: PANE }), ...SET.map(p => hidePane($, p, { owner: SET_OWNER }).catch(() => undefined))])
     return
   }
   const opened = $.ui.open({ id: PANE, title: 'junkd', focus: true })
   isOpen = true
   note = ''
   void refresh($)
-  await Promise.all(SET.map(n => hideOf($, n).catch(() => undefined)))
-  await Promise.all([opened, ...SET.map(n => showOf($, n, { owner: PANE }).catch(() => undefined))])
+  await Promise.all(SET.map(p => hidePane($, p).catch(() => undefined)))
+  await Promise.all([opened, ...SET.map(p => showPane($, p, { owner: SET_OWNER }).catch(() => undefined))])
 }
 
 // The set's other feature panes, closed with junkd when junkd goes some other way than a second toggle (the
 // person's close, settings ▸); `hide({ owner })` closes only a pane still marked the set's.
-const hideSet = ($: $, except?: Noun) => SET.filter(n => n !== except).map(n => hideOf($, n, PANE).catch(() => undefined))
+function hideSet($: $, except?: FeaturePane) {
+  return SET.filter(p => p !== except).map(p => hidePane($, p, { owner: SET_OWNER }).catch(() => undefined))
+}
 
 // settings ▸: the press leaves junkd holding the keys, and the engine shows and focuses another pane only while no
 // pane holds them (`focus` is a request, refused without a word). So the feature pane opens first (handoff on its
 // Settings tab), junkd closes with the set's other feature pane, and the feature pane asks for the keys again. It
 // is the person's pane from then on. junkd is gone by the time a refusal comes back, so the reason is a toast.
-const openSettings = async ($: $, plugin: string) => {
-  if (!isNoun(plugin)) return
-  const shown = showOf($, plugin, { settings: true })
+async function openSettings($: $, group: string) {
+  if (!hasPane(group)) return
+  const route = group === 'handoff' ? ({ route: 'settings' } as const) : {}
+  const shown = showPane($, group, route)
   isOpen = false
-  await Promise.all([$.ui.close({ id: PANE }), ...hideSet($, plugin)])
+  await Promise.all([$.ui.close({ id: PANE }), ...hideSet($, group)])
   try {
     await shown
-    await showOf($, plugin, { settings: true, focus: true })
+    await showPane($, group, { ...route, focus: true })
   } catch (err) {
     $.ui.toast(`✗ ${reason(err)}`)
   }
 }
 
-export const register: Register = (on, options) => {
-  // A value the manifest's options do not name (an edit of the file by hand) is the default, ste.
-  styleIsOff = coerceStyle(options.output_style).value === 'off'
+export async function panelStart($: $): Promise<void> {
+  isOpen = (await $.ui.panes()).some(pane => pane.id === PANE)
+  await $.command.register({ name: 'junkd', description: 'Toggle the junkd pane: the marketplace plugins, their settings and commands', immediate: true })
+  if (isOpen) void refresh($)
+}
 
-  on('session.start', async ($, e, next) => {
-    await writeStyleFlag($).catch(() => undefined)
-    isOpen = (await $.ui.panes()).some(pane => pane.id === PANE)
-    await $.command.register({ name: 'junkd', description: 'Toggle the junkd pane: the marketplace plugins, their settings and commands', immediate: true })
-    if (isOpen) void refresh($)
-    return next(e)
-  })
+// ✚ junkd, beside the rest of the prompt hint (index.tsx lays the line out).
+export function panelButton($: $, e: RenderInput<'PromptHint'>) {
+  const { Button, Text } = $.ui.resolve(e)
+  return (
+    <Button key="junkd-toggle" plain label="junkd" onPress={() => void panelToggle($)}>
+      <Text color="claude">✚</Text> junkd
+    </Button>
+  )
+}
 
-  // Every write to the output_style row (the /config menu's; junkd has no noun of its own) lands here: a value the
-  // options do not name is refused, one the row took is mirrored into the flag file.
-  on('config.set', { key: 'junkd.output_style' }, async ($, e, next) => {
-    const c = coerceStyle(e.value)
-    if (c.error !== undefined) return { deny: c.error }
-    const r = await next({ ...e, value: c.value })
-    if (r.deny === undefined) {
-      styleIsOff = c.value === 'off'
-      await writeStyleFlag($)
-    }
-    return r
-  })
-
-  // /junkd (registered above) and /junkd:junkd (commands/junkd.md) both toggle the pane.
+export function registerPanel(on: On, _options: Record<string, unknown>): void {
+  // /junkd (registered at session start) and /junkd:junkd (skills/junkd) both toggle the pane.
   on('command.run', { command: 'junkd' }, async $ => {
-    await togglePane($)
+    await panelToggle($)
     return {}
   })
   on('command.run', { command: 'junkd:junkd' }, async $ => {
-    await togglePane($)
+    await panelToggle($)
     return {}
   })
 
-  // What is beneath (another plugin's hint, or the engine's own line), then ✚ junkd beside it.
-  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
-    const below = await next(e).catch(() => undefined)
-    const toggle = (
-      <Button key="junkd-toggle" plain label="junkd" onPress={() => void togglePane($)}>
-        <Text color="claude">✚</Text> junkd
-      </Button>
-    )
-    if (!below) return toggle
-    return (
-      <Box flexDirection="row" gap={2}>
-        {below}
-        {toggle}
-      </Box>
-    )
-  })
-
   // The person's closes (×, the tab's close; another plugin's $.ui.close) pass here: the set goes with junkd, each
-  // feature pane only while it is still the set's. Our own closes (togglePane, settings ▸) clear isOpen first and
+  // feature pane only while it is still the set's. Our own closes (panelToggle, settings ▸) clear isOpen first and
   // close the set themselves, so one that comes back here does nothing more.
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const isPersons = isOpen
@@ -339,11 +257,11 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e: RenderInput<'Pane'>, next) => {
     // ponytail: mobile has no Input; it gets the engine's empty pane until it does.
     if (e.surface === 'mobile') return next(e)
-    return panelView($.ui.resolve(e) as Els, e.props, { marketplace, version, settingsPath: settingsShown, plugins, sections, commands, nouns: NOUNS, note, isChanged }, {
-      close: () => void togglePane($),
+    return panelView($.ui.resolve(e) as Els, e.props, { marketplace, version, settingsPath: settingsShown, plugins, sections, commands, nouns: GROUPS, note, isChanged }, {
+      close: () => void panelToggle($),
       togglePlugin: name => void togglePlugin($, name),
-      set: (plugin, key, value) => void setValue($, plugin, key, value),
-      openPane: plugin => void openSettings($, plugin),
+      set: (group, field, value) => void setValue($, group, field, value),
+      openPane: group => void openSettings($, group),
     })
   })
 }
