@@ -1,20 +1,22 @@
-// Plugin junkd's one hooks module: handoff, orch and tldr, the core setting and the /junkd frame, each in its own
-// files, composed here. A feature file exports `register<Feature>(on, options)` for the hooks only it has, and plain
+// Plugin junkd's one hooks module: handoff, orch, tldr and tools, the core setting and the /junkd frame, each in its
+// own files, composed here. A feature file exports `register<Feature>(on, options)` for the hooks only it has, and plain
 // named functions for the rest (see feature.ts); this file holds what is shared:
 // - `$.junkd`, the noun other mods call (types/index.d.ts): schema answers here; get, set, config, open and
 //   orchGuardState need `$`, which a noun may not capture, so the hooks on junkd.<method> below answer them.
-// - session.start, tool.call and the PromptHint render: the host takes one hook per event and filter from a
-//   module (a repeat `on` fails the load), and more than one feature needs each of them.
+// - session.start, tool.call, the unfiltered command.run and the PromptHint render: the host takes one hook per
+//   event and filter from a module (a repeat `on` fails the load), and more than one feature needs each of them.
 // - handoff.tsx: /junkd:handoff, /junkd:handon, /junkd:ahandoff, the auto handoff loop, the 🪃 segment, its pane.
 // - orch.tsx: the main-loop guard (tool.call, agent.spawn), /junkd:orch panel and its pane.
 // - tldr.tsx: /junkd:tldr's sentences and the terse flag file bin/tldr-hook reads.
+// - tools-pane.tsx (with tools.ts and tools-views.tsx): /junkd:tools and its pane, this session's agents over the
+//   repo's worktrees and the tools, MCP servers and skills it used (counted by tool.call and command.run here).
 // - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
 // - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
-// - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch).
+// - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, tools).
 // Settings: one userConfig row per `<group>_<field>` (settings.ts), the /config row `junkd.<group>_<field>`.
 // Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; the flag files live under its junkd/ folder.
 import type { Register } from 'claude-code'
-import type { JunkdHandoffRoute } from '../types'
+import type { JunkdHandoffRoute, JunkdToolsRoute } from '../types'
 import { registerCache } from './cache'
 import { coreStart, registerCore } from './core'
 import { allSettings, getSetting, openPane, setSetting } from './dispatch'
@@ -23,9 +25,11 @@ import { orchCatchDeny, orchGuardState, orchStart, orchToolDeny, registerOrch } 
 import { panelButton, panelStart, panelToggle, registerPanel } from './panel'
 import { SCHEMA, isKey } from './settings'
 import { registerTldr, tldrStart } from './tldr'
+import { registerTools, toolsCommandRan, toolsCount, toolsStart } from './tools-pane'
 
 const NO_HOOK = 'junkd: the hooks module did not answer'
 const ROUTES: readonly JunkdHandoffRoute[] = ['auto', 'handoffs', 'settings']
+const TOOLS_ROUTES: readonly JunkdToolsRoute[] = ['agents', 'tools', 'mcp', 'skills']
 const reason = (err: unknown) => (err as Error)?.message ?? String(err)
 
 export const register: Register = (on, options) => {
@@ -72,12 +76,14 @@ export const register: Register = (on, options) => {
   on('junkd.open', async ($, e) => {
     const pane = e?.pane
     const route = e?.route
-    if (route !== undefined && !ROUTES.includes(route)) return { deny: `junkd: no tab ${String(route)}` }
+    // Each pane its own routes: the tools tabs on the tools pane, handoff's on the others (which refuse them).
+    const known: readonly string[] = pane === 'tools' ? TOOLS_ROUTES : ROUTES
+    if (route !== undefined && !known.includes(route)) return { deny: `junkd: no tab ${String(route)}` }
     try {
       if (pane === 'junkd') {
         if (route !== undefined) return { deny: `junkd: the junkd pane has no tab ${String(route)}` }
         await panelToggle($)
-      } else if (pane === 'handoff' || pane === 'orch') await openPane($, pane, route === undefined ? {} : { route })
+      } else if (pane === 'handoff' || pane === 'orch' || pane === 'tools') await openPane($, pane, route === undefined ? {} : { route })
       else return { deny: `junkd: no pane ${String(pane)}` }
     } catch (err) {
       return { deny: reason(err) }
@@ -88,23 +94,34 @@ export const register: Register = (on, options) => {
 
   // Every feature's start, side by side; one that fails leaves the others started, and its error is raised after.
   on('session.start', async ($, e, next) => {
-    const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), panelStart($)])).find(
+    const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), toolsStart($), panelStart($)])).find(
       r => r.status === 'rejected',
     )
     if (failed) throw failed.reason
     return next(e)
   })
 
-  // orch's guard first (the model's own calls only), then handoff's gate past the context threshold. A hook that
-  // throws is skipped and the tool runs: the .catch refuses instead while the guard holds the main loop.
+  // orch's guard first (the model's own calls only), then handoff's gate past the context threshold, then the tools
+  // pane's count of the model's call (it never throws). A hook that throws is skipped and the tool runs: the .catch
+  // refuses instead while the guard holds the main loop.
   on('tool.call', async ($, e, next) => {
     const deny = next.origin.plugin === 'engine' ? await orchToolDeny($, e) : undefined
     if (deny) return { deny }
-    return handoffToolCall($, e, next)
+    const r = await handoffToolCall($, e, next)
+    if (next.origin.plugin === 'engine') await toolsCount($, e, r)
+    return r
   }).catch(($, e, next) => {
     if (next.called) return next(e)
     const deny = orchCatchDeny(e.agentId)
     return deny ? { deny } : next(e)
+  })
+
+  // Every command, after it ran: the tools pane's Skills tab counts the slash runs. Registered before the features'
+  // own command.run hooks, so it is the outermost and sees a run one of them answers.
+  on('command.run', async ($, e, next) => {
+    const r = await next(e)
+    await toolsCommandRan($, e)
+    return r
   })
 
   // What is beneath (another plugin's hint, or the engine's own line), then 🪃 (handoff) and ✚ junkd, side by side.
@@ -125,5 +142,6 @@ export const register: Register = (on, options) => {
   registerHandoff(on, options)
   registerOrch(on, options)
   registerTldr(on, options)
+  registerTools(on, options)
   registerPanel(on, options)
 }

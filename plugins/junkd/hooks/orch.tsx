@@ -9,6 +9,7 @@ import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { O, PREFIX, applyOrchSettings, coerce, guardActive, isField, orchGuard, orchSpawn, transcriptTokens, type AgentRecord, type OrchState } from './orch-lib'
 import { orchView, type Els } from './orch-views'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
+import { toolsSpawned } from './tools-pane'
 
 type $ = EngineInterface
 
@@ -295,10 +296,14 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
   })
 
   // The spawn as the engine resolved it (fork, model), behind the Agent rule of the guard; the model's own spawns
-  // only, as for tool.call.
+  // only, as for tool.call. The module's one agent.spawn hook: the tools pane records each started agent's model and
+  // directory here too (toolsSpawned never throws).
   on('agent.spawn', async ($, e, next) => {
     const deny = next.origin.plugin === 'engine' ? orchSpawn(e) : undefined
-    return deny ? { deny } : next(e)
+    if (deny) return { deny }
+    const r = await next(e)
+    await toolsSpawned($, e, r)
+    return r
   }).catch(($, e, next) => {
     if (next.called) return next(e)
     const deny = orchCatchDeny(e.parentAgentId)
