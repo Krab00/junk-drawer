@@ -209,7 +209,20 @@ test('AC2: the session start does not wait for the check; the band comes once th
   expect(await ui.find({ key: 'cache-check' })).toBeUndefined()
   release()
   await settle()
-  expect(await (await band($)).find({ key: 'cache-check' })).toBeDefined()
+  expect(await ui.find({ key: 'cache-check' }), 'the band mounted before is drawn again').toBeDefined()
+})
+
+test('AC2: a line on screen goes at the next session start with the check off, and at once', W, async ($, on) => {
+  const rec = world(on)
+  await sessionStart($, { source: 'startup' })
+  await settle()
+  const ui = await band($)
+  expect(await ui.find({ key: 'cache-check' })).toBeDefined()
+  await setn($, 0)
+  await sessionStart($, { source: 'clear' })
+  await settle()
+  expect(rec.checks).toHaveLength(1)
+  expect(await ui.find({ key: 'cache-check' }), 'the band mounted before is cleared').toBeUndefined()
 })
 
 test('AC2: core_cache_check_sessions 0 runs no check; another value is the N the script gets', W, async ($, on) => {
