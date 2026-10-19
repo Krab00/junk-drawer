@@ -13,8 +13,9 @@ One plugin for three tools and the frame over them. Every command is a skill of 
 | `/junkd:tldr [N \| on \| off \| status]` | Summarize the last substantive reply in at most N sentences, or keep every reply terse |
 | `/junkd`, `/junkd:junkd` | Open or close the junkd set of panes (Claude Code only) |
 
-On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`…, on Kimi Code as `/skill:<name>`, on OpenCode
-through the `skill` tool. The hooks module (Claude Code only) adds the auto handoff loop, the orch main-loop guard,
+On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`… (the model sees them as `junkd:<name>`), on Kimi
+Code as `/skill:<name>`, on OpenCode through the `skill` tool or the `/<name>` wrappers `bin/opencode-commands.sh`
+generates. The hooks module (Claude Code only) adds the auto handoff loop, the orch main-loop guard,
 the panes and `$.junkd` for other mods; the skills, the `bin/` helpers and the shell hooks work on every host.
 
 handoff, orch and tldr were three plugins before; see [Moving from the handoff, orch and tldr
@@ -27,7 +28,38 @@ plugins](#moving-from-the-handoff-orch-and-tldr-plugins).
 /plugin install junkd@junk-drawer
 ```
 
-Codex: `codex plugin add junkd@junk-drawer`. Kimi Code: `/plugins install junkd` (see `kimi-marketplace.json`).
+Codex: `codex plugin add junkd@junk-drawer`; after an update of a local marketplace, re-run that command
+(`codex plugin marketplace upgrade` refreshes only a Git marketplace). Kimi Code installs from a clone, in the TUI:
+`/plugins marketplace /abs/path/to/junk-drawer/kimi-marketplace.json`, choose junkd in the picker, then "Trust and
+install" (a GitHub URL and a bare `/plugins install junkd` do not work). OpenCode: `npx skills add Krab00/junk-drawer
+-a opencode` (or a local path), then `bin/opencode-commands.sh` for the `/<name>` commands. The root
+[README](../../README.md) has the details per host.
+
+### Hosts and data roots
+
+The helpers (`handoff-path`, `handoff-load`, `tldr-flag`, `tldr-hook`) detect the host they run on through
+`skills/handoff/bin/host-lib`, and each host keeps its own data:
+
+| Host | Detected by | Handoffs | Terse flag |
+|---|---|---|---|
+| Claude Code | `CLAUDECODE`, `CLAUDE_PLUGIN_ROOT`, else `CLAUDE_CONFIG_DIR` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs/` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/tldr-on` |
+| Codex | `CODEX_THREAD_ID`, a `PLUGIN_ROOT` under `.codex` or `$CODEX_HOME`, else `CODEX_HOME` | `${CODEX_HOME:-$HOME/.codex}/junk-drawer/handoffs/` | `${CODEX_HOME:-$HOME/.codex}/junk-drawer/tldr-on` |
+| Kimi Code | `KIMI_PLUGIN_ROOT`, the helper under `plugins/managed/`, else `KIMI_CODE_HOME` | `${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/handoffs/` | `${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/tldr-on` |
+| OpenCode | `OPENCODE`, `OPENCODE_PID`, the helper under `.agents/skills/` or `.opencode/` | `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer/handoffs/` | `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer/tldr-on` |
+
+`JUNK_DRAWER_RUNTIME=claude|codex|kimi|opencode` overrides the detection. The config-dir variables
+(`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIMI_CODE_HOME`) count only after every host's own signal, so one a shell
+profile exports never pulls another host's helper into it. With no signal at all a helper exits 2 with one line
+naming `JUNK_DRAWER_RUNTIME` and writes nothing: it never falls back to `~/.claude`.
+
+Install quirks: Codex drops every symlink (the plugin-root `bin/`, `agents/`, `scripts/` and orch-init's sibling
+links), so the skills run their own `./bin`; its terse-mode hook is `.codex-plugin/hooks.json` (Codex refuses the
+`modules` key of `hooks/hooks.json`) and runs only after you trust it when a session asks you to review the
+plugin's hooks. Kimi Code keeps the symlinks of a local-path install rewritten to absolute paths into your checkout
+(the plugin-root `bin/` and `scripts/`, orch-init's `bin/` and `commands/`): moving the checkout breaks them, and
+switching its branch changes what they run. Its manifest names no agents (`"agents": []`), so `agents/` is not read
+as agent definitions. Skills in `~/.agents/skills` shadow the plugin's on Kimi (a stale `npx skills add -g` copy
+wins).
 
 ## The /junkd frame (Claude Code only)
 
@@ -230,8 +262,10 @@ bounds, the nothing cases, the one count per message id, the 50 MB tail read and
 
 ## handoff
 
-Codex: use `$handoff` to save, or `$handoff resume <id>` to restore. Codex handoffs live under
-`~/.codex/junk-drawer/handoffs`; Claude Code retains the paths below.
+Codex: `$handoff` saves, `$handon <id>` (or `$handoff resume <id>`) restores. Kimi Code: `/skill:handoff` and
+`/skill:handon <id>`. OpenCode: `/handoff` and `/handon <id>` through the generated wrappers, or "use the handon
+skill". Each host keeps its handoffs apart (see [Hosts and data roots](#hosts-and-data-roots)); Claude Code retains
+the paths below.
 
 Save the state of a session to disk and pick it up in a fresh one — by id, not copy-paste.
 
@@ -240,8 +274,14 @@ Save the state of a session to disk and pick it up in a fresh one — by id, not
 
 Both are skills of the junkd plugin (`skills/handoff`, `skills/handon`); there are no separate command
 files. A skills-only install (`npx skills add Krab00/junk-drawer`) has no plugin namespace, so there the
-same skills answer as `handoff` and `handon`: `handon` takes the same optional id and delegates to
-`handoff`.
+same skills answer as `handoff` and `handon`: `handon` takes the same optional id and runs its own
+`bin/handoff-load`, a byte-identical copy of handoff's (kept so by `tests/smoke.sh`), so it works on a host that
+drops symlinks.
+
+The short id is 8 hex characters. On Claude Code it is the start of the session id (a UUIDv4, random from the first
+character); every other host hashes its session id (a Codex thread id is a UUIDv7, whose start is a timestamp), or,
+with none, the time, the pid and random numbers. `handoff-load` with a fragment that matches several handoffs lists
+their ids and titles and exits 1 instead of guessing; a whole id loads the newest handoff with exactly that id.
 
 Files live in `~/.claude/handoffs/` (`$CLAUDE_CONFIG_DIR/handoffs/` when that is set; outside the plugin
 cache, so they survive updates). The folder did not move with the plugin: handoffs saved before junkd
@@ -367,15 +407,17 @@ shortcut over those rows, nothing more.
 | | `/junkd:handoff` | `/junkd:handon` | `/junkd:handoff auto`, `/junkd:ahandoff` |
 |---|---|---|---|
 | Claude Code | yes | yes | yes |
-| Codex | `$handoff` | `$handoff resume <id>` | no (manual) |
-| Kimi | `/skill:handoff` | `/skill:handoff` | no (manual) |
-| OpenCode | skill | skill | no (manual) |
+| Codex | `$handoff` | `$handon <id>` | no (manual) |
+| Kimi Code | `/skill:handoff` | `/skill:handon <id>` | no (manual) |
+| OpenCode | `/handoff` (wrapper) or the skill | `/handon <id>` (wrapper) or the skill | no (manual) |
 
 ## orch
 
 Part of the **junkd** plugin. Claude Code: `/junkd:orch-init` once per repository, then `/junkd:orch` with a
 task id, free text, `batch`, `chain`, or `all`. Codex: install the plugin, open a new task, run `$orch-init`,
-then `$orch` the same way. Both hosts share `.orch/config.md`, task files, worktrees, and helper scripts.
+then `$orch` the same way. Kimi Code: `/skill:orch-init`, then `/skill:orch`. OpenCode: `/orch-init`, then `/orch`
+(the generated wrappers), or "use the orch skill". Every host shares `.orch/config.md`, task files, worktrees, and
+helper scripts.
 
 A **project-agnostic orchestration loop** for Claude Code. Point it at a repo, and it picks tasks
 from a canonical store, delegates each to an `implementer` subagent, verifies **every acceptance
@@ -717,9 +759,12 @@ On a Fable main loop the guard runs only `<plugin root>/bin/<script>`.
 
 ## tldr
 
-Part of the `junkd` plugin. Codex: invoke `$tldr`, optionally with a sentence count or `on|off|status`. Codex
-stores the persistent flag under `~/.codex/junk-drawer`, Kimi Code under `~/.kimi-code/junk-drawer`; Claude Code
-keeps its flags under `~/.claude/junkd`.
+Part of the `junkd` plugin. Codex: invoke `$tldr`, optionally with a sentence count or `on|off|status`; Kimi
+Code: `/skill:tldr`; OpenCode: `/tldr` (the generated wrapper). Codex stores the persistent flag under
+`~/.codex/junk-drawer`, Kimi Code under `~/.kimi-code/junk-drawer`, OpenCode under
+`${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer`; Claude Code keeps its flags under `~/.claude/junkd`.
+OpenCode has no hook: `/tldr on` only records the flag there and replies do not change. On Codex the hook runs once
+you trust the plugin's hooks.
 
 Two things in one command:
 
@@ -792,8 +837,8 @@ are three of its settings:
   two booleans, anything else a false. Refused (unknown key, a value that does not fit, a `config.set` hook's
   deny, a flag file that could not be written) it rejects with the reason. `scope` takes only `user` today.
 
-There is no tldr pane; `/junkd:tldr` stays the command on every host. The module is Claude-only: Codex and Kimi
-run the shell hook and `tldr-flag` as before, and `tldr_enabled` does not apply there.
+There is no tldr pane; `/junkd:tldr` stays the command on Claude Code. The module is Claude-only: Codex and Kimi
+run the shell hook and `tldr-flag` as before (OpenCode only `tldr-flag`), and `tldr_enabled` does not apply there.
 
 ## Files
 

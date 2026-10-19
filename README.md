@@ -8,25 +8,33 @@ evidence, TL;DR summaries and terse mode, and the `/junkd` frame over the market
 
 ## Install in Kimi Code CLI
 
-Local checkout (marketplace file at the repo root):
+Kimi installs from a local checkout. A GitHub URL does not work: the repo root has no Kimi manifest, and a Kimi URL
+cannot point at a subfolder. Clone, then, inside Kimi (the install is TUI-only):
 
 ```text
-/plugins marketplace /path/to/junk-drawer/kimi-marketplace.json
+git clone https://github.com/Krab00/junk-drawer.git ~/src/junk-drawer
+/plugins marketplace /abs/path/to/junk-drawer/kimi-marketplace.json
 ```
 
-Or install a single plugin directly from GitHub:
-
-```text
-/plugins install https://github.com/Krab00/junk-drawer
-```
+The marketplace command opens a picker: choose the plugin, then "Trust and install" (the dialog's default is Exit).
+One plugin without the marketplace: `/plugins install /abs/path/to/junk-drawer/plugins/junkd`. A bare id
+(`/plugins install junkd`) is not a Kimi command.
 
 Plugins install per user into `$KIMI_CODE_HOME/plugins/managed/<id>/`. Run `/reload` (or start a
 new session) after installing or updating. Invoke workflows as skills, for example `/skill:orch-init`,
 `/skill:orch`, `/skill:tldr`, or `/skill:handoff` — or just describe the task and let the model
 invoke them.
 
-Kimi notes: `commands/` are Claude-only (Kimi uses the skills); the hooks of junkd (tldr's terse mode) and `ctx-limit` are declared in each plugin's manifest and active while the plugin is enabled; `statusline`
-only documents Kimi's fixed footer (theme via `/theme`), it does not install a script.
+Kimi notes:
+
+- `commands/` are Claude-only (Kimi uses the skills); the hooks of junkd (tldr's terse mode) and `ctx-limit` are
+  declared in each plugin's manifest and active while the plugin is enabled; `statusline` only documents Kimi's
+  fixed footer (theme via `/theme`), it does not install a script.
+- A local-path install keeps the plugin's symlinks, rewritten to absolute paths into your checkout (junkd's
+  plugin-root `bin/` and `scripts/`, orch-init's `bin/` and `commands/`). Moving the checkout breaks them, and
+  switching its branch changes what they run. The skills' own `bin/` are real copies and do not move.
+- Skills in `~/.agents/skills` shadow a plugin's skills of the same name: a stale `npx skills add -g` copy wins over
+  the installed plugin. Remove it (or `npx skills update -g`) when you switch to the plugin.
 
 ## Install in Codex
 
@@ -39,12 +47,22 @@ codex plugin add junk-drawer@junk-drawer
 codex plugin add junkd@junk-drawer
 ```
 
-For local development, run `codex plugin marketplace add .` from the repository root. After an
-update, run `codex plugin marketplace upgrade junk-drawer`, reinstall the changed plugin, and open a
-new task so Codex loads the new skills and hooks.
+For local development, run `codex plugin marketplace add .` from the repository root. After an update,
+re-run `codex plugin add junkd@junk-drawer` (and any other changed plugin), then open a new task so Codex loads the
+new skills and hooks. `codex plugin marketplace upgrade junk-drawer` refreshes only a Git marketplace; for a local
+source it fails with "not configured as a Git marketplace".
 
 Invoke Codex workflows by mentioning their skill, for example `$orch-init`, `$orch`, `$tldr`, or
-`$handoff`.
+`$handoff`; the model sees them as `junkd:<name>`.
+
+Codex notes:
+
+- Codex's installer drops every symlink: junkd's plugin-root `bin/`, `agents/` and `scripts/`, and orch-init's
+  sibling links. The skills' own `bin/` are real files and work; orch-init falls back to the `orch` skill's copies.
+- junkd's terse-mode hook is in `.codex-plugin/hooks.json` (the manifest names it), because Codex refuses the
+  Claude Code-only `modules` key of `hooks/hooks.json`. Codex runs a plugin hook only once you trust it: a new
+  session asks you to review the plugin's hooks ("Trust all and continue"). `codex exec` never asks, so an
+  untrusted hook stays silent there.
 
 ## Install in Claude Code
 
@@ -72,8 +90,12 @@ hooks module adds the automatic handoff loop, the orch main-loop guard, the pane
 
 - Claude Code: `/plugin install junkd@junk-drawer`, then `/reload-plugins`.
 - Codex: `codex plugin add junkd@junk-drawer`; the skills answer as `$handoff`, `$orch-init`, `$orch`, `$tldr`.
-- Kimi: `/plugins install junkd`; the skills answer as `/skill:<name>`, and its manifest declares tldr's
-  terse-mode hook. The mod parts (the pane, the auto handoff loop, the guard) are Claude Code only.
+- Kimi: `/plugins marketplace /abs/path/to/junk-drawer/kimi-marketplace.json` from a clone (see "Install in Kimi
+  Code CLI"); the skills answer as `/skill:<name>`, and its manifest declares tldr's terse-mode hook.
+- OpenCode: `npx skills add Krab00/junk-drawer -a opencode` (see "Install in OpenCode"); the skills answer through
+  the skill tool or the `/<name>` command wrappers. OpenCode has no hook, so terse mode only records its flag there.
+
+The mod parts (the pane, the auto handoff loop, the guard) are Claude Code only.
 
 `/junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs (junkd, handoff's,
 orch's) and closes them together. The junkd pane has three sections:
@@ -97,6 +119,7 @@ them into a project with:
 
 ```bash
 npx skills add Krab00/junk-drawer -a opencode
+npx skills add /abs/path/to/junk-drawer -a opencode    # from a local checkout
 ```
 
 Skills land in `.agents/skills/<name>/`, one of the directories OpenCode scans (alongside
@@ -109,11 +132,18 @@ To get slash-command autocomplete anyway, generate thin command wrappers (one pe
 skill) into OpenCode's commands directory:
 
 ```bash
-bin/opencode-commands.sh   # ~/.agents/skills -> ~/.config/opencode/commands
+bin/opencode-commands.sh   # from a checkout: ~/.agents/skills -> ~/.config/opencode/commands
+# without a checkout (arguments: [skills-dir] [commands-dir]):
+curl -fsSL https://raw.githubusercontent.com/Krab00/junk-drawer/main/bin/opencode-commands.sh | sh -s -- .agents/skills .opencode/commands
 ```
 
 Re-run it after `npx skills add`/`update`. It only overwrites files it generated itself, and
-skips `statusline`.
+skips `statusline`. Each wrapper's description is the skill's first sentence, or its first whole words with
+`...`, never cut inside a word.
+
+junkd's helpers detect OpenCode themselves and keep its data apart from every other host, under
+`${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer/` (`handoffs/`, `tldr-on`). OpenCode has no hook, so
+`/tldr on` only records the flag; replies do not change.
 
 ## Install the skills only (any agent)
 
@@ -157,10 +187,12 @@ Known limits of the skills-only install:
 - `orch-init` borrows `orch`'s helpers through a sibling symlink, so its own tree hash does not move
   when those helpers change. Once `npx skills update` has refreshed `orch`, refresh it explicitly
   with `npx skills add Krab00/junk-drawer --skill orch-init`; `add` always reinstalls.
-- Codex's plugin installer drops symlinks. Under the previous layout that left Codex plugin installs
-  with no `bin/` inside the skills at all; now the skills carry real files and work. `orch-init`'s
-  sibling symlinks are still dropped there, which is why its SKILL.md says to fall back to the
-  `orch` skill's copies.
+- Codex's plugin installer drops every symlink (the plugin-root `bin/`, `agents/` and `scripts/` too).
+  Under the previous layout that left Codex plugin installs with no `bin/` inside the skills at all;
+  now the skills carry real files and work. `orch-init`'s sibling symlinks are still dropped there,
+  which is why its SKILL.md says to fall back to the `orch` skill's copies. `handon` carries a real
+  copy of `handoff-load` (and of `host-lib`, the host detection it sources), kept byte-identical by
+  `tests/smoke.sh`, so it resumes a handoff on its own.
 - The symlinks are stored in git as symlinks. A Windows clone without `core.symlinks=true` writes
   them as plain text files, which breaks the plugin-root paths, so hooks and slash commands fail for
   a plugin install made from such a clone. The skills themselves are real files, so a skills-only
@@ -185,6 +217,7 @@ kimi-marketplace.json                 # Kimi Code marketplace
 plugins/<plugin>/
   .claude-plugin/plugin.json          # Claude Code manifest
   .codex-plugin/plugin.json           # Codex manifest and UI metadata
+  .codex-plugin/hooks.json            # junkd: Codex's hooks file (hooks/hooks.json carries Claude Code's modules)
   .kimi-plugin/plugin.json            # Kimi Code manifest (skills + hooks)
   commands/<name>.md                  # Claude Code slash commands
   skills/<name>/SKILL.md              # Codex, Kimi, and shared workflows
@@ -198,12 +231,15 @@ junkd has several skills with helpers, so its plugin-root `bin/` and `scripts/` 
 `commands/`: every junkd command is a skill.
 
 
-Codex exposes `${PLUGIN_ROOT}` and compatibility aliases including `${CLAUDE_PLUGIN_ROOT}`; Kimi
-plugin hooks get `${KIMI_PLUGIN_ROOT}` and `${KIMI_CODE_HOME}`. Scripts that persist state separate
-Codex data under `${CODEX_HOME:-$HOME/.codex}/junk-drawer`, Kimi data under
-`${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer`, and Claude Code data under
-`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`. Set `JUNK_DRAWER_RUNTIME=codex|kimi` when invoking `bin/`
-helpers from a skill; Claude Code needs no variable.
+Codex hooks get `${PLUGIN_ROOT}` and the alias `${CLAUDE_PLUGIN_ROOT}`, its bash tool `CODEX_THREAD_ID`; Kimi
+plugin hooks get `${KIMI_PLUGIN_ROOT}` and `${KIMI_CODE_HOME}`; OpenCode's bash tool gets `OPENCODE` and
+`OPENCODE_PID`. Scripts that persist state separate Codex data under `${CODEX_HOME:-$HOME/.codex}/junk-drawer`, Kimi
+data under `${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer`, OpenCode data under
+`${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer`, and Claude Code data under
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`. junkd's helpers detect the host from these (`skills/handoff/bin/host-lib`);
+`JUNK_DRAWER_RUNTIME=claude|codex|kimi|opencode` overrides the detection, and a helper that finds no signal exits 2
+naming that variable instead of writing into `~/.claude`. The other plugins' helpers (`ctx-limit`, `junk-drawer`) do not detect
+the host: their skills set `JUNK_DRAWER_RUNTIME=codex|kimi`, and Claude Code needs no variable.
 
 Codex and Kimi transcript parsing in `ctx-tokens` and `ctx-limit` is best effort because
 neither transcript layout is a stable API. The native CLI context footer is the stable visual
