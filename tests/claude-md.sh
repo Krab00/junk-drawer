@@ -132,6 +132,11 @@ printf '## Orchestrator mode\n````\n```\n## Not a heading\n~~~\n````\n~~~\n## St
 run on
 [ "$rc" = 0 ] || fail "on, fenced section: exit $rc: $out"
 expect "$md" "${BLOCK}\n## Next\n" "on: a fenced heading ended the section, or a short or foreign run closed the fence"
+# a fence line with an info string (```bash) opens a fence but never closes one
+reset
+printf '## Orchestrator mode\n```\n```bash\n## In\n```\n## Next\n' > "$md"
+run on
+expect "$md" "${BLOCK}\n## Next\n" "on: \`\`\`bash closed a fence"
 # ```x``` on one line is inline code, no fence: the heading after it counts
 reset
 printf '```x```\n## Orchestrator mode\nr\n' > "$md"
@@ -200,12 +205,12 @@ run on
 [ -L "$md" ] || fail "on, symlink: the link was replaced by a file"
 expect "$CLAUDE_CONFIG_DIR/real/CLAUDE.md" "${BLOCK}" "on, symlink: the target was not written"
 [ "$(find "$CLAUDE_CONFIG_DIR/real" -name 'CLAUDE.md.bak-*' | wc -l | tr -d ' ')" = 1 ] || fail "on, symlink: no backup beside the target"
-# the file's mode is kept
+# the file's mode is kept (640: neither mktemp's 600 nor the usual umask's 644)
 reset
 printf '## Orchestrator mode\nr\n' > "$md"
-chmod 600 "$md"
+chmod 640 "$md"
 run on
-[ "$(ls -l "$md" | cut -c1-10)" = "-rw-------" ] || fail "on: the file's mode was not kept: $(ls -l "$md")"
+[ "$(ls -l "$md" | cut -c1-10)" = "-rw-r-----" ] || fail "on: the file's mode was not kept: $(ls -l "$md")"
 
 # missing CLAUDE.md: skipped, exit 0, never created (a dangling link is missing too)
 reset
