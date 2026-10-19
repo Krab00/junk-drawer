@@ -6,6 +6,7 @@ import {
   T, ROUTES, ago, approxTokens, buildTree, flatten, fold, mcpRows, move, select, selectedIn, skillRows, tokens, toolRows,
   type Node, type Route, type Status,
 } from './tools'
+import { verdictSuffix } from './watchdog.ts'
 
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button'>
 export type ToolsActs = {
@@ -66,6 +67,7 @@ function agentRow(c: Draw, n: Node, guide: string, isOn: boolean, width: number,
   const mark = n.children.length ? (T.folded[n.id] ? '▸ ' : '▾ ') : '  '
   const glyph = n.kind === 'agent' && n.status ? GLYPH[n.status] : undefined
   const parts = n.kind === 'agent' ? [n.type, n.model, n.status === 'done' ? 'done' : undefined] : [n.branch || undefined]
+  if (n.kind === 'agent') parts.push(verdictSuffix(n.id.slice('agent:'.length)) || undefined) // the watchdog's verdict
   const extra = parts.filter(Boolean).join('  ')
   // Each part in turn takes what room is left, so a deep row in a narrow pane is cut, never wider than it.
   let room = width

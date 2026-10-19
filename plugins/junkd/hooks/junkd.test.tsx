@@ -1283,6 +1283,7 @@ const MANIFEST_KEYS = [
   'core_output_style', 'core_cache_check_sessions',
   'handoff_enabled', 'handoff_threshold', 'handoff_checkEvery', 'handoff_autoOn', 'handoff_resumeAfterLimit', 'handoff_staleDays', 'handoff_segment',
   'orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md',
+  'orch_watchdog', 'orch_idle_stop', 'orch_idle_stop_minutes', 'orch_stall_minutes',
   'tldr_enabled', 'tldr_terse', 'tldr_sentences',
   'ctx_enabled', 'ctx_threshold', 'ctx_action', 'ctx_cmd',
   'statusline_enabled', 'statusline_ctx', 'statusline_branch', 'statusline_worktree', 'statusline_model', 'statusline_effort', 'statusline_limits',

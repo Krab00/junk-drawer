@@ -12,6 +12,7 @@ import type { $ } from './feature'
 import { T, applyToolsSettings, coerce, resetTools, countSkill, tallyTool, isField, isRoute, emptyCounters, readWorktrees, mergeAgents, pickTranscript, projectFolder, revealCommand, type Route } from './tools'
 import { toolsView, type Els } from './tools-views'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
+import { watchdogEnd } from './watchdog.tsx'
 
 export const TOOLS_PANE_ID = 'junkd-tools'
 export const OFF_TEXT = 'junkd: the tools pane is off: /junkd → tools → Tools pane: enabled'
@@ -293,6 +294,7 @@ export function registerTools(on: On, options: Record<string, unknown>): void {
         void load($)
       }
     }
+    await watchdogEnd($, end.reason) // the watchdog: /clear and /resume start over, any other end stops its timer
     return next(end)
   })
 

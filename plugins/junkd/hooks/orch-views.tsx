@@ -5,6 +5,7 @@ import type { ElementTable, RenderInput } from 'claude-code'
 import type { JunkdOrchField as OrchField } from '../types'
 import type { OrchSchemaEntry } from './orch-lib'
 import { ORCH_RANGE, SCHEMA, type OrchValues } from './orch-lib'
+import { CLAMPED } from './orch-lib'
 
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button' | 'Input'>
 export type OrchActs = { close(): void; set(key: OrchField, value: unknown): void; refuse(text: string): void; focus(key: string): void }
@@ -27,6 +28,10 @@ const HINTS: Record<OrchField, string> = {
   inject_rules: 'ORCHESTRATOR.md into the main session at start',
   rounds: 'fix rounds per task; --rounds overrides',
   claude_md: 'the CLAUDE.md orchestrator section as a pointer block; off removes it',
+  watchdog: 'stalls, deaths and idle leftovers of this session\'s agents',
+  idle_stop: 'stop a finished agent nobody needs; off: report it',
+  idle_stop_minutes: 'idle minutes of a finished agent before a stop',
+  stall_minutes: 'minutes without a tool call (reviewers +5)',
 }
 
 // The engine empties a field on Enter and only puts `value` back when it changed, so every Enter draws the field
@@ -175,6 +180,7 @@ export function orchView(els: Els, props: RenderInput<'Pane'>['props'], values: 
           onLabel={() => act.focus(fieldKey(id))}
           onSubmit={v => {
             const n = v.trim() === '' ? NaN : Number(v)
+            if (CLAMPED.has(s.key) && Number.isFinite(n)) return act.set(s.key, n) // the watchdog's minutes: set clamps them
             if (Number.isInteger(n) && n >= lo && n <= hi) return act.set(s.key, n)
             act.refuse(`✗ ${s.key} takes a whole number ${lo}–${hi}, not "${v}"`)
           }} />
