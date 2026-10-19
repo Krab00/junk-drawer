@@ -2,14 +2,14 @@
 // (tool calls, MCP servers, skill runs), the `git worktree list --porcelain` parser and the agents tree. tools-pane.tsx
 // feeds it from the hooks (tool.call, command.run, agent.spawn, session.end) and from the reads ($.agent.list, git,
 // $.session.usage); tools-views.tsx draws from it.
-import type { AgentInfo, ContextMcpTool } from 'claude-code'
+import type { ContextMcpTool, AgentInfo } from 'claude-code'
 import type { JunkdToolsField, JunkdToolsRoute } from '../types'
 
 export type Route = JunkdToolsRoute
 export const ROUTES: readonly Route[] = ['agents', 'tools', 'mcp', 'skills']
 export const isRoute = (route: unknown): route is Route => (ROUTES as readonly unknown[]).includes(route)
 
-// ------------------------------------------------------------------ settings
+// settings ----------------------------------------------------------------------------------------------------------
 
 // tools_refresh: seconds between two loads while the pane is open, clamped here (the manifest keeps type and default
 // only: the engine refuses a whole module whose stored value is out of a manifest range).
@@ -31,7 +31,7 @@ export function coerce(field: JunkdToolsField, raw: unknown): Coerced {
   return { value: clampRefresh(n) }
 }
 
-// ------------------------------------------------------------------ counters
+// counters ----------------------------------------------------------------------------------------------------------
 
 type Via = 'tool' | 'slash'
 // chars: the length of the result text the model read (drawn as chars ÷ 4, ≈tokens).
@@ -40,10 +40,13 @@ export type SkillRun = { via: Via; count: number; last: number }
 export type Counters = { tools: Record<string, ToolCount>; skills: Record<string, SkillRun> }
 
 // Prototype-free: the names come from the model (`constructor`, `__proto__` are names like any other).
-export const newCounters = (): Counters => ({ tools: Object.create(null), skills: Object.create(null) })
+export function emptyCounters(): Counters {
+  return { tools: Object.create(null), skills: Object.create(null) }
+}
 
-export function countTool(c: Counters, tool: string, isSub: boolean, chars: number): void {
-  const n = (c.tools[tool] ??= { main: 0, sub: 0, chars: 0 })
+export function tallyTool(c: Counters, tool: string, isSub: boolean, chars: number): void {
+  let n = c.tools[tool]
+  if (!n) c.tools[tool] = n = { main: 0, sub: 0, chars: 0 }
   if (isSub) n.sub++
   else n.main++
   n.chars += chars
@@ -55,10 +58,10 @@ export const SAME_RUN_MS = 2000
 export function countSkill(c: Counters, name: string, via: Via, now: number): void {
   const r = c.skills[name]
   if (r && r.via !== via && now - r.last < SAME_RUN_MS) return
-  c.skills[name] = { via, count: (r?.count ?? 0) + 1, last: now }
+  c.skills[name] = { via, last: now, count: 1 + (r ? r.count : 0) }
 }
 
-// ------------------------------------------------------------------ state
+// state -------------------------------------------------------------------------------------------------------------
 
 export type Worktree = { path: string; branch: string } // branch: its name, `detached` or `bare`
 export type Spawned = { model: string; cwd: string; name?: string } // what agent.spawn resolved; the agent list has neither
@@ -76,8 +79,8 @@ export const T = {
   selectedAt: 0, // its index, where the selection lands when its row leaves the list
   folded: Object.create(null) as Record<string, boolean>, // node id -> folded, as the person last set it
   since: 0, // when the counters started: session start, then each /clear or /resume
-  counters: newCounters(),
-  worktrees: [] as Worktree[], // [0] = the main checkout
+  counters: emptyCounters(),
+  worktrees: [] as Worktree[], // in git's order: the main checkout comes first
   agents: [] as AgentInfo[],
   seen: Object.create(null) as Record<string, AgentInfo>, // every agent listed this session, by id
   spawned: Object.create(null) as Record<string, Spawned>, // by agent id
@@ -88,7 +91,7 @@ export const T = {
 export function resetTools(): void {
   Object.assign(T, {
     open: false, loaded: false, route: 'agents', selected: null, selectedAt: 0, folded: Object.create(null), since: 0,
-    counters: newCounters(), worktrees: [], agents: [], seen: Object.create(null), spawned: Object.create(null), mcp: [],
+    counters: emptyCounters(), worktrees: [], agents: [], seen: Object.create(null), spawned: Object.create(null), mcp: [],
   })
 }
 
@@ -107,12 +110,14 @@ export function mergeAgents(listed: AgentInfo[]): AgentInfo[] {
   return Object.values(T.seen)
 }
 
-// ------------------------------------------------------------------ MCP
+// MCP ---------------------------------------------------------------------------------------------------------------
 
-// `mcp__<server>__<tool>`: the server is what lies between `mcp__` and the next `__`.
-export function mcpName(name: string): { server: string; tool: string } | null {
-  const m = /^mcp__(.+?)__(.+)$/.exec(name)
-  return m ? { server: m[1]!, tool: m[2]! } : null
+export type McpPart = { server: string; tool: string }
+// A tool called `mcp__<server>__<tool>`: past the `mcp__` prefix, the text up to the first `__` that follows names
+// the server, the rest the tool.
+export function splitMcp(name: string): McpPart | null {
+  const hit = name.match(/^mcp__(.+?)__(.+)$/)
+  return hit === null ? null : { server: hit[1]!, tool: hit[2]! }
 }
 
 // A wire name's server, by the schemas where they name it: the engine spells a server's name on the wire with each
@@ -125,9 +130,9 @@ export function mcpSplitter(schema: readonly ContextMcpTool[]) {
     if (m.name.startsWith(`mcp__${wire}__`)) byWire.set(wire, m.serverName)
   }
   const wires = [...byWire.keys()].sort((a, b) => b.length - a.length)
-  return (name: string): { server: string; tool: string } | null => {
+  return (name: string): McpPart | null => {
     const wire = wires.find(w => name.startsWith(`mcp__${w}__`))
-    return wire === undefined ? mcpName(name) : { server: byWire.get(wire)!, tool: name.slice(`mcp__${wire}__`.length) }
+    return wire === undefined ? splitMcp(name) : { server: byWire.get(wire)!, tool: name.slice(`mcp__${wire}__`.length) }
   }
 }
 
@@ -153,9 +158,10 @@ export function mcpRows(counts: Record<string, ToolCount>, schema: readonly Cont
       r.schemaTokens += m.tokens
     }
   }
-  for (const [name, n] of Object.entries(counts)) {
+  for (const name of Object.keys(counts)) {
     const p = split(name)
     if (!p) continue
+    const n = counts[name]!
     const r = row(p.server)
     r.calls += n.main + n.sub
     r.chars += n.chars
@@ -171,7 +177,8 @@ export function toolRows(counts: Record<string, ToolCount>, schema: readonly Con
   const rows: ToolRow[] = []
   const servers = new Set<string>()
   const mcp: ToolRow = { name: '', main: 0, sub: 0, chars: 0 }
-  for (const [name, n] of Object.entries(counts)) {
+  for (const name of Object.keys(counts)) {
+    const n = counts[name]!
     const p = split(name)
     if (!p) {
       rows.push({ name, ...n })
@@ -189,12 +196,12 @@ export function toolRows(counts: Record<string, ToolCount>, schema: readonly Con
 
 export const skillRows = (c: Counters) => Object.entries(c.skills).sort(([an, a], [bn, b]) => b.count - a.count || b.last - a.last || an.localeCompare(bn))
 
-// ------------------------------------------------------------------ worktrees and the tree
+// worktrees and the tree --------------------------------------------------------------------------------------------
 
 // `git worktree list --porcelain`: one block per worktree, the main checkout first, blocks apart by a blank line. A
 // block's `worktree <path>` line holds the path whole (spaces and all); `branch refs/heads/<name>`, else `detached`
 // or `bare`.
-export function parseWorktrees(out: string): Worktree[] {
+export function readWorktrees(out: string): Worktree[] {
   const list: Worktree[] = []
   for (const block of out.replace(/\r/g, '').split(/\n\s*\n/)) {
     const lines = block.split('\n')
@@ -212,9 +219,10 @@ export const isDone = (status: string) => status === 'completed' || status === '
 export const statusOf = (status: string): Status =>
   isDone(status) ? 'done' : status === 'waiting' || status === 'idle' ? 'waiting' : 'running'
 
+export type NodeKind = 'root' | 'worktree' | 'agent'
 export type Node = {
   id: string
-  kind: 'root' | 'worktree' | 'agent'
+  kind: NodeKind
   label: string
   branch?: string
   type?: string
@@ -223,7 +231,7 @@ export type Node = {
   children: Node[]
 }
 
-const base = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path
+const folderName = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path
 const shortModel = (model: string) => /fable|opus|sonnet|haiku/i.exec(model)?.[0].toLowerCase() ?? model
 const under = (path: string, dir: string) => path === dir || path.startsWith(`${dir.replace(/\/+$/, '')}/`)
 
@@ -232,9 +240,10 @@ const under = (path: string, dir: string) => path === dir || path.startsWith(`${
 // worktree, or unknown (spawned before this module loaded), sits under the root, before the worktrees. With
 // `agentsOnly` a worktree with no agent is left out.
 export function buildTree(worktrees: readonly Worktree[], agents: readonly AgentInfo[], spawned: Record<string, Spawned>, agentsOnly: boolean): Node {
-  const [main, ...rest] = worktrees
-  const root: Node = { id: 'root', kind: 'root', label: main ? base(main.path) : '', branch: main?.branch, children: [] }
-  const nodes = rest.map(w => ({ path: w.path, node: { id: `wt:${w.path}`, kind: 'worktree', label: base(w.path), branch: w.branch, children: [] } as Node }))
+  const main = worktrees[0]
+  const rest = worktrees.slice(1)
+  const root: Node = { id: 'root', kind: 'root', label: main ? folderName(main.path) : '', branch: main?.branch, children: [] }
+  const nodes = rest.map(w => ({ path: w.path, node: { id: `wt:${w.path}`, kind: 'worktree', label: folderName(w.path), branch: w.branch, children: [] } as Node }))
   for (const a of agents) {
     const s = spawned[a.id]
     const agent: Node = {
@@ -259,22 +268,22 @@ export type Row = { node: Node; guide: string; depth: number }
 // Depth first, a folded node's children left out; `guide` is the `├─ └─ │` prefix its row is drawn after.
 export function flatten(root: Node, folded: Record<string, boolean>): Row[] {
   const rows: Row[] = []
-  const walk = (n: Node, guide: string, pad: string, depth: number) => {
-    rows.push({ node: n, guide, depth })
+  const visit = (n: Node, guide: string, indent: string, depth: number) => {
+    rows.push({ depth, guide, node: n })
     if (folded[n.id]) return
-    n.children.forEach((c, i) => {
-      const last = i === n.children.length - 1
-      walk(c, pad + (last ? '└─ ' : '├─ '), pad + (last ? '   ' : '│  '), depth + 1)
+    n.children.forEach((child, i) => {
+      const end = i === n.children.length - 1
+      visit(child, indent + (end ? '└─ ' : '├─ '), indent + (end ? '   ' : '│  '), depth + 1)
     })
   }
-  walk(root, '', '', 0)
+  visit(root, '', '', 0)
   return rows
 }
 
 // The selected row among `ids`: by its id, else (its row gone) the row now at its last index. Kept for the next draw.
 export function selectedIn(ids: readonly string[]): number {
-  let i = T.selected === null ? -1 : ids.indexOf(T.selected)
-  if (i < 0) i = Math.max(0, Math.min(T.selectedAt, ids.length - 1))
+  let i = T.selected !== null ? ids.indexOf(T.selected) : -1
+  if (i === -1) i = Math.min(Math.max(T.selectedAt, 0), Math.max(ids.length - 1, 0))
   T.selected = ids[i] ?? null
   T.selectedAt = i
   return i
@@ -298,7 +307,7 @@ export function fold(node: Node | undefined): boolean {
   return true
 }
 
-// ------------------------------------------------------------------ drawing helpers, `$`-free
+// drawing helpers, `$`-free -----------------------------------------------------------------------------------------
 
 // ≈tokens from chars (÷4), as `1.2k` past a thousand; `-` for none.
 export const approxTokens = (chars: number) => (chars > 0 ? tokens(chars / 4) : '-')
@@ -314,7 +323,7 @@ export function ago(then: number, now: number): string {
   return `${Math.floor(s / 86400)} d ago`
 }
 
-// ------------------------------------------------------------------ the transcript
+// the transcript ----------------------------------------------------------------------------------------------------
 
 // The engine's project folder of a directory: each character that is no letter or digit becomes `-`.
 export const projectFolder = (dir: string) => dir.replace(/[^A-Za-z0-9]/g, '-')
@@ -325,5 +334,5 @@ export function pickTranscript(entries: readonly { name: string; kind: string; m
   return files.find(e => e.name === `${sessionId}.jsonl`)?.name ?? [...files].sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.name
 }
 // macOS (`uname -s` Darwin) shows the file in Finder; elsewhere the folder opens.
-export const revealArgv = (os: string, file: string): string[] =>
+export const revealCommand = (os: string, file: string): string[] =>
   os === 'Darwin' ? ['open', '-R', file] : ['xdg-open', file.replace(/\/[^/]*$/, '') || '/']

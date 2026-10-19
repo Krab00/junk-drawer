@@ -6,8 +6,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { AgentInfo, Args, ContextMcpTool, On } from 'claude-code'
 import {
-  ago, buildTree, clampRefresh, coerce, countSkill, countTool, flatten, mcpRows, mcpSplitter, newCounters, parseWorktrees, pickTranscript,
-  projectFolder, revealArgv, toolRows,
+  ago, buildTree, clampRefresh, coerce, countSkill, tallyTool, flatten, mcpRows, mcpSplitter, emptyCounters, readWorktrees, pickTranscript,
+  projectFolder, revealCommand, toolRows,
 } from './tools'
 
 const CFG = '/fake/cfg'
@@ -28,24 +28,24 @@ const PORCELAIN = [
 const agent = (id: string, status: AgentInfo['status'], more: Partial<AgentInfo> = {}): AgentInfo => ({ id, description: `task ${id}`, type: 'general-purpose', status, ...more })
 const mcpTool = (name: string, serverName: string, tokens: number, isLoaded = true): ContextMcpTool => ({ name, serverName, tokens, isLoaded })
 
-// ------------------------------------------------------------------ the pure parts
+// the pure parts ----------------------------------------------------------------------------------------------------
 
 test('the porcelain parser: the main checkout first, a branch without refs/heads/, detached, bare, a path with spaces, CRLF', () => {
-  expect(parseWorktrees(PORCELAIN)).toEqual([
+  expect(readWorktrees(PORCELAIN)).toEqual([
     { path: MAIN, branch: 'main' },
     { path: WT, branch: 'task/T17-tools-pane' },
     { path: OTHER, branch: 'detached' },
   ])
   const bare = ['worktree /srv/repo.git', 'bare', '', 'worktree /srv/wt one', 'HEAD 1', 'branch refs/heads/x', ''].join('\r\n')
-  expect(parseWorktrees(bare)).toEqual([{ path: '/srv/repo.git', branch: 'bare' }, { path: '/srv/wt one', branch: 'x' }])
+  expect(readWorktrees(bare)).toEqual([{ path: '/srv/repo.git', branch: 'bare' }, { path: '/srv/wt one', branch: 'x' }])
   // a detached block whose HEAD line mentions no branch, and a block with neither: no branch word
-  expect(parseWorktrees('worktree /a\nHEAD 1\ndetached\n\nworktree /b\nHEAD 2\n')).toEqual([{ path: '/a', branch: 'detached' }, { path: '/b', branch: '' }])
-  expect(parseWorktrees('')).toEqual([])
-  expect(parseWorktrees('fatal: not a git repository')).toEqual([])
+  expect(readWorktrees('worktree /a\nHEAD 1\ndetached\n\nworktree /b\nHEAD 2\n')).toEqual([{ path: '/a', branch: 'detached' }, { path: '/b', branch: '' }])
+  expect(readWorktrees('')).toEqual([])
+  expect(readWorktrees('fatal: not a git repository')).toEqual([])
 })
 
 test('the tree: each agent under the deepest worktree its cwd is in, the rest under the root; agents_only hides empty worktrees', () => {
-  const trees = parseWorktrees(PORCELAIN)
+  const trees = readWorktrees(PORCELAIN)
   const agents = [agent('a1', 'running', { name: 'scout' }), agent('a2', 'completed'), agent('a3', 'waiting'), agent('a4', 'idle')]
   const spawned = {
     a1: { model: 'claude-haiku-5-5', cwd: WT },
@@ -78,7 +78,7 @@ test('the tree: each agent under the deepest worktree its cwd is in, the rest un
 })
 
 test('flatten draws the guides and leaves out a folded node\'s children', () => {
-  const root = buildTree(parseWorktrees(PORCELAIN), [agent('a1', 'running')], { a1: { model: 'haiku', cwd: WT } }, false)
+  const root = buildTree(readWorktrees(PORCELAIN), [agent('a1', 'running')], { a1: { model: 'haiku', cwd: WT } }, false)
   const rows = flatten(root, {})
   expect(rows.map(r => `${r.guide}${r.node.id}`)).toEqual(['root', `├─ wt:${WT}`, '│  └─ agent:a1', `└─ wt:${OTHER}`])
   expect(flatten(root, { [`wt:${WT}`]: true }).map(r => r.node.id)).toEqual(['root', `wt:${WT}`, `wt:${OTHER}`])
@@ -86,12 +86,12 @@ test('flatten draws the guides and leaves out a folded node\'s children', () => 
 })
 
 test('counters: per tool, main loop and subagent apart, result chars summed; prototype-free names', () => {
-  const c = newCounters()
-  countTool(c, 'Read', false, 40)
-  countTool(c, 'Read', true, 8)
-  countTool(c, 'Read', false, 0)
-  countTool(c, 'constructor', true, 4)
-  countTool(c, '__proto__', false, 4)
+  const c = emptyCounters()
+  tallyTool(c, 'Read', false, 40)
+  tallyTool(c, 'Read', true, 8)
+  tallyTool(c, 'Read', false, 0)
+  tallyTool(c, 'constructor', true, 4)
+  tallyTool(c, '__proto__', false, 4)
   expect({ ...c.tools.Read }).toEqual({ main: 2, sub: 1, chars: 48 })
   expect({ ...c.tools.constructor }).toEqual({ main: 0, sub: 1, chars: 4 })
   expect(Object.keys(c.tools)).toEqual(['Read', 'constructor', '__proto__'])
@@ -100,7 +100,7 @@ test('counters: per tool, main loop and subagent apart, result chars summed; pro
 })
 
 test('skills: a run by slash and by the Skill tool within 2 s is one; the same way twice, or later, is two', () => {
-  const c = newCounters()
+  const c = emptyCounters()
   countSkill(c, 'junkd:tldr', 'slash', 0)
   countSkill(c, 'junkd:tldr', 'tool', 1999) // the model's Skill call of the typed run
   expect({ ...c.skills['junkd:tldr'] }).toEqual({ via: 'slash', count: 1, last: 0 })
@@ -125,12 +125,12 @@ test('MCP: tools fold into one row per server, split by the schemas\' wire names
   expect(split('mcp__my__x')).toEqual({ server: 'my', tool: 'x' })
   expect(split('mcp__unlisted__a__b')).toEqual({ server: 'unlisted', tool: 'a__b' })
   expect(split('Read')).toBe(null)
-  const c = newCounters()
-  countTool(c, 'mcp__linear__get_issue', false, 400)
-  countTool(c, 'mcp__linear__get_issue', true, 400)
-  countTool(c, 'mcp__my_srv__go', false, 40)
-  countTool(c, 'mcp__unlisted__z', false, 4)
-  countTool(c, 'Read', false, 4)
+  const c = emptyCounters()
+  tallyTool(c, 'mcp__linear__get_issue', false, 400)
+  tallyTool(c, 'mcp__linear__get_issue', true, 400)
+  tallyTool(c, 'mcp__my_srv__go', false, 40)
+  tallyTool(c, 'mcp__unlisted__z', false, 4)
+  tallyTool(c, 'Read', false, 4)
   expect(mcpRows(c.tools, schema)).toEqual([
     { server: 'linear', calls: 2, loaded: 1, all: 2, schemaTokens: 300, chars: 800 },
     { server: 'my srv', calls: 1, loaded: 1, all: 1, schemaTokens: 120, chars: 40 },
@@ -142,10 +142,10 @@ test('MCP: tools fold into one row per server, split by the schemas\' wire names
     { name: 'mcp (3 servers)', main: 3, sub: 1, chars: 844, servers: 3 },
     { name: 'Read', main: 1, sub: 0, chars: 4 },
   ])
-  const one = newCounters()
-  countTool(one, 'mcp__linear__get_issue', false, 4)
+  const one = emptyCounters()
+  tallyTool(one, 'mcp__linear__get_issue', false, 4)
   expect(toolRows(one.tools, schema)[0]!.name).toBe('mcp (1 server)')
-  expect(mcpRows(newCounters().tools, [])).toEqual([])
+  expect(mcpRows(emptyCounters().tools, [])).toEqual([])
 })
 
 test('refresh: clamped to 10-600 seconds, rounded; a non-number is refused; the switches take true, "true" and "on"', () => {
@@ -158,9 +158,9 @@ test('refresh: clamped to 10-600 seconds, rounded; a non-number is refused; the 
 })
 
 test('the reveal command and the transcript: Finder on macOS, the folder elsewhere; the session\'s own file, else the newest', () => {
-  expect(revealArgv('Darwin', '/c/projects/-r/s1.jsonl')).toEqual(['open', '-R', '/c/projects/-r/s1.jsonl'])
-  expect(revealArgv('Linux', '/c/projects/-r/s1.jsonl')).toEqual(['xdg-open', '/c/projects/-r'])
-  expect(revealArgv('', '/s1.jsonl')).toEqual(['xdg-open', '/'])
+  expect(revealCommand('Darwin', '/c/projects/-r/s1.jsonl')).toEqual(['open', '-R', '/c/projects/-r/s1.jsonl'])
+  expect(revealCommand('Linux', '/c/projects/-r/s1.jsonl')).toEqual(['xdg-open', '/c/projects/-r'])
+  expect(revealCommand('', '/s1.jsonl')).toEqual(['xdg-open', '/'])
   expect(projectFolder('/Users/k/My Repo/.worktrees/T17')).toBe('-Users-k-My-Repo--worktrees-T17')
   const file = (name: string, mtimeMs: number, kind = 'file') => ({ name, kind, mtimeMs })
   const entries = [file('old.jsonl', 1), file('s1.jsonl', 2), file('new.jsonl', 9), file('newest.txt', 99), file('dir.jsonl', 100, 'dir')]
@@ -175,7 +175,7 @@ test('ago: now, seconds, minutes, hours, days', () => {
   expect(ago(10, 0)).toBe('now') // a clock that went back
 })
 
-// ------------------------------------------------------------------ the module
+// the module --------------------------------------------------------------------------------------------------------
 
 // The module's own state is not this file's to read (the engine loads its own copy): everything below is seen the way
 // the person sees it, in the pane, or in what the module asked of the world.
@@ -229,7 +229,7 @@ function world(on: On, o: Opts = {}) {
   on('command.list', () => ({ value: (o.commands ?? []).map(c => ({ description: '', ...c })) as never }))
   on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
-  on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+  on('session.end', (_$, ev) => ({ sessionId: ev.sessionId }))
   on('session.cwd', () => ({ value: rec.cwd }))
   on('session.id', () => ({ value: o.sessionId ?? 's1' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
@@ -294,7 +294,8 @@ const rowOf = async (ui: Mounted, name: string) => (await lines(ui)).find(l => l
 const activeTab = async (ui: Mounted) => (await ui.findAll({ type: 'Text' })).find(t => t.props.inverse)?.text
 const nodeText = async (ui: Mounted, id: string) => (await ui.find({ type: 'Button', key: `node:${id}` }))?.text
 const nodeKeys = async (ui: Mounted) => (await ui.findAll({ type: 'Button' })).map(b => b.key ?? '').filter(k => k.startsWith('node:'))
-const selected = async (ui: Mounted) => (await ui.findAll({ type: 'Box' })).filter(b => b.props.backgroundColor === 'userMessageBackground').map(b => b.key)
+const MINUTE = 60_000
+const pickedRows = async (ui: Mounted) => (await ui.findAll({ type: 'Box' })).filter(b => b.props.backgroundColor === 'userMessageBackground').map(b => b.key)
 const spawn = ($: Engine, e: Partial<Args<'agent.spawn'>> = {}) =>
   $.agent.spawn({ tool_use_id: 'tu1', prompt: 'p', description: 'd', subagentType: 'general-purpose', provider: { plugin: 'engine', tier: 'core' }, parentModel: 'opus', background: true, fork: false, ...e })
 // A model's call: on the main loop, or a subagent's with its loop's agentId (which $.tool.call's type leaves out).
@@ -446,7 +447,7 @@ test('skills: the Skill tool and a slash run of a plugin\'s or the person\'s ski
   const rec = world(on, { commands })
   await start($)
   await run($, 'junkd:tldr', '3')
-  await rec.clock.advance(60_000)
+  await rec.clock.advance(MINUTE)
   await run($, 'mine')
   await run($, 'mine')
   await run($, 'compact')
@@ -649,54 +650,54 @@ test('folds and the selection survive a refresh: Enter on a row folds it, the ar
   await tools($)
   await rec.clock.settle()
   await onPane($, async ui => {
-    expect(await selected(ui)).toEqual(['row-root']) // the first row until the person picks one
+    expect(await pickedRows(ui)).toEqual(['row-root']) // the first row until the person picks one
     await ui.press({ key: `node:wt:${WT}` })
   })
   const folded = async (ui: Mounted) => {
     expect(await nodeText(ui, `wt:${WT}`)).toBe('├─ ▸ T17  task/T17-tools-pane')
     expect(await nodeText(ui, 'agent:a1')).toBe(undefined)
-    expect(await selected(ui)).toEqual([`row-wt:${WT}`])
+    expect(await pickedRows(ui)).toEqual([`row-wt:${WT}`])
   }
   await onPane($, folded)
   await onPane($, ui => ui.press({ key: 'refresh' }))
-  await rec.clock.advance(60_000) // and a poll tick
+  await rec.clock.advance(MINUTE) // and a poll tick
   await onPane($, folded)
 
   await onPane($, async ui => {
     // a leaf has nothing to fold: a press selects it
     await ui.press({ key: `node:wt:${OTHER}` })
     expect(await nodeText(ui, `wt:${OTHER}`)).toBe('└─   feature x  detached')
-    expect(await selected(ui)).toEqual([`row-wt:${OTHER}`])
+    expect(await pickedRows(ui)).toEqual([`row-wt:${OTHER}`])
     // the person's arrows move the ring: the row it lands on is the selection; a tab is no row
     await $.ui.focus({ component: 'Pane', requestId: PANE_ID, plugin: 'junkd', element: 'node:root', origin: { kind: 'person' } } as never)
-    expect(await selected(ui)).toEqual(['row-root'])
+    expect(await pickedRows(ui)).toEqual(['row-root'])
     await $.ui.focus({ component: 'Pane', requestId: PANE_ID, plugin: 'junkd', element: 'tab-mcp', origin: { kind: 'person' } } as never)
-    expect(await selected(ui)).toEqual(['row-root'])
+    expect(await pickedRows(ui)).toEqual(['row-root'])
     // j and k move the selection within the rows (and ask the ring along: the engine moves it only while the pane
     // holds the keys, which a mounted drawing does not)
     await ui.press({ key: 'down' })
-    expect(await selected(ui)).toEqual([`row-wt:${WT}`])
+    expect(await pickedRows(ui)).toEqual([`row-wt:${WT}`])
     await ui.press({ key: 'down' })
     await ui.press({ key: 'down' })
-    expect(await selected(ui)).toEqual([`row-wt:${OTHER}`])
+    expect(await pickedRows(ui)).toEqual([`row-wt:${OTHER}`])
     await ui.press({ key: 'up' })
     await ui.press({ key: 'up' })
     await ui.press({ key: 'up' })
-    expect(await selected(ui)).toEqual(['row-root'])
+    expect(await pickedRows(ui)).toEqual(['row-root'])
     // unfold: the agent's row comes back under it, the next row down
     await ui.press({ key: `node:wt:${WT}` })
-    expect(await selected(ui)).toEqual([`row-wt:${WT}`])
+    expect(await pickedRows(ui)).toEqual([`row-wt:${WT}`])
     await ui.press({ key: 'down' })
-    expect(await selected(ui)).toEqual(['row-agent:a1'])
+    expect(await pickedRows(ui)).toEqual(['row-agent:a1'])
     await ui.press({ key: 'down' })
-    expect(await selected(ui)).toEqual([`row-wt:${OTHER}`])
+    expect(await pickedRows(ui)).toEqual([`row-wt:${OTHER}`])
   })
   // the selected row gone from the tree (an empty worktree, now hidden): the selection lands on the row at its index,
   // or the last row when there is none that far down
   await frame($, 'set', { key: 'tools_agents_only', value: true })
   await onPane($, async ui => {
     expect(await nodeKeys(ui)).toEqual(['node:root', `node:wt:${WT}`, 'node:agent:a1'])
-    expect(await selected(ui)).toEqual(['row-agent:a1'])
+    expect(await pickedRows(ui)).toEqual(['row-agent:a1'])
   })
 })
 
@@ -712,7 +713,7 @@ test('the poll: every tools_refresh seconds while open; it stops on q, on the pa
   expect(gitRuns(rec)).toBe(1)
   await rec.clock.advance(1)
   expect(gitRuns(rec)).toBe(2)
-  await rec.clock.advance(60_000)
+  await rec.clock.advance(MINUTE)
   expect(gitRuns(rec)).toBe(3)
 
   // q
@@ -740,10 +741,10 @@ test('the poll: every tools_refresh seconds while open; it stops on q, on the pa
 
   // a drawing that throws: an agent whose fields are no text
   rec.agents = [{ id: 'bad', description: 7, type: 8, status: 'running' } as unknown as AgentInfo]
-  await rec.clock.advance(60_000)
+  await rec.clock.advance(MINUTE)
   expect(gitRuns(rec)).toBe(6)
   await mount($).then(ui => ui.unmount(), () => undefined)
-  await rec.clock.advance(60_000) // the tick that finds the pane gone ends the poll
+  await rec.clock.advance(MINUTE) // the tick that finds the pane gone ends the poll
   asked = rec.asked
   await rec.clock.advance(600_000)
   expect(gitRuns(rec)).toBe(6)

@@ -122,10 +122,10 @@ export const register: Register = (on, options) => {
 
   // Every command, after it ran: the tools pane's Skills tab counts the slash runs. Registered before the features'
   // own command.run hooks, so it is the outermost and sees a run one of them answers.
-  on('command.run', async ($, e, next) => {
-    const r = await next(e)
-    await toolsCommandRan($, e)
-    return r
+  on('command.run', async ($, run, next) => {
+    const out = await next(run)
+    await toolsCommandRan($, run)
+    return out
   })
 
   // What is beneath (another plugin's hint, or the engine's own line), then 🪃 (handoff) and ✚ junkd, side by side.
