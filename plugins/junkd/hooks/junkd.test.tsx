@@ -116,7 +116,7 @@ type Open = { id: string; title?: string; focus?: true }
 // The world's knobs: `env` replaces the config-dir variables; `checkout` answers the checkout's marketplace.json
 // (whatever the engine resolves `<root>/../..` to); `panes` is what session.start finds open; `mvExit`/`mvErr` fail
 // the rename; `realPath` resolves a symlinked path; `listThrows` and `hintThrows` fail $.command.list and the prompt
-// hint beneath; `existsThrows` fails fs.exists on the paths it matches; `shHome` is what `sh -c 'echo $HOME'` prints
+// hint beneath; `registerThrows` and `panesThrows` fail $.command.register and $.ui.panes; `existsThrows` fails fs.exists on the paths it matches; `shHome` is what `sh -c 'echo $HOME'` prints
 // (default /fake/h2); `sha` is what `git rev-parse --short HEAD` prints (absent: git exits 128, no checkout),
 // `gitThrows` fails the run itself (no git binary); `render` draws a Pane the module passes on.
 type Opts = {
@@ -129,6 +129,8 @@ type Opts = {
   realPath?: Record<string, string>
   listThrows?: boolean
   hintThrows?: boolean
+  registerThrows?: boolean
+  panesThrows?: boolean
   existsThrows?: RegExp
   sha?: string
   gitThrows?: boolean
@@ -140,6 +142,7 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   const rec = {
     files, reads: [] as string[], writes: [] as string[], mvs: [] as string[][], rms: [] as string[][], runs: [] as string[][],
     config: [] as { key: string; value: unknown }[], toasts: [] as string[], opens: [] as Open[], closed: [] as string[],
+    registered: [] as string[],
     commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], beneath: '', merged: '',
     // `log`: every pane open and close, one line each (`ui.open <id>[ focus]`, `ui.close <id>`), in the order they came.
     log: [] as string[], gits: [] as string[][],
@@ -213,8 +216,8 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); rec.log.push(`ui.close ${e.id}`); rec.tabs = rec.tabs.filter(t => t !== e.id); return { value: undefined } })
   on('ui.focus', () => ({}))
-  on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
-  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('ui.panes', () => { if (o.panesThrows) throw new Error('panes broke'); return { value: (o.panes ?? []) as never } })
+  on('command.register', (_$, e) => { rec.registered.push(e.name); if (o.registerThrows) throw new Error('the engine refuses the name'); return { value: { command: e.name } } })
   on('command.list', () => { if (o.listThrows) throw new Error('list broke'); return { value: rec.commands } })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   // The engine's own drawing where the mod passes; under the prompt, another plugin's hint when `beneath` names one.
@@ -882,6 +885,28 @@ test('AC6: session.start with the pane already placed -> it is refreshed, and th
   await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE }) // flushes the start's refresh
   expect(rec.reads.filter(r => !r.endsWith('/statusline.sh'))[1]).toBe(MARKETPLACE_JSON) // statusline's start reads its copies
   expect(rec.reads).toContain(SETTINGS)
+})
+
+test('T27: session.start never registers the bare junkd command (the engine refuses it)', W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  expect(rec.registered).not.toContain('junkd')
+})
+
+test('T27: a refusing command.register or a failing ui.panes leaves session.start resolved and the segment drawn', W, async ($, on) => {
+  world(on, fixture(), { registerThrows: true, panesThrows: true })
+  await expect(start($)).resolves.toBeDefined()
+  const hint = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...HINT })
+  expect((await hint.find({ type: 'Button', key: 'junkd-toggle' }))?.text).toBe('✚ junkd')
+})
+
+test('T27: /junkd:junkd toggles the pane', W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await run($, 'junkd:junkd')
+  expect(opened(rec, 'junkd')).toHaveLength(1)
+  await run($, 'junkd:junkd')
+  expect(closes(rec, 'junkd')).toHaveLength(1)
 })
 
 test('the mobile surface gets the engine pane, not ours', W, async ($, on) => {

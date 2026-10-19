@@ -237,8 +237,10 @@ async function openSettings($: $, group: string) {
 }
 
 export async function panelStart($: $): Promise<void> {
-  isOpen = (await $.ui.panes()).some(pane => pane.id === PANE)
-  await $.command.register({ name: 'junkd', description: 'Toggle the junkd pane: the marketplace plugins, their settings and commands', immediate: true })
+  // No $.command.register({ name: 'junkd' }): the engine refuses a plugin's bare name that is also its own
+  // /junkd:junkd, and the throw would kill the rest of session.start. /junkd:junkd (and a bare /junkd where the host
+  // resolves it to the skill) reach the command.run hooks below. A failing panes() only means "not open".
+  isOpen = (await $.ui.panes().catch(() => [])).some(pane => pane.id === PANE)
   if (isOpen) void refresh($)
 }
 
@@ -253,7 +255,7 @@ export function panelButton($: $, e: RenderInput<'PromptHint'>) {
 }
 
 export function registerPanel(on: On, _options: Record<string, unknown>): void {
-  // /junkd (registered at session start) and /junkd:junkd (skills/junkd) both toggle the pane.
+  // /junkd:junkd (skills/junkd) toggles the pane; a bare /junkd does too where the host resolves it to that skill.
   on('command.run', { command: 'junkd' }, async $ => {
     await panelToggle($)
     return {}
