@@ -1,7 +1,7 @@
 ---
 name: orch
 description: Orchestrate implementation and independent verification of one task or a backlog using specialized subagents, isolated Git worktrees, evidence gates, fix rounds, and draft pull requests. Use when the user asks to run orch, process task ids, drain a backlog, delegate implementation and verification, or execute batch, chain, all, deep, or single-PR modes.
-argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
+argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel | dashboard [close]] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
 ---
 
@@ -25,6 +25,7 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 
 ## Claude Code rules
 
+- `/junkd:orch dashboard` (and `dashboard close`) never reaches this text: the hooks module answers it as `/junkd:dashboard`. On any host, `dashboard` is no run mode: it is the sibling `dashboard` skill (`/junkd:dashboard`, `$dashboard`, `/skill:dashboard`, `/dashboard`), which runs `./bin/orch-status --open` where no hooks module answers.
 - `/junkd:orch panel` never reaches this text: the junkd hooks module answers it by toggling the orch settings pane. Without the hooks module loaded, `panel` is no mode; say so in one line.
 - The helpers are `${CLAUDE_PLUGIN_ROOT}/bin/orch-state`, `${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree` and `${CLAUDE_PLUGIN_ROOT}/bin/orch-sync`, spelled exactly so wherever the spec says `${CLAUDE_PLUGIN_ROOT}`: on a Fable main loop the junkd guard runs only that bin/ path, with plain arguments.
 - The roles are agent types: `junkd:implementer`, `junkd:lead-implementer`, `junkd:verify-coordinator`, `junkd:ui-reviewer`, `junkd:test-planner`, `junkd:test-reviewer`, `junkd:orch-ops`. Spawn them by type without a `model` (theirs is pinned); any other agent needs `model: opus|sonnet|haiku`.
