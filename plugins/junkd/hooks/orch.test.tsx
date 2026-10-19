@@ -127,6 +127,25 @@ test("Write: never the module's own control files junkd/orch-off and junkd/orch-
   expect(write(`${CFG}/orch/rules-off`)).toBeUndefined()
 })
 
+test('T12 AC3: Write: never the SubagentStop records under junkd/orch/_agents/, any case or subpath, in a root or beside one', () => {
+  const write = (file_path: string, extra: Partial<OrchState> = {}) =>
+    orchGuard(main('Write', { file_path, content: '{"type":"x","tokens":0}' }), st({ exists: false, ...extra }), on_)
+  // the config dir's records: the folder itself, a session's, a record, by any spelling of the path
+  for (const p of [`${CFG}/junkd/orch/_agents`, `${CFG}/junkd/orch/_agents/s1/a1.json`, `${CFG}/Junkd/Orch/_AGENTS/s1/a1.json`,
+    `${CFG}/junkd//orch/./_agents/s1/a1.json`, `${CFG}/junkd/orch/_agents/s1/impl.md`])
+    expect(write(p), p).toMatch(/may Write only/)
+  // where only the deny list stands: a root (the scratchpad, the config dir's orch state) or a new .md anywhere
+  for (const p of [`${SCRATCH}/junkd/orch/_agents/s1/a1.json`, `${SCRATCH}/JUNKD/orch/_Agents/x.md`, `${CFG}/orch/junkd/orch/_agents/a.json`,
+    '/repo/junkd/orch/_agents/s1/notes.md', '/repo/junkd/orch/_agents', '/repo/junkd/orch/_agents/a/b/c.md'])
+    expect(write(p), p).toMatch(/may Write only/)
+  // a link that lands there
+  expect(write(`${SCRATCH}/r.json`, { placed: { path: '/repo/junkd/orch/_agents/s1/a1.json', configDir: CFG, binDir: BIN, repo: REPO } })).toMatch(/may Write only/)
+  // a name that only starts or ends like it is no record dir
+  for (const p of [`${SCRATCH}/junkd/orch/_agentsx/a.json`, `${SCRATCH}/junkd/orch/x_agents/a.json`, `${SCRATCH}/xjunkd/orch/_agents/a.json`,
+    `${SCRATCH}/junkd/orchx/_agents/a.json`, `${SCRATCH}/junkd/orch/agents/a.json`, '/repo/junkd/orch/_agents.md'])
+    expect(write(p), p).toBeUndefined()
+})
+
 test('Read and Write: a plain absolute ASCII spelling only; the placed path must pass too', () => {
   const guard = (tool: string, file_path: string, extra: Partial<OrchState> = {}) =>
     orchGuard(main(tool, { file_path, content: 'x' }), st({ exists: false, ...extra }), on_)
@@ -424,6 +443,10 @@ const PANE = {
 // The plugin's root as the module sees it ($.plugin.root): this file's folder is its hooks/.
 const ROOT = String((import.meta as unknown as { dir: string }).dir).replace(/\/hooks\/?$/, '')
 const OFF_FLAG = `${CFG}/junkd/orch-off`
+const SID = 'sess-1'
+// Where scripts/orch-agent-stop.sh leaves an agent's SubagentStop record, as it spells it: {type, tokens} on one line.
+const RECORDS = `${CFG}/junkd/orch/_agents`
+const record = (type: unknown, tokens: unknown) => `${JSON.stringify({ type, tokens })}\n`
 const RULES_FLAG = `${CFG}/junkd/orch-rules-off`
 
 function world(on: On) {
@@ -434,7 +457,8 @@ function world(on: On) {
     links: {} as Record<string, string>, dangling: {} as Record<string, string[]>, nowhere: [] as string[], envFails: false,
     config: [] as { key: string; value: unknown }[], opened: [] as string[], focus: [] as (true | undefined)[], closed: [] as string[], runs: [] as string[][],
     existsFails: false, writeFails: false, notPlaced: false, dirs: [] as string[], // dirs: folders that exist (fs.exists true, stat kind dir)
-    cwd: '/tmp' as string, cwdFails: false, git: {} as Record<string, string>, gitFails: [] as string[] } // git: a cwd's `rev-parse --show-toplevel`; any other cwd is in no repo; gitFails: the cwds where it exits 128 with that stdout anyway
+    cwd: '/tmp' as string, cwdFails: false, git: {} as Record<string, string>, gitFails: [] as string[], // git: a cwd's `rev-parse --show-toplevel`; any other cwd is in no repo; gitFails: the cwds where it exits 128 with that stdout anyway
+    sid: SID as string | undefined } // the session id ($.session.id); undefined: it throws
   on('env.get', (_$, e) => {
     if (rec.envFails) throw new Error('env unavailable')
     return { value: env[e.name] }
@@ -458,6 +482,10 @@ function world(on: On) {
     return { value: rec.model }
   })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('session.id', () => {
+    if (rec.sid === undefined) throw new Error('no session')
+    return { value: rec.sid }
+  })
   on('session.cwd', () => {
     if (rec.cwdFails) throw new Error('no cwd')
     return { value: rec.cwd }
@@ -760,6 +788,97 @@ test('SendMessage target from the agent list or the SubagentStop record (type an
   expect(denial(await send('../../x'))).toMatch(/no agent/) // never read as a path
   await frame($, 'set', { key: 'orch_implementer_ctx_k', value: 400 })
   expect(denial(await send('fixer'))).toBeUndefined() // the cap is read live
+})
+
+test('T12 AC2: a record on disk alone caps, as after a module reload: by id and by name, its type and tokens', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'fix it' })
+  // nothing stopped in this load (the in-memory map is empty): only the files the SubagentStop script wrote
+  rec.files[`${RECORDS}/${SID}/imp9.json`] = record('junkd:implementer', 450_000)
+  rec.files[`${RECORDS}/${SID}/impl-9.json`] = record('junkd:implementer', 450_000)
+  expect(denial(await send('imp9'))).toMatch(/implementer context 450k exceeds cap 400k/)
+  expect(denial(await send('impl-9'))).toMatch(/exceeds cap 400k/) // the name's own record
+  expect(denial(await send('impl-9 [abc]'))).toMatch(/exceeds cap 400k/) // ListAgents' " [ref]" dropped
+  // at the cap passes; a reviewer's record answers its type
+  rec.files[`${RECORDS}/${SID}/at.json`] = record('junkd:implementer', 400_000)
+  expect(denial(await send('at'))).toBeUndefined()
+  rec.files[`${RECORDS}/${SID}/rev.json`] = record('junkd:test-reviewer', 10)
+  expect(denial(await send('rev'))).toMatch(/test-reviewer is a reviewer/)
+  // a listed agent's record is read by its id, whatever name the call used
+  rec.agents = [{ id: 'lid', type: 'junkd:implementer', name: 'listed' }]
+  rec.files[`${RECORDS}/${SID}/lid.json`] = record('junkd:implementer', 500_000)
+  expect(denial(await send('listed'))).toMatch(/implementer context 500k exceeds cap 400k/)
+  // the type the list gives wins over the record's
+  rec.agents.push({ id: 'imp9', type: 'junkd:ui-reviewer' })
+  expect(denial(await send('imp9'))).toMatch(/ui-reviewer is a reviewer/)
+  // a record of another session is not this one's
+  rec.files[`${RECORDS}/other-sess/elsewhere.json`] = record('junkd:implementer', 900_000)
+  expect(denial(await send('elsewhere'))).toMatch(/no agent "elsewhere" is known/)
+})
+
+test('T12 AC2: the record file comes first, the in-memory record is the fallback; a file that does not hold a record is none', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'fix it' })
+  const stopped = async (id: string, type: string, tokens: number) => {
+    rec.files[`/t/${id}.jsonl`] = `${JSON.stringify({ message: { usage: { input_tokens: tokens } } })}\n`
+    await $.classic.SubagentStop({ agent_id: id, agent_type: type, agent_transcript_path: `/t/${id}.jsonl`, stop_hook_active: false })
+  }
+  // the file beats the memory both ways
+  await stopped('both', 'junkd:implementer', 1000)
+  rec.files[`${RECORDS}/${SID}/both.json`] = record('junkd:implementer', 450_000)
+  expect(denial(await send('both'))).toMatch(/implementer context 450k exceeds cap 400k/)
+  await stopped('both2', 'junkd:implementer', 450_000)
+  rec.files[`${RECORDS}/${SID}/both2.json`] = record('junkd:implementer', 1000)
+  expect(denial(await send('both2'))).toBeUndefined()
+  // a record of a type only (its transcript held no usage): the file stands, its tokens unknown
+  await stopped('typed', 'junkd:implementer', 450_000)
+  rec.files[`${RECORDS}/${SID}/typed.json`] = record('junkd:implementer', null)
+  expect(denial(await send('typed'))).toBeUndefined()
+  // no file, or one that holds no record: the memory answers
+  await stopped('mem', 'junkd:implementer', 450_000)
+  expect(denial(await send('mem'))).toMatch(/exceeds cap 400k/)
+  for (const [i, text] of ['{not json', 'null', '5', '"x"', '{}', '{"type":5,"tokens":"450000"}', ''].entries()) {
+    await stopped(`bad${i}`, 'junkd:verify-coordinator', 10)
+    rec.files[`${RECORDS}/${SID}/bad${i}.json`] = text
+    expect(denial(await send(`bad${i}`)), text).toMatch(/verify-coordinator is a reviewer/)
+    // and with no memory either, nobody
+    rec.files[`${RECORDS}/${SID}/none${i}.json`] = text
+    expect(denial(await send(`none${i}`)), text).toMatch(/no agent "none\d" is known/)
+  }
+  // a field of the wrong kind is dropped, the other kept: a type that is no string (an array reads as its text) or
+  // tokens that are no number (a string compares as a number)
+  rec.files[`${RECORDS}/${SID}/oddtype.json`] = record(['junkd:test-reviewer'], 450_000)
+  expect(denial(await send('oddtype'))).toMatch(/implementer context 450k exceeds cap/)
+  rec.files[`${RECORDS}/${SID}/oddtok.json`] = record('junkd:implementer', '450000')
+  expect(denial(await send('oddtok'))).toBeUndefined()
+})
+
+test('T12 AC2: a session id or a target that is no plain id never leads to a file; no session id reads none', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'fix it' })
+  // a target spelled as a path, or with a dot: never read
+  rec.files[`${RECORDS}/${SID}/a.b.json`] = record('junkd:implementer', 450_000)
+  expect(denial(await send('a.b'))).toMatch(/no agent "a.b" is known/)
+  rec.files[`${RECORDS}/x.json`] = record('junkd:implementer', 450_000)
+  expect(denial(await send(`../x`))).toMatch(/no agent/)
+  // a session id that is no plain id
+  rec.sid = 'a/b'
+  rec.files[`${RECORDS}/a/b/imp.json`] = record('junkd:implementer', 450_000)
+  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  rec.sid = '..'
+  rec.files[`${RECORDS}/../imp.json`] = record('junkd:implementer', 450_000)
+  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  // no session id (it throws): the folder of '' is not read
+  rec.sid = undefined
+  rec.files[`${RECORDS}//imp.json`] = record('junkd:implementer', 450_000)
+  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  // the same file under a plain session id is read
+  rec.sid = 'sess-2'
+  rec.files[`${RECORDS}/sess-2/imp.json`] = record('junkd:implementer', 450_000)
+  expect(denial(await send('imp'))).toMatch(/exceeds cap 400k/)
 })
 
 test('an unreadable model toasts once and the fable guard passes', async ($, on) => {

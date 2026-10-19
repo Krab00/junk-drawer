@@ -30,16 +30,38 @@ async function configDir($: $) {
 
 // The agents that stopped this session, by id and by name: their type and the context tokens of their transcript's
 // last usage record (classic.SubagentStop below). SendMessage reaches a stopped agent, and this is what tells
-// whether it is a reviewer or over the context cap.
+// whether it is a reviewer or over the context cap. Lost with the module (a /reload-plugins): the record on disk
+// comes first.
 const records = new Map<string, AgentRecord>()
 
+// The record scripts/orch-agent-stop.sh wrote at an agent's SubagentStop: ${CLAUDE_CONFIG_DIR}/junkd/orch/_agents/
+// <session id>/<agent id or name>.json, {type, tokens}. undefined when there is none, it does not parse, it holds
+// neither field, or the session id or the key is no plain id (never read as a path).
+const PLAIN_ID = /^[A-Za-z0-9_-]+$/
+async function savedRecord($: $, key: string): Promise<AgentRecord | undefined> {
+  const sid = await $.session.id().catch(() => '')
+  if (!PLAIN_ID.test(sid) || !PLAIN_ID.test(key)) return undefined
+  const text = await $.fs.read(`${await configDir($)}/junkd/orch/_agents/${sid}/${key}.json`).catch(() => undefined)
+  let saved: unknown
+  try {
+    saved = text === undefined ? undefined : JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof saved !== 'object' || saved === null) return undefined
+  const { type, tokens } = saved as Record<string, unknown>
+  const record: AgentRecord = { type: typeof type === 'string' ? type : undefined, tokens: typeof tokens === 'number' ? tokens : undefined }
+  return record.type === undefined && record.tokens === undefined ? undefined : record
+}
+
 // SendMessage's target: its type from the engine's agent list (by id, or by name, " [ref]" dropped), else from its
-// SubagentStop record (by id, and by name for a named agent), which also holds its context tokens. null: neither
-// knows it.
+// SubagentStop record (by id, and by name for a named agent), which also holds its context tokens: the one on disk,
+// else the one in memory. null: none of them knows it.
 async function orchAgent($: $, to: string): Promise<AgentRecord | null> {
   const key = to.replace(/ \[[^\]]*\]$/, '')
   const listed = (await $.agent.list().catch(() => [])).find(a => a.id === key || a.name === key)
-  const saved = records.get(listed?.id ?? key) ?? records.get(key)
+  const id = listed?.id ?? key
+  const saved = (await savedRecord($, id)) ?? records.get(id) ?? records.get(key)
   if (!listed && !saved) return null
   return { type: listed?.type ?? saved?.type, tokens: saved?.tokens }
 }
