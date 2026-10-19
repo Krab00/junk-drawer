@@ -25,7 +25,6 @@ export async function cacheCheck($: $, dir: string): Promise<void> {
     cacheLine = r.stdout.trim()
     if (cacheLine) $.ui.invalidate('ui.render')
   } catch (err) {
-    cacheLine = ''
     $.ui.log(`junkd cache check: ${(err as Error)?.message ?? String(err)}`, { to: 'debug' })
   }
 }
