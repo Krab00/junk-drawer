@@ -26,8 +26,8 @@ export const isField = (key: unknown): key is JunkdToolsField => (FIELDS as read
 export type Coerced = { value: number | boolean; error?: undefined } | { error: string; value?: undefined }
 export function coerce(field: JunkdToolsField, raw: unknown): Coerced {
   if (field !== 'refresh') return { value: raw === true || raw === 'true' || raw === 'on' }
-  const n = typeof raw === 'string' && raw.trim() === '' ? NaN : Number(raw)
-  if (typeof raw === 'boolean' || !Number.isFinite(n)) return { error: `${String(raw)} is not a valid refresh (seconds, ${REFRESH_MIN}-${REFRESH_MAX})` }
+  const n = typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '') ? Number(raw) : NaN
+  if (!Number.isFinite(n)) return { error: `${String(raw)} is not a valid refresh (seconds, ${REFRESH_MIN}-${REFRESH_MAX})` }
   return { value: clampRefresh(n) }
 }
 
@@ -82,6 +82,14 @@ export const T = {
   seen: Object.create(null) as Record<string, AgentInfo>, // every agent listed this session, by id
   spawned: Object.create(null) as Record<string, Spawned>, // by agent id
   mcp: [] as ContextMcpTool[],
+}
+
+// Every field back to its start: a register is a fresh load of the module.
+export function resetTools(): void {
+  Object.assign(T, {
+    open: false, loaded: false, route: 'agents', selected: null, selectedAt: 0, folded: Object.create(null), since: 0,
+    counters: newCounters(), worktrees: [], agents: [], seen: Object.create(null), spawned: Object.create(null), mcp: [],
+  })
 }
 
 export function applyToolsSettings(o: Record<string, unknown>): void {

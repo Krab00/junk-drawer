@@ -9,7 +9,7 @@
 import type { AgentSpawnInput, AgentSpawnResult, CommandRunInput, On, RenderInput, ToolCallInput, ToolCallResult } from 'claude-code'
 import type { HideInput, SetResult } from './feature'
 import type { $ } from './feature'
-import { T, applyToolsSettings, coerce, countSkill, countTool, isField, isRoute, newCounters, parseWorktrees, mergeAgents, pickTranscript, projectFolder, revealArgv, type Route } from './tools'
+import { T, applyToolsSettings, coerce, resetTools, countSkill, countTool, isField, isRoute, newCounters, parseWorktrees, mergeAgents, pickTranscript, projectFolder, revealArgv, type Route } from './tools'
 import { toolsView, type Els } from './tools-views'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 
@@ -245,8 +245,12 @@ export function toolsTurnEnd($: $): void {
 }
 
 export function registerTools(on: On, options: Record<string, unknown>): void {
-  const o = groupOptions(options, 'tools')
-  applyToolsSettings(o)
+  timer?.cancel()
+  timer = null
+  owner = undefined
+  sources = new Map()
+  resetTools()
+  applyToolsSettings(groupOptions(options, 'tools'))
 
   // The /config menu's own writes to a tools row land here (a hook never sees its plugin's own `$.config.set`): read as
   // `set` reads it, refused where `set` refuses, applied once the row took it.
