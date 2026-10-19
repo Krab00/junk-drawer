@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Target path for a new handoff + short session id (also copied to clipboard). Used by /handoff.
+# Target path for a new handoff + short session id (also copied to clipboard). Used by the handoff skill (/junkd:handoff).
 # Prints: line 1 = file path, line 2 = short id. Session id from CLAUDE_CODE_SESSION_ID.
 if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
     dir="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/handoffs"
