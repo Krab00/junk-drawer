@@ -201,6 +201,13 @@ flag_pair orch-off orch.tsx "$junkd/skills/orch/scripts/orch-context.sh"
 flag_pair orch-rules-off orch.tsx "$junkd/skills/orch/scripts/orch-context.sh"
 flag_pair tldr-on tldr.tsx "$junkd/skills/tldr/bin/tldr-hook"
 flag_pair tldr-off tldr.tsx "$junkd/skills/tldr/bin/tldr-hook"
+# The SubagentStop records: the script writes them where the module reads them, and the guard's deny list holds them.
+rg -qF '$cfg/junkd/orch/_agents/$sid"' "$junkd/skills/orch/scripts/orch-agent-stop.sh" ||
+    { echo "junkd: orch-agent-stop.sh does not write under \$cfg/junkd/orch/_agents/<session>"; exit 1; }
+rg -qF '${await configDir($)}/junkd/orch/_agents/${sid}/${key}.json' "$junkd/hooks/orch.tsx" ||
+    { echo "junkd: hooks/orch.tsx does not read <config dir>/junkd/orch/_agents/<session>/<key>.json"; exit 1; }
+rg -qF '\/junkd\/orch\/_agents(\/|$)' "$junkd/hooks/orch-lib.ts" ||
+    { echo "junkd: hooks/orch-lib.ts NEVER_WRITE does not hold junkd/orch/_agents/"; exit 1; }
 rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/core.ts" && rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/orch.tsx" && rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/tldr.tsx" ||
     { echo "junkd: a module file that writes a flag does not follow CLAUDE_CONFIG_DIR"; exit 1; }
 tldr_cfg="$tmp/tldr-cfg"
