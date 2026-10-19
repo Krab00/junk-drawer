@@ -265,6 +265,8 @@ for load in "$repo/handoff/bin/handoff-load" "$repo/handon/bin/handoff-load"; do
     set -e
     [ "$rc" = 1 ] || fail "two matches: $load exited $rc, expected 1"
     [ -z "$out" ] || fail "two matches: $load printed a handoff: $out"
+    rg -qF "several handoffs match 'ab12' in $codex_h; run again with one of these ids:" "$tmp/err" ||
+        fail "two matches: $load did not say why it lists: $(cat "$tmp/err")"
     rg -q 'ab12cd34 +first topic' "$tmp/err" && rg -q 'ab12ef56 +second topic' "$tmp/err" ||
         fail "two matches: $load did not list both ids with their titles: $(cat "$tmp/err")"
     out=$("${noh[@]}" JUNK_DRAWER_RUNTIME=codex "$load" ab12cd34) || fail "exact id: $load exited non-zero"
