@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ahandoff"
+  short_description: "Auto handoff loop (Claude Code only); use $handoff to save by hand"
+  default_prompt: "Use $ahandoff to arm the auto handoff loop."

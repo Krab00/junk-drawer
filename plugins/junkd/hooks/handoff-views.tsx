@@ -1,5 +1,5 @@
 // The panel's three tabs (Auto, Handoffs, Settings) as `View`s: each reads `S` and calls
-// `c.api`, register.tsx draws the tabs, the rule and the footer around what they return.
+// `c.api`, handoff.tsx draws the tabs, the rule and the footer around what they return.
 import { DEFAULT_PROMPT, S, limit, type Entry, type Route } from './handoff-lib'
 import { Chosen, Field, Filled, Hidden, P, Rule, Spacer, fit, line, when, type Ctx, type View } from './handoff-ui'
 
@@ -53,7 +53,7 @@ const auto: View = (c) => {
   const window = S.percent > 0 ? (S.tokens * 100) / S.percent : 0
   const at = (window * limit()) / 100
   const next = S.checkEvery - (S.calls % S.checkEvery)
-  // what continuation() in register.tsx will actually send
+  // what continueFrom() in handoff.tsx will actually send
   const cont = S.prompt
   const last = S.lastId ? byId(S.lastId) : undefined
   return {
@@ -97,7 +97,7 @@ const auto: View = (c) => {
           </Row>
           <Row c={c} label="Continue with"><Text wrap="truncate">{line(cont)}</Text></Row>
           <Box paddingLeft={16} flexDirection="column">
-            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="sent after each /handon · empty = default" placeholder="e.g. /orch:orch all"
+            <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="sent after each /junkd:handon · empty = default" placeholder="e.g. /junkd:orch all"
               value={draft.prompt ?? S.prompt} set={(v) => { draft.prompt = v }}
               onSubmit={(v) => { S.prompt = v.trim() || DEFAULT_PROMPT; draft.prompt = null; say(c, '✓ prompt set') }} />
           </Box>
@@ -174,7 +174,7 @@ const Actions = ({ c, e }: { c: Ctx; e: Entry }) => (
   </c.ui.Box>
 )
 
-// `v`: one handoff's facts; the full text opens with /handon (ponytail: no file text in S).
+// `v`: one handoff's facts; the full text opens with /junkd:handon (ponytail: no file text in S).
 const viewing = (c: Ctx, e: Entry | undefined): ReturnType<View> => {
   const { Box, Text, Button } = c.ui
   const back = () => { S.viewing = null; c.api.refresh() }
@@ -197,7 +197,7 @@ const viewing = (c: Ctx, e: Entry | undefined): ReturnType<View> => {
         ) : <Text color={P.secondary}>this handoff is gone</Text>}
       </Box>
     ),
-    note: S.confirm ? `x again to delete ${S.confirm}` : `full text: /handon ${S.viewing}`,
+    note: S.confirm ? `x again to delete ${S.confirm}` : `full text: /junkd:handon ${S.viewing}`,
     keys: [['b', 'back'], ['enter', 'handon'], ['c', 'copy id'], ['x', 'delete']],
   }
 }
@@ -263,7 +263,7 @@ const handoffs: View = (c) => {
           )}
       </Box>
     ),
-    note: S.confirm ? `x again to delete ${S.confirm}` : 'enter on a row runs /handon <id> in this session',
+    note: S.confirm ? `x again to delete ${S.confirm}` : 'enter on a row runs /junkd:handon <id> in this session',
     keys: [['tab', 'move'], ['j/k', 'select'], ['enter', 'handon'], ['v', 'view'], ['c', 'copy id'], ['x', 'delete'], ['f', 'filter'], ['m', 'more'], ['n', 'save now']],
   }
 }
@@ -298,10 +298,10 @@ const settings: View = (c) => {
     body: (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="column">
-          <Title c={c} text="Auto" sub="the loop: handoff → /clear → /handon → continue" />
+          <Title c={c} text="Auto" sub="the loop: handoff → /clear → /junkd:handon → continue" />
           <Row c={c} w={22} label="Enabled">
             <Switch c={c} k="enabled" hotkey="u" on={S.enabled} flip={() => void c.api.set('enabled', !S.enabled)} />
-            <Text color={P.secondary}> off = manual /handoff only</Text>
+            <Text color={P.secondary}> off = manual /junkd:handoff only</Text>
           </Row>
           <Num c={c} f="threshold" hotkey="t" label="Threshold" hint="% of the context window" />
           <Num c={c} f="checkEvery" hotkey="e" label="Check every" hint="tool calls" />
@@ -314,7 +314,7 @@ const settings: View = (c) => {
           </Row>
         </Box>
         <Box flexDirection="column">
-          <Title c={c} text="Handoff" sub="/handoff and /handon" />
+          <Title c={c} text="Handoff" sub="/junkd:handoff and /junkd:handon" />
           <Row c={c} w={22} label="Folder">
             <Text wrap="truncate">{S.dir}<Text color={P.secondary}>{S.entries ? ` · ${S.entries.length} files` : ''}</Text></Text>
           </Row>
@@ -333,7 +333,7 @@ const settings: View = (c) => {
         </Box>
         <Box flexDirection="column">
           <Title c={c} text="Version" />
-          <Row c={c} w={22} label="handoff"><Text>{line(S.version || '?')}<Text color={P.secondary}> · settings also in /config</Text></Text></Row>
+          <Row c={c} w={22} label="junkd"><Text>{line(S.version || '?')}<Text color={P.secondary}> · settings also in /config</Text></Text></Row>
         </Box>
       </Box>
     ),

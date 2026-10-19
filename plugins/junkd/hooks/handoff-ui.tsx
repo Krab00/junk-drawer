@@ -23,7 +23,7 @@ export type Api = {
   disarm(): void
   handoffNow(): Promise<void>
   resume(id: string): Promise<void> // /clear → handon → continue-prompt (as the loop)
-  handon(id: string): Promise<void> // only $.command.run handoff:handon <id>
+  handon(id: string): Promise<void> // only $.command.run junkd:handon <id>
   copy(id: string, surface: string): Promise<void>
   remove(id: string): Promise<void>
   deleteStale(): Promise<void>
