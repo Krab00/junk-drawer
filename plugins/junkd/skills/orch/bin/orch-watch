@@ -39,7 +39,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[[ "$interval" =~ ^[0-9]+$ ]] && [ "$interval" -ge 1 ] && [ "$interval" -le 3600 ] || die "--interval takes whole seconds 1-3600, not '$interval'"
+[[ "$interval" =~ ^[0-9]+$ ]] && [ "$interval" -ge 0 ] && [ "$interval" -le 3600 ] || die "--interval takes whole seconds 1-3600, not '$interval'"
 if [ -n "$idle_minutes" ]; then
   [[ "$idle_minutes" =~ ^[0-9]+$ ]] || die "--idle-minutes takes whole minutes 1-120, not '$idle_minutes'"
   [ "$idle_minutes" -ge 1 ] || idle_minutes=1
