@@ -140,6 +140,10 @@ run 10; expect_none "25 messages on 50 lines"
 # the same message id later on: its first line counts, so no 10 min gap
 reset; req s1 m1 0 25 75 0 >"$proj/s1.jsonl"; req s1 m1 600 25 75 0 >>"$proj/s1.jsonl"
 run 10; expect_none "a message id repeated"
+# the first line of a message id counts, not a later one: m1 at 0 and 60 s later m2 (a minute gap); m1 again at
+# 700 s would make a 640 s gap if it replaced the first
+reset; req s1 m1 0 25 75 0 >"$proj/s1.jsonl"; req s1 m2 60 25 75 0 >>"$proj/s1.jsonl"; req s1 m1 700 25 75 0 >>"$proj/s1.jsonl"
+run 10; expect_none "the first line of a message id counts"
 # with no message id, the requestId is the key
 reset
 printf '{"type":"assistant","requestId":"r1","sessionId":"s1","timestamp":"%s","uuid":"u1","message":{"usage":{"input_tokens":1}}}\n' "$(iso 0)" >"$proj/s1.jsonl"
@@ -185,6 +189,12 @@ mv "$tmp/exact.jsonl" "$proj/s1.jsonl"
 run 10; expect_line "exactly 50 MB: read whole" "$GAP_LINE"
 { printf 'x'; cat "$proj/s1.jsonl"; } >"$tmp/over.jsonl"; mv "$tmp/over.jsonl" "$proj/s1.jsonl"
 run 10; expect_none "50 MB + 1 byte: the first line is cut"
+# 50 MB + 1 byte with a whole first request: read from the tail, that line is cut and dropped (read whole, it would
+# make the 10 min gap)
+{ printf '%s\n' "$first"; pad $((MB50 - ${#first} - ${#last} - 1)); printf '%s\n' "$last"; } >"$tmp/over.jsonl"
+[ "$(wc -c <"$tmp/over.jsonl" | tr -d ' ')" = "$((MB50 + 1))" ] || fail "the 50 MB + 1 fixture is not $((MB50 + 1)) bytes"
+mv "$tmp/over.jsonl" "$proj/s1.jsonl"
+run 10; expect_none "50 MB + 1 byte: over the bound, read from the tail"
 reset
 
 # ================================================================ the 3 s cap
