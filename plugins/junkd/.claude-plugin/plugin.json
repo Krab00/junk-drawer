@@ -1,7 +1,7 @@
 {
   "name": "junkd",
   "description": "One plugin for handoff, orch and tldr, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff and orch tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr) and the commands. The hooks module exports $.junkd for other mods.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "author": {
     "name": "Krab00"
   },
