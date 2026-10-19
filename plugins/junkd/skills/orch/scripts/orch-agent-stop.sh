@@ -13,25 +13,24 @@ set -u
 
 cfg="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
 # "<enabled> <guard>": enabled is false only for a key that holds anything but true; guard is off only for "off"
-# (trimmed, any case, as the module reads it).
-gate=$(jq -rs '(if length == 1 then .[0] else error end).pluginConfigs // {}
-    | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
+# (trimmed, any case, as the module reads it). No file, no pluginConfigs or no junkd@ entry fails jq: on.
+gate=$(jq -rs '(if length == 1 then .[0] else error end).pluginConfigs
+    | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options
     | "\(if has("orch_enabled") then .orch_enabled == true else true end) \(.orch_guard | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; ""))"' \
     "$cfg/settings.json" 2>/dev/null) || gate="true on"
 [ "${gate%% *}" = true ] || exit 0
 [ "${gate#* }" != off ] || exit 0
 
 input=$(cat)
-# field <key> [plain]: a string field of the input; with `plain`, only when it is a plain id. Tested in jq, not only
-# after $(...), which drops a trailing newline ("a1\n" would pass as a1); by its other characters, as jq's `$` also
-# matches before a final newline.
-plain='^[A-Za-z0-9_-]+$'
-isplain='length > 0 and (test("[^A-Za-z0-9_-]") | not)'
+# field <key> [plain]: a string field of the input; with `plain`, only when it is a plain id ([A-Za-z0-9_-]+). Tested
+# in jq, not after $(...), which drops a trailing newline ("a1\n" would pass as a1); by its other characters, as
+# jq's `$` also matches before a final newline. Empty output: no such field, or an empty one (checked after).
+isplain='test("[^A-Za-z0-9_-]") | not'
 field() { jq -r --arg k "$1" --arg p "${2:-}" ".[\$k] | strings | select(\$p == \"\" or ($isplain))" <<<"$input" 2>/dev/null; }
 sid=$(field session_id plain)
 id=$(field agent_id plain)
 transcript=$(field agent_transcript_path)
-[[ "$sid" =~ $plain && "$id" =~ $plain ]] || exit 0
+[ -n "$sid" ] && [ -n "$id" ] || exit 0
 
 # Each line on its own (fromjson?): a line that does not parse is skipped, not the end of the stream.
 tokens=$(grep -F '"usage"' "$transcript" 2>/dev/null |
@@ -45,5 +44,5 @@ dir="$cfg/junkd/orch/_agents/$sid"
 mkdir -p "$dir" 2>/dev/null || exit 0
 printf '%s\n' "$record" >"$dir/$id.json" 2>/dev/null || exit 0
 name=$(jq -r ".name | strings | select($isplain)" "${transcript%.jsonl}.meta.json" 2>/dev/null)
-if [[ "$name" =~ $plain ]]; then printf '%s\n' "$record" >"$dir/$name.json" 2>/dev/null; fi
+if [ -n "$name" ]; then printf '%s\n' "$record" >"$dir/$name.json" 2>/dev/null; fi
 exit 0
