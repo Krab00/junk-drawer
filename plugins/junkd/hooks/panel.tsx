@@ -1,12 +1,13 @@
 // The /junkd frame: /junkd, ✚ junkd and q open and close junkd, handoff and orch together as tabs; the junkd pane
-// has the marketplace's plugins (on/off at user scope), every settings group (core, handoff, orch, tldr) and the
-// commands. The drawing is junkd-views.tsx, fed closures over `$`.
+// has the marketplace's plugins (on/off at user scope), every settings group of this plugin (core, handoff, orch,
+// tldr) and the commands. The drawing is junkd-views.tsx, fed closures over `$`.
+// - Plugins: the marketplace's plugins, each on or off in the user's settings.json; junkd is this pane. handoff,
+//   orch and tldr are no plugins of their own: each is switched by its group's `enabled` row in Settings.
 // - The set: each feature pane through dispatch.ts's showPane/hidePane, marked as the set's (SET_OWNER), so closing
 //   the set leaves a feature pane opened on its own alone.
-// - Settings: the `main` rows of each group (settings.ts), read and written through dispatch.ts; `settings ▸` opens
-//   the group's pane (handoff, orch).
-// - Commands: the enabled plugins' slash commands as $.command.list() names them.
-// CONTRACT (T11): the slice ports the Plugins/Settings sections to the new layout (groups' enabled rows first).
+// - Settings: the `main` rows of each group in settings.ts order (`enabled` first), read and written through
+//   dispatch.ts; a refusal is the note. `settings ▸` opens the group's pane (handoff on its Settings tab, orch).
+// - Commands: the enabled plugins' slash commands (junkd's own /junkd:* among them) as $.command.list() names them.
 import type { JunkdGroup } from '../types'
 import type { On, RenderInput } from 'claude-code'
 import { getSetting, hidePane, setSetting, showPane, type FeaturePane } from './dispatch'
@@ -84,11 +85,29 @@ async function shortSha($: $, dir: string): Promise<string> {
 
 // ------------------------------------------------------------------ the pane's data
 
+// Each group's `main` rows in settings.ts order (`enabled` first), with the value its feature answers now; a read
+// that fails draws the row's default. They are the module's own: no marketplace and no other plugin is needed.
+async function readGroups($: $): Promise<Section[]> {
+  const groups: Section[] = []
+  for (const group of GROUPS) {
+    const fields: Field[] = []
+    for (const f of rowsOf(group).filter(f => f.main)) {
+      const value = await getSetting($, f.key).catch(() => f.default)
+      fields.push({ key: f.field, type: f.type, title: f.title, ...(f.options ? { options: [...f.options] } : {}), value })
+    }
+    groups.push({ group, fields, hasPane: hasPane(group) })
+  }
+  return groups
+}
+
 // Every press refreshes, so two refreshes can run side by side: each builds its rows apart and assigns them once at
-// the end, and only the newest one started assigns at all (an older one, a step behind, is dropped).
+// the end, and only the newest one started assigns at all (an older one, a step behind, is dropped). A marketplace
+// or settings.json that cannot be read is the note; the Settings section is drawn all the same.
 let refreshes = 0
 async function refresh($: $) {
   const gen = ++refreshes
+  let failed = ''
+  let read: { shown: string; sha: string; name: string; rows: PluginRow[]; listed: Command[] } | undefined
   try {
     const cfg = await configDir($)
     const { dir, data } = await loadMarketplace($, cfg)
@@ -109,28 +128,23 @@ async function refresh($: $) {
       }
     })
     const active = rows.filter(p => p.isActive)
-    const groups: Section[] = []
-    for (const group of GROUPS) {
-      const fields: Field[] = []
-      for (const f of rowsOf(group).filter(f => f.main)) {
-        const value = await getSetting($, f.key).catch(() => f.default)
-        fields.push({ key: f.field, type: f.type, title: f.title, ...(f.options ? { options: [...f.options] } : {}), value })
-      }
-      groups.push({ plugin: group, fields, hasPane: hasPane(group) })
-    }
-    const listed = await $.command.list().catch(() => [])
-    if (gen !== refreshes) return
-    settingsShown = shown
-    version = sha
-    marketplace = name
-    plugins = rows
-    sections = groups
-    commands = listed
+    const listed = (await $.command.list().catch(() => []))
       .filter(c => c.source === 'plugin' && active.some(p => c.plugin === p.name || c.name.startsWith(`${p.name}:`)))
       .map(c => ({ name: c.name, description: c.description }))
+    read = { shown, sha, name, rows, listed }
   } catch (err) {
-    note = `✗ ${err}`
+    failed = `✗ ${err}`
   }
+  const groups = await readGroups($)
+  if (gen !== refreshes) return
+  sections = groups
+  if (read) {
+    settingsShown = read.shown
+    version = read.sha
+    marketplace = read.name
+    plugins = read.rows
+    commands = read.listed
+  } else note = failed
   redraw($)
 }
 
@@ -257,7 +271,7 @@ export function registerPanel(on: On, _options: Record<string, unknown>): void {
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e: RenderInput<'Pane'>, next) => {
     // ponytail: mobile has no Input; it gets the engine's empty pane until it does.
     if (e.surface === 'mobile') return next(e)
-    return panelView($.ui.resolve(e) as Els, e.props, { marketplace, version, settingsPath: settingsShown, plugins, sections, commands, nouns: GROUPS, note, isChanged }, {
+    return panelView($.ui.resolve(e) as Els, e.props, { marketplace, version, settingsPath: settingsShown, plugins, sections, commands, groups: GROUPS, note, isChanged }, {
       close: () => void panelToggle($),
       togglePlugin: name => void togglePlugin($, name),
       set: (group, field, value) => void setValue($, group, field, value),
