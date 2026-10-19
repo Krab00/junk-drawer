@@ -13,7 +13,8 @@
 # .../junkd/output-style-off the hooks module mirrors the setting into.
 # Never into a subagent: skipped when CLAUDE_AGENT_ID is set or the hook input carries an agent_id. Skipped on a
 # /clear or compaction too: that session runs with the plugin version it started with and would stamp an old one.
-# Output: one `junkd: ...` line when the key was set, nothing otherwise. Always exits 0: a failing SessionStart
+# Also the CLAUDE.md pointer block step (orch_claude_md), see below. Output: one `junkd: ...` line when the key was
+# set, and one when CLAUDE.md changed or was refused; nothing otherwise. Always exits 0: a failing SessionStart
 # hook would block the session.
 set -u
 # Hooks get no login-shell PATH when Claude Code is launched from the app: the usual dirs are added where PATH
@@ -43,6 +44,33 @@ manifest="$root/.claude-plugin/plugin.json"
 # The manifest and the settings file are read and written with jq only: without it, nothing is touched and
 # nothing is stamped. A manifest that does not parse, or has no version, stamps nothing either.
 command -v jq >/dev/null 2>&1 || exit 0
+
+# The CLAUDE.md pointer block (orch_claude_md, off by default), every session start, before the stamp below:
+# skills/orch/scripts/orch-claude-md.sh on while the setting is true, off otherwise (no block: nothing happens).
+# Read from settings.json as the style step reads its own (the first junkd@ entry's options). Not run while orch is
+# disabled: orch_enabled false there, or, where the entry names no orch_enabled, the flag file .../junkd/orch-off
+# (a file only). Not run either while settings.json is missing, empty or not an object. Its `updated` line, or the
+# reason it refused, becomes one `junkd: ...` line.
+claude_md=$(jq -r '[(.pluginConfigs // {}) | to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
+    | def sw($k): if has($k) then .[$k] == true else "unset" end;
+      "\(sw("orch_enabled")) \(sw("orch_claude_md"))"' "$cfg/settings.json" 2>/dev/null) || claude_md=""
+case "${claude_md%% *}" in
+    true) ;;
+    false) claude_md="" ;;
+    *) [ ! -f "$cfg/junkd/orch-off" ] || claude_md="" ;;
+esac
+if [ -n "$claude_md" ]; then
+    mode=off
+    [ "${claude_md##* }" != true ] || mode=on
+    if out=$("$root/skills/orch/scripts/orch-claude-md.sh" "$mode" 2>&1); then
+        while IFS= read -r line; do
+            case "$line" in "updated "*) echo "junkd: $line" ;; esac
+        done <<<"$out"
+    else
+        echo "junkd: ${out##*$'\n'}"
+    fi
+fi
+
 ver=$(jq -r '.version // empty' "$manifest" 2>/dev/null) || exit 0
 [ -n "$ver" ] || exit 0
 stamp="$cfg/junkd/setup-$ver.stamp"
