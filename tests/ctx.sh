@@ -12,7 +12,9 @@ limit="$plugin/bin/ctx-limit"
 hookbin="$plugin/bin/ctx-limit-hook"
 skillhook="$plugin/skills/ctx-limit/bin/ctx-limit-hook"
 tokens="$plugin/bin/ctx-tokens"
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/T16-ctx-$$.XXXXXX")
+# The physical path, once: a TMPDIR ending in `/` (stock macOS) gives mktemp a `//`, and the paths derived from it
+# (the Claude Code project folder name) would differ from the $PWD a `cd` normalises.
+tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/T16-ctx-$$.XXXXXX")" && pwd -P)
 trap 'rm -rf "$tmp"' EXIT
 
 fail() { echo "ctx tests: $*" >&2; exit 1; }

@@ -14,7 +14,8 @@ render="$plugin/bin/statusline.sh"
 setup="$plugin/bin/statusline-setup"
 real_render="$plugin/skills/statusline/bin/statusline.sh"
 golden="$root/tests/statusline/golden.txt"
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/T16-statusline-$$.XXXXXX")
+# The physical path, once (a TMPDIR ending in `/` gives mktemp a `//`).
+tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/T16-statusline-$$.XXXXXX")" && pwd -P)
 trap 'rm -rf "$tmp"' EXIT
 
 fail() { echo "statusline tests: $*" >&2; exit 1; }

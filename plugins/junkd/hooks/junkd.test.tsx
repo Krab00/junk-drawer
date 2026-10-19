@@ -501,6 +501,30 @@ test("AC3: settings ▸ leaves that pane alone in the tab row (handoff on its Se
   expect(rec.tabs).toEqual([])
 })
 
+test("AC3: settings ▸ on statusline opens the statusline pane unfocused, closes junkd and the set's other panes, then asks for the keys; the pane is the person's from then on", W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await run($, 'junkd')
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  const pane = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  expect((await pane.find({ type: 'Button', key: 'pane:statusline' }))?.text).toBe('settings ▸')
+  const at = rec.log.length
+  await pane.press({ key: 'pane:statusline' })
+  // statuslineShow: the first open without focus (junkd still holds the keys), the second with it.
+  expect(rec.log.slice(at)).toEqual(['ui.open statusline', 'ui.close junkd', 'ui.close ahandoff', 'ui.close orch', 'ui.open statusline focus'])
+  expect(rec.opens.filter(o => o.id === 'statusline').slice(-2)).toEqual([
+    { id: 'statusline', title: 'statusline', focus: undefined },
+    { id: 'statusline', title: 'statusline', focus: true },
+  ])
+  expect(rec.tabs).toEqual(['statusline'])
+  expect(rec.toasts).toEqual([])
+  await pane.unmount()
+  await run($, 'junkd') // statusline is the person's now: the set opens behind junkd ...
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  await run($, 'junkd') // ... and, reopened in the set, closes with it
+  expect(rec.tabs).toEqual([])
+})
+
 test('AC3: settings ▸ whose focused open is refused: open, junkd closes, the focused open, one toast with the reason', W, async ($, on) => {
   const rec = world(on, fixture())
   const pane = await openPane($)
