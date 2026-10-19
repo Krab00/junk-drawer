@@ -14,7 +14,7 @@ const CFG = '/fake/claude'
 const FABLE = 'claude-fable-5-1'
 const OPUS = 'claude-opus-5-5'
 const BIN = '/p/bin/'
-const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 }
+const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false }
 const main = (tool: string, args: Record<string, unknown> = {}) => ({ tool, ...args })
 const REPO = '/repo'
 const st = (s: Partial<OrchState> = {}): OrchState => ({ model: FABLE, binDir: BIN, configDir: CFG, repo: REPO, ...s })
@@ -331,11 +331,16 @@ test('SendMessage: reviewers are always fresh, an implementer over the cap is re
 
 test('settings: defaults for missing or wrong types, the number rows clamped to their bounds at load', () => {
   applyOrchSettings({})
-  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 })
-  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99 })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10 })
-  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0 })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1 })
+  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false })
+  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99, claude_md: true })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10, claude_md: true })
+  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0, claude_md: 'true' })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1, claude_md: false })
+  // claude_md at load, one assertion per value: only a JSON true is on (the default is off)
+  for (const [v, want] of [[true, true], [undefined, false], [false, false], ['true', false], ['on', false], [1, false], [null, false]] as const) {
+    applyOrchSettings(v === undefined ? {} : { claude_md: v })
+    expect(O.claude_md, String(v)).toBe(want)
+  }
   // enabled at load, one assertion per value: only a JSON true or nothing is on
   for (const [v, want] of [[true, true], [undefined, true], [false, false], ['true', false], [1, false], [null, false]] as const) {
     applyOrchSettings(v === undefined ? {} : { enabled: v })
@@ -359,10 +364,12 @@ test('coerce: one check for every write path; the exact bounds of the number row
   for (const v of [false, 'false', 'off', 'yes', 1, 'maybe']) expect(coerce('inject_rules', v).value, String(v)).toBe(false)
   for (const v of [true, 'true', 'on']) expect(coerce('enabled', v).value, String(v)).toBe(true)
   for (const v of [false, 'false', 'off', 'yes', 1, '']) expect(coerce('enabled', v).value, String(v)).toBe(false)
+  for (const v of [true, 'true', 'on']) expect(coerce('claude_md', v).value, String(v)).toBe(true)
+  for (const v of [false, 'false', 'off', 'yes', 1, '']) expect(coerce('claude_md', v).value, String(v)).toBe(false)
 })
 
 test("SCHEMA is settings.ts's orch rows, by field and in manifest order: enabled first, the guard the one choice row", () => {
-  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds'])
+  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds', 'claude_md'])
   expect(SCHEMA.map(f => ({ ...f, key: `orch_${f.key}` }))).toEqual(rowsOf('orch').map(({ group: _g, field: _f, ...f }) => f))
   expect(SCHEMA.filter(f => f.options).map(f => [f.key, f.options])).toEqual([['guard', ['fable', 'always', 'off']]])
 })
@@ -448,6 +455,7 @@ const SID = 'sess-1'
 const RECORDS = `${CFG}/junkd/orch/_agents`
 const record = (type: unknown, tokens: unknown) => `${JSON.stringify({ type, tokens })}\n`
 const RULES_FLAG = `${CFG}/junkd/orch-rules-off`
+const CLAUDE_MD = `${ROOT}/scripts/orch-claude-md.sh` // the plugin-root link setup.sh's copy sits behind
 
 function world(on: On) {
   const env: Record<string, string> = { HOME: '/home/u', CLAUDE_CONFIG_DIR: CFG }
@@ -458,7 +466,9 @@ function world(on: On) {
     config: [] as { key: string; value: unknown }[], opened: [] as string[], focus: [] as (true | undefined)[], closed: [] as string[], runs: [] as string[][],
     existsFails: false, writeFails: false, notPlaced: false, dirs: [] as string[], // dirs: folders that exist (fs.exists true, stat kind dir)
     cwd: '/tmp' as string, cwdFails: false, git: {} as Record<string, string>, gitFails: [] as string[], // git: a cwd's `rev-parse --show-toplevel`; any other cwd is in no repo; gitFails: the cwds where it exits 128 with that stdout anyway
-    sid: SID as string | undefined } // the session id ($.session.id); undefined: it throws
+    sid: SID as string | undefined, // the session id ($.session.id); undefined: it throws
+    // the CLAUDE.md script (claude_md): each run's env, what it answers, or that it cannot start
+    inits: [] as (Record<string, string> | undefined)[], claudeMd: { exitCode: 0, stdout: '', stderr: '' }, claudeMdFails: false }
   on('env.get', (_$, e) => {
     if (rec.envFails) throw new Error('env unavailable')
     return { value: env[e.name] }
@@ -519,6 +529,11 @@ function world(on: On) {
   })
   on('process.run', (_$, e) => {
     rec.runs.push([...e.argv])
+    rec.inits.push(e.init?.env)
+    if (e.argv[0] === CLAUDE_MD) {
+      if (rec.claudeMdFails) throw new Error('EACCES')
+      return { value: { ...rec.claudeMd, isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     if (e.argv[0] === 'rm') delete files[e.argv.at(-1)!]
     if (e.argv[0] === 'git') {
       const top = rec.git[e.argv[2]!]
@@ -1118,9 +1133,99 @@ test('a denied orch_enabled write leaves the guard and the flag file alone', WIT
   expect(denial(await edit($))).toMatch(/may not run Edit/)
 })
 
+// ------------------------------------------------------------------ claude_md: the CLAUDE.md pointer block
+
+// The host's rule for a plugin's own write: `$.config.set` goes through the other plugins' hooks, the caller's own
+// skipped. The kit runs junkd's own config.set hook on junkd's write (which would run the script twice), so this
+// managed plugin above every tier sends junkd's writes on past the user tier to the world beneath, as the host does.
+const HOST: Plugin = {
+  name: 'host',
+  tier: 'prepend',
+  register(on) {
+    on('config.set', (_$, e, next) => (next.origin.plugin === 'junkd' ? next.to(e, 'append') : next(e)))
+  },
+}
+const WITH_HOST = { plugins: [HOST, FRAME] }
+
+// The runs of the CLAUDE.md script, by mode, with the env each got.
+const claudeMdRuns = (rec: { runs: string[][]; inits: (Record<string, string> | undefined)[] }) =>
+  rec.runs.flatMap((argv, i) => (argv[0] === CLAUDE_MD ? [{ mode: argv.slice(1), env: rec.inits[i] }] : []))
+
+test('claude_md is off by default and a session start runs no script (setup.sh does that)', WITH_HOST, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  expect(await frame($, 'get', { key: 'orch_claude_md' })).toBe(false)
+  expect(claudeMdRuns(rec)).toEqual([])
+})
+
+for (const [value, mode] of [[true, 'on'], ['true', 'on'], ['on', 'on'], [false, 'off'], ['false', 'off'], ['off', 'off']] as const) {
+  test(`claude_md ${JSON.stringify(value)} through $.junkd.set runs the script with ${mode} at once, once, over CLAUDE_CONFIG_DIR`, WITH_HOST, async ($, on) => {
+    const rec = world(on)
+    await start($)
+    expect(await frame($, 'set', { key: 'orch_claude_md', value })).toBe(mode === 'on')
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_claude_md', value: mode === 'on' })
+    expect(claudeMdRuns(rec)).toEqual([{ mode: [mode], env: { CLAUDE_CONFIG_DIR: CFG } }])
+    expect(await frame($, 'get', { key: 'orch_claude_md' })).toBe(mode === 'on')
+  })
+  test(`claude_md ${JSON.stringify(value)} through the /config menu runs the script with ${mode} at once, once`, WITH_HOST, async ($, on) => {
+    const rec = world(on)
+    await start($)
+    await frame($, 'config', { key: 'junkd.orch_claude_md', value })
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_claude_md', value: mode === 'on' })
+    expect(claudeMdRuns(rec)).toEqual([{ mode: [mode], env: { CLAUDE_CONFIG_DIR: CFG } }])
+    expect(await frame($, 'get', { key: 'orch_claude_md' })).toBe(mode === 'on')
+  })
+}
+
+test('claude_md while orch is disabled: the row is written, the script is not run, either way; enabled again, the next flip runs it', { ...WITH_HOST, options: { orch_enabled: false } }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await frame($, 'set', { key: 'orch_claude_md', value: true })
+  await frame($, 'config', { key: 'junkd.orch_claude_md', value: false })
+  expect(rec.config.slice(-2)).toEqual([{ key: 'junkd.orch_claude_md', value: true }, { key: 'junkd.orch_claude_md', value: false }])
+  expect(claudeMdRuns(rec)).toEqual([])
+  await frame($, 'set', { key: 'orch_enabled', value: true })
+  expect(claudeMdRuns(rec)).toEqual([]) // enabled alone does not run it: the next session start does
+  await frame($, 'set', { key: 'orch_claude_md', value: true })
+  expect(claudeMdRuns(rec).map(r => r.mode)).toEqual([['on']])
+})
+
+test('a denied claude_md write runs no script and keeps the value', WITH_HOST, async ($, on) => {
+  on('config.set', { key: 'junkd.orch_claude_md' }, () => ({ deny: 'locked' }))
+  const rec = world(on)
+  await start($)
+  await expect(frame($, 'set', { key: 'orch_claude_md', value: true })).rejects.toThrow(/locked/)
+  expect(claudeMdRuns(rec)).toEqual([])
+  expect(await frame($, 'get', { key: 'orch_claude_md' })).toBe(false)
+})
+
+test("the script's answer: an updated line is a toast, up to date or skipped is silent, a refusal is a toast, a run that cannot start is one and the write still lands", WITH_HOST, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  rec.claudeMd = { exitCode: 0, stdout: `updated ${CFG}/CLAUDE.md: orchestrator section -> junkd:orch pointer block (backup: b)\n`, stderr: '' }
+  await frame($, 'set', { key: 'orch_claude_md', value: true })
+  expect(rec.toasts).toEqual([`orch: updated ${CFG}/CLAUDE.md: orchestrator section -> junkd:orch pointer block (backup: b)`])
+  for (const stdout of [`up to date ${CFG}/CLAUDE.md\n`, `skipped ${CFG}/CLAUDE.md: not found\n`]) {
+    rec.claudeMd = { exitCode: 0, stdout, stderr: '' }
+    await frame($, 'set', { key: 'orch_claude_md', value: false })
+  }
+  expect(rec.toasts).toHaveLength(1)
+  rec.claudeMd = { exitCode: 1, stdout: '', stderr: `refused ${CFG}/CLAUDE.md: an unclosed block\n` }
+  await frame($, 'set', { key: 'orch_claude_md', value: true })
+  expect(rec.toasts.at(-1)).toBe(`orch: refused ${CFG}/CLAUDE.md: an unclosed block`)
+  rec.claudeMd = { exitCode: 2, stdout: '', stderr: '' }
+  await frame($, 'set', { key: 'orch_claude_md', value: false })
+  expect(rec.toasts.at(-1)).toBe('orch: exit 2')
+  rec.claudeMdFails = true
+  expect(await frame($, 'set', { key: 'orch_claude_md', value: true })).toBe(true)
+  expect(rec.toasts.at(-1)).toMatch(/^orch: orch-claude-md\.sh on did not run: \S/) // the kit skips a throwing hook: its own reason
+  expect(await frame($, 'get', { key: 'orch_claude_md' })).toBe(true)
+  expect(rec.toasts).toHaveLength(4)
+})
+
 // ------------------------------------------------------------------ $.junkd's orch rows and the pane
 
-const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds']
+const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md']
 
 test("$.junkd: the orch calls answer; schema's orch rows mirror the manifest; get answers the defaults; guard is the choice row", WITH_FRAME, async ($, on) => {
   world(on)
@@ -1135,7 +1240,7 @@ test("$.junkd: the orch calls answer; schema's orch rows mirror the manifest; ge
     expect(await frame($, 'get', { key: f.key }), `get(${f.key}) is the manifest default`).toBe(f.default)
   }
   expect(schema.find(f => f.key === 'orch_guard')?.options).toEqual(['fable', 'always', 'off'])
-  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k'])
+  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_claude_md'])
   await expect(frame($, 'get', { key: 'nope' })).rejects.toThrow(/no setting nope/)
   await expect(frame($, 'get', { key: 'orch_nope' })).rejects.toThrow(/no setting orch_nope/)
   await expect(frame($, 'get', { key: 'guard' })).rejects.toThrow(/no setting guard/) // the field alone is no key
@@ -1343,23 +1448,24 @@ async function hotkey(ui: Mounted<Surface, 'Pane'>, key: string) {
   await ui.press({ key: b!.key! })
 }
 
-test('the pane: seven rows; a letter flips a switch, enter in a field saves it, the choice row picks the guard, tab is a hint', WITH_FRAME, async ($, on) => {
+test('the pane: eight rows; a letter flips a switch, enter in a field saves it, the choice row picks the guard, tab is a hint', WITH_FRAME, async ($, on) => {
   const rec = world(on)
   await start($)
   await orchCmd($, 'panel')
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'junkd', surface, ...PANE })
     const t = await texts(ui)
-    for (const title of ['Orchestrator: enabled', 'Main-loop guard', 'Allow Fable subagents', 'Implementer context cap (k tokens)', 'UI review', 'Inject orchestrator rules', 'Fix rounds'])
+    for (const title of ['Orchestrator: enabled', 'Main-loop guard', 'Allow Fable subagents', 'Implementer context cap (k tokens)', 'UI review', 'Inject orchestrator rules', 'Fix rounds', 'CLAUDE.md pointer block'])
       expect(t, title).toContain(title)
     expect(t).toContain('tab')
     expect(t).toContain('enter')
     expect(t).toContain('/junkd:orch')
-    // letters: a enabled, b allow_fable_agents, c implementer_ctx_k, d ui_review, e inject_rules, f rounds
+    // letters: a enabled, b allow_fable_agents, c implementer_ctx_k, d ui_review, e inject_rules, f rounds, g claude_md
     const buttons = await ui.findAll({ type: 'Button' })
-    expect(buttons.filter(b => /^[a-f]$/.test(String(b.props.hotkey ?? ''))).map(b => b.key).sort()).toEqual(
-      ['orch:allow_fable_agents', 'orch:enabled', 'orch:implementer_ctx_k-focus', 'orch:inject_rules', 'orch:rounds-focus', 'orch:ui_review'],
+    expect(buttons.filter(b => /^[a-g]$/.test(String(b.props.hotkey ?? ''))).map(b => b.key).sort()).toEqual(
+      ['orch:allow_fable_agents', 'orch:claude_md', 'orch:enabled', 'orch:implementer_ctx_k-focus', 'orch:inject_rules', 'orch:rounds-focus', 'orch:ui_review'],
     )
+    expect(buttons.find(b => b.key === 'orch:claude_md')?.props.hotkey).toBe('g')
     const before = rec.config.length
     await hotkey(ui, 'a')
     expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_enabled', value: false })
@@ -1388,6 +1494,15 @@ test('the pane: seven rows; a letter flips a switch, enter in a field saves it, 
     await hotkey(ui, 'e')
     await frame($, 'get', { key: 'orch_inject_rules' })
     expect(RULES_FLAG in rec.files).toBe(false)
+    // g flips claude_md and runs the CLAUDE.md script with the new state
+    await hotkey(ui, 'g')
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_claude_md', value: true })
+    expect(await frame($, 'get', { key: 'orch_claude_md' })).toBe(true)
+    expect(claudeMdRuns(rec).at(-1)?.mode).toEqual(['on'])
+    await hotkey(ui, 'g')
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_claude_md', value: false })
+    await frame($, 'get', { key: 'orch_claude_md' })
+    expect(claudeMdRuns(rec).at(-1)?.mode).toEqual(['off'])
     // c and f ask the focus ring onto the number fields; the kit implements no $.ui.focus (no hook of the test's or
     // of another plugin's is reached), so only that the press settles and the pane stays is checked here
     await hotkey(ui, 'c')

@@ -339,4 +339,7 @@ standalone_catalog=$(cd "$installed/junk-drawer" && HOME=$home ./bin/junk-drawer
 rg -q 'standalone skills' <<<"$standalone_catalog"
 rg -q '\$orch' <<<"$standalone_catalog"
 
+# The orch_claude_md switch: scripts/orch-claude-md.sh on|off and its session-start run, over a temp config dir.
+bash "$root/tests/claude-md.sh" >/dev/null 2>&1 || { echo "tests/claude-md.sh failed; run it alone for the reason"; exit 1; }
+
 echo "smoke tests passed"

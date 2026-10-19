@@ -90,7 +90,7 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 |---|---|---|
 | core | `core_output_style` | [Output style](#output-style-ste) |
 | handoff | `handoff_enabled`, `handoff_threshold`, `handoff_checkEvery`, `handoff_autoOn`, `handoff_resumeAfterLimit`, `handoff_staleDays`, `handoff_segment` | [handoff settings](#settings-1) |
-| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds` | [orch settings](#settings-2) |
+| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md` | [orch settings](#settings-2) |
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
 
 The `enabled` rows: `handoff_enabled` off is no auto handoff loop and no 🪃 segment (`/junkd:handoff`,
@@ -125,7 +125,7 @@ the junkd pane, a feature pane), or rename the keys in `~/.claude/settings.json`
 | `pluginConfigs["tldr@junk-drawer"].options.<field>`: `terse`, `sentences` | `pluginConfigs["junkd@junk-drawer"].options.tldr_<field>` |
 | `pluginConfigs["junkd@junk-drawer"].options.output_style` | `pluginConfigs["junkd@junk-drawer"].options.core_output_style` |
 | `/config` rows `handoff.<field>`, `orch.<field>`, `tldr.<field>`, `junkd.output_style` | `junkd.handoff_<field>`, `junkd.orch_<field>`, `junkd.tldr_<field>`, `junkd.core_output_style` |
-| — | new rows `orch_enabled`, `tldr_enabled` (both on by default) |
+| — | new rows `orch_enabled`, `tldr_enabled` (both on by default), `orch_claude_md` (off by default) |
 | `~/.claude/tldr-on` | `~/.claude/junkd/tldr-on` (run `/junkd:tldr on` again; the old file is not read) |
 | `~/.claude/orch/rules-off` | `~/.claude/junkd/orch-rules-off` (written by the module at the next session start) |
 | `$.handoff`, `$.orch`, `$.tldr` | `$.junkd` ([below](#junkd-for-other-mods)) |
@@ -490,6 +490,40 @@ main session only:
 
 `tests/orch.sh` (run by `tests/smoke.sh`) covers the hook, the agent records hook, the agent roster and the bin scripts.
 
+### The CLAUDE.md pointer block (`orch_claude_md`)
+
+Since the plugin prints the rule sheet itself, a global `CLAUDE.md` that still carries its own
+`## Orchestrator mode` section holds the rules twice. The `orch_claude_md` switch (off by default) hands that
+section over to the plugin. `scripts/orch-claude-md.sh on|off` works on `~/.claude/CLAUDE.md`
+(`$CLAUDE_CONFIG_DIR/CLAUDE.md` when set):
+
+- **on** replaces the `## Orchestrator mode` section (the H2 and its `###` children, up to the next `#` or `##`
+  heading) with this block:
+
+  ```markdown
+  <!-- junkd:orch start -->
+  ## Orchestrator mode
+  The junkd plugin prints the orchestrator rules at session start; full text and settings: `/junkd:orch`.
+  <!-- junkd:orch end -->
+  ```
+
+  A file with neither the section nor the block is left alone; a block already there is written afresh.
+- **off** removes the block and the one blank line after it, and nothing else. No block: nothing happens.
+  **Off never puts the original section back: the backup does.**
+
+Each change first copies the file to `CLAUDE.md.bak-<date>-<time>-XXXX` beside it; a run that changes nothing
+writes nothing and makes no backup. The script never creates `CLAUDE.md` and writes through a symlink to the
+real file. Headings and markers inside a ```` ``` ```` or `~~~` fence do not count. A start marker with no end
+marker, or (on) a fence left open inside the section, is refused (exit 1) with nothing written. A CRLF file
+gets a CRLF block.
+
+It runs at once when the setting is flipped (the pane, `/config`, `$.junkd.set`; the change or the refusal is a
+toast), and again at every session start from `scripts/setup.sh`, which reads `orch_claude_md` and
+`orch_enabled` from `settings.json` (the first `junkd@` entry of `pluginConfigs`): on while `orch_claude_md` is
+`true`, off otherwise. Neither runs while `orch_enabled` is off (or, where the entry names no `orch_enabled`,
+while `junkd/orch-off` is there), nor while `settings.json` is missing or does not parse. `tests/claude-md.sh`
+(run by `tests/smoke.sh`) covers both modes and the session-start run.
+
 ### The main-loop guard (Claude Code only)
 
 `hooks/orch.tsx` is orch's part of junkd's hooks module (`hooks/index.tsx`). On a Fable main loop the rule
@@ -565,10 +599,10 @@ Row by row, against the table above:
 
 #### Settings
 
-`/junkd:orch panel` toggles the pane: one Settings tab with the seven rows (`tab` moves, `enter` saves a
+`/junkd:orch panel` toggles the pane: one Settings tab with the eight rows (`tab` moves, `enter` saves a
 field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes).
-The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and the first four in the
-/junkd pane.
+The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and the first four and
+`orch_claude_md` in the /junkd pane.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
@@ -579,6 +613,7 @@ The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and 
 | `orch_ui_review` | boolean | `true` | Run `ui-reviewer` on the UI criteria when the config declares `web`; off, they are `PM-REVIEW` rows |
 | `orch_inject_rules` | boolean | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file `junkd/orch-rules-off` while off) |
 | `orch_rounds` | number | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
+| `orch_claude_md` | boolean | `false` | On: the `## Orchestrator mode` section of `~/.claude/CLAUDE.md` becomes the `junkd:orch` pointer block; off: the block is removed (the original section only from the backup). Runs at once and at every session start while `orch_enabled` is on; see [the CLAUDE.md pointer block](#the-claudemd-pointer-block-orch_claude_md) |
 
 Scope: user-global; project/session overrides: planned.
 
@@ -596,7 +631,7 @@ as `Junkd`) beside the API reference, typed. The orch part:
 
 - `schema()` — one entry per setting of every group; orch's are `group: 'orch'`, keyed `orch_<field>`:
   `{ key, group, field, type, title, default, main, options? }`; `main` marks `orch_enabled`,
-  `orch_guard`, `orch_allow_fable_agents` and `orch_implementer_ctx_k`; `orch_guard` carries its `options`.
+  `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k` and `orch_claude_md`; `orch_guard` carries its `options`.
 - `get({ key })` — the current value of a setting (`get({ key: 'orch_rounds' })`).
 - `set({ key, value, scope? })` — writes `junkd.orch_<field>` through `$.config` and resolves to the
   stored value; refused (unknown key, a value that does not fit, a `config.set` hook's deny) it rejects
