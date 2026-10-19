@@ -101,9 +101,10 @@ const DOTDOT = /(^|\/)\.\.(\/|$)/
 // or agent would be live in this session): a .claude dir (the config dir's own roots aside), any plugin under a
 // plugins/ path (a marketplace's, the plugin cache, a --plugin-dir checkout), a .claude-plugin/ manifest dir, and
 // this module's own control state (junkd/orch-off and junkd/orch-rules-off, the enabled and inject_rules flags, or
-// anything under those names: a directory there would read as the flag). Case-insensitive: macOS paths are.
+// anything under those names: a directory there would read as the flag; junkd/orch/_agents/, the SubagentStop
+// records the SendMessage rule reads). Case-insensitive: macOS paths are.
 const NEVER_WRITE =
-  /\/junkd\/orch-(rules-)?off(\/|$)|\/\.claude\/settings[^/]*\.json$|\/plugins\/(.*\/)?(agents|commands|skills|hooks|rules|output-styles)\/|\/\.claude-plugin\/|(^|\/)(CLAUDE|CLAUDE\.local|AGENTS|SKILL)\.md$/i
+  /\/junkd\/orch-(rules-)?off(\/|$)|\/junkd\/orch\/_agents(\/|$)|\/\.claude\/settings[^/]*\.json$|\/plugins\/(.*\/)?(agents|commands|skills|hooks|rules|output-styles)\/|\/\.claude-plugin\/|(^|\/)(CLAUDE|CLAUDE\.local|AGENTS|SKILL)\.md$/i
 const DOT_CLAUDE = /\/\.claude\//i
 const LOADED = /\/(agents|commands|skills|hooks|rules|output-styles)\//i
 const SCRIPT = /^([A-Za-z0-9][A-Za-z0-9._-]*)([\s\S]*)$/ // a file right in bin/: no slash, so no `..` can lead out of it
