@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# orch plugin tests: the SessionStart rule-sheet hook, the agent roster, and the bin scripts
+# junkd's orch tests: the SessionStart rule-sheet hook, the agent roster, and the bin scripts
 # (orch-state list/set/new/reset-stale, orch-worktree add/slot/remove). Run: bash tests/orch.sh
 # (tests/smoke.sh runs it too). Every check is an explicit `if`/`[ ]` so `set -e` catches it.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-plugin="$root/plugins/orch"
+plugin="$root/plugins/junkd"
 hook="$plugin/scripts/orch-context.sh"
 sheet="$plugin/skills/orch/ORCHESTRATOR.md"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-# The hook reads the inject_rules flag file under the config dir: point it at a fresh one so a real
-# ~/.claude/orch/rules-off never decides a test.
+# The hook reads the orch_enabled and orch_inject_rules flag files under the config dir: point it at a fresh one so
+# a real ~/.claude/junkd/orch-off or orch-rules-off never decides a test.
 export CLAUDE_CONFIG_DIR="$tmp/cfg"
 
 fail() { echo "orch tests: $*" >&2; exit 1; }
@@ -26,8 +26,20 @@ rg -q 'Opus' "$sheet" || fail "ORCHESTRATOR.md does not mention Opus"
 # hooks.json: a SessionStart command hook that runs scripts/orch-context.sh
 jq -e '.hooks.SessionStart[0].hooks[] | select(.type == "command" and (.command | contains("/scripts/orch-context.sh")))' \
     "$plugin/hooks/hooks.json" >/dev/null || fail "hooks.json has no SessionStart hook for scripts/orch-context.sh"
-[ -L "$plugin/scripts" ] || fail "plugins/orch/scripts must be a symlink into skills/"
+[ -L "$plugin/scripts" ] || fail "plugins/junkd/scripts must be a symlink into skills/"
 [ -x "$plugin/skills/orch/scripts/orch-context.sh" ] || fail "orch-context.sh is not executable"
+# the link chain the hook is reached through: scripts -> skills/junkd/scripts, whose orch-context.sh is a file link to
+# ../../orch/scripts/orch-context.sh; the sheet is beside the real file only, so a dirname-only lookup finds nothing
+[ -L "$plugin/skills/junkd/scripts/orch-context.sh" ] || fail "skills/junkd/scripts/orch-context.sh must be a link into skills/orch/scripts"
+[ ! -e "$plugin/skills/junkd/ORCHESTRATOR.md" ] || fail "a sheet beside skills/junkd/scripts would hide a broken link lookup"
+for via in "$plugin/scripts/orch-context.sh" "$plugin/skills/junkd/scripts/orch-context.sh" "$plugin/skills/orch/scripts/orch-context.sh"; do
+    out=$(printf '{}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$via") || fail "hook via $via exited non-zero"
+    [ "$out" = "$(cat "$sheet")" ] || fail "hook via $via: expected the sheet"
+done
+# an absolute link to it from anywhere else (a host that links the hook in) finds the sheet too
+ln -s "$hook" "$tmp/linked-hook.sh"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$tmp/linked-hook.sh") || fail "hook via an absolute link exited non-zero"
+[ "$out" = "$(cat "$sheet")" ] || fail "hook via an absolute link: expected the sheet"
 
 # main session (no agent marker): the sheet, byte for byte (compared through files so a
 # trailing-newline difference shows), exit 0
@@ -60,27 +72,47 @@ done
 printf '{}' | CLAUDE_AGENT_ID=a "$hook" >/dev/null || fail "subagent path exited non-zero"
 printf '{}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES=0 "$hook" >/dev/null || fail "ORCH_INJECT_RULES=0 exited non-zero"
 
-# the flag file the hooks module writes for inject_rules off: nothing while it exists, the sheet once it is gone
-mkdir -p "$CLAUDE_CONFIG_DIR/orch" && : > "$CLAUDE_CONFIG_DIR/orch/rules-off"
+# the flag files the hooks module writes for orch_inject_rules off (orch-rules-off) and orch_enabled off (orch-off):
+# nothing while one exists, the sheet once it is gone
+mkdir -p "$CLAUDE_CONFIG_DIR/junkd" && : > "$CLAUDE_CONFIG_DIR/junkd/orch-rules-off"
 flagged=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "rules-off flag: hook exited non-zero"
 [ -z "$flagged" ] || fail "rules-off flag present: hook printed output, expected nothing"
-rm "$CLAUDE_CONFIG_DIR/orch/rules-off"
+rm "$CLAUDE_CONFIG_DIR/junkd/orch-rules-off"
 unflagged=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook")
 [ "$unflagged" = "$(cat "$sheet")" ] || fail "rules-off flag removed: expected the sheet"
-# a directory of that name (what a Write under orch/rules-off/ would leave) is no flag: the sheet still comes
-mkdir -p "$CLAUDE_CONFIG_DIR/orch/rules-off/x"
+# a directory of that name (what a Write under junkd/orch-rules-off/ would leave) is no flag: the sheet still comes
+mkdir -p "$CLAUDE_CONFIG_DIR/junkd/orch-rules-off/x"
 dirflag=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "rules-off dir: hook exited non-zero"
 [ "$dirflag" = "$(cat "$sheet")" ] || fail "rules-off as a directory read as the flag: expected the sheet"
-rm -r "$CLAUDE_CONFIG_DIR/orch/rules-off"
+rm -r "$CLAUDE_CONFIG_DIR/junkd/orch-rules-off"
 # with no CLAUDE_CONFIG_DIR the flag is read under $HOME/.claude
-mkdir -p "$tmp/home/.claude/orch" && : > "$tmp/home/.claude/orch/rules-off"
+mkdir -p "$tmp/home/.claude/junkd" && : > "$tmp/home/.claude/junkd/orch-rules-off"
 homeflag=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/home" ORCH_INJECT_RULES= "$hook")
 [ -z "$homeflag" ] || fail "rules-off flag under HOME/.claude: hook printed output, expected nothing"
+rm "$tmp/home/.claude/junkd/orch-rules-off"
+# the same for orch-off, the orch_enabled flag
+: > "$CLAUDE_CONFIG_DIR/junkd/orch-off"
+flagged=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "orch-off flag: hook exited non-zero"
+[ -z "$flagged" ] || fail "orch-off flag present: hook printed output, expected nothing"
+rm "$CLAUDE_CONFIG_DIR/junkd/orch-off"
+mkdir -p "$CLAUDE_CONFIG_DIR/junkd/orch-off/x"
+dirflag=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "orch-off dir: hook exited non-zero"
+[ "$dirflag" = "$(cat "$sheet")" ] || fail "orch-off as a directory read as the flag: expected the sheet"
+rm -r "$CLAUDE_CONFIG_DIR/junkd/orch-off"
+: > "$tmp/home/.claude/junkd/orch-off"
+homeflag=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/home" ORCH_INJECT_RULES= "$hook")
+[ -z "$homeflag" ] || fail "orch-off flag under HOME/.claude: hook printed output, expected nothing"
+# the old flag (orch/rules-off) is read no more
+mkdir -p "$CLAUDE_CONFIG_DIR/orch" && : > "$CLAUDE_CONFIG_DIR/orch/rules-off"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "old flag: hook exited non-zero"
+[ "$out" = "$(cat "$sheet")" ] || fail "the old orch/rules-off flag still decides"
+rm "$CLAUDE_CONFIG_DIR/orch/rules-off"
 
 # the setting itself in settings.json (the hooks module writes the flag only at its own session start, after this
 # hook): true injects even past a stale flag, any other value skips; only without a value does the flag decide
 hsettings="$CLAUDE_CONFIG_DIR/settings.json"
-flag="$CLAUDE_CONFIG_DIR/orch/rules-off"
+flag="$CLAUDE_CONFIG_DIR/junkd/orch-rules-off"
+offflag="$CLAUDE_CONFIG_DIR/junkd/orch-off"
 hook_main() { printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook"; }
 # expect <sheet|none> <what>: the hook's output, exit 0
 expect() {
@@ -89,55 +121,97 @@ expect() {
     if [ "$1" = sheet ]; then [ "$out" = "$(cat "$sheet")" ] || fail "$2: expected the sheet"
     else [ -z "$out" ] || fail "$2: expected nothing, got $(wc -c <<<"$out") bytes"; fi
 }
-for key in 'orch@junk-drawer' 'orch@other'; do
+for key in 'junkd@junk-drawer' 'junkd@other'; do
     for v in false null 0 '"true"'; do
         rm -f "$flag"
-        printf '{"theme":"dark","pluginConfigs":{"%s":{"options":{"inject_rules":%s}}}}' "$key" "$v" > "$hsettings"
-        expect none "setting $key inject_rules=$v, no flag"
+        printf '{"theme":"dark","pluginConfigs":{"%s":{"options":{"orch_inject_rules":%s}}}}' "$key" "$v" > "$hsettings"
+        expect none "setting $key orch_inject_rules=$v, no flag"
     done
-    printf '{"pluginConfigs":{"%s":{"options":{"inject_rules":true}}}}' "$key" > "$hsettings"
+    printf '{"pluginConfigs":{"%s":{"options":{"orch_inject_rules":true}}}}' "$key" > "$hsettings"
     : > "$flag"
-    expect sheet "setting $key inject_rules=true past a stale flag"
+    expect sheet "setting $key orch_inject_rules=true past a stale flag"
 done
-# the first orch@ entry decides
-printf '{"pluginConfigs":{"orch@a":{"options":{"inject_rules":true}},"orch@b":{"options":{"inject_rules":false}}}}' > "$hsettings"
-expect sheet "first orch@ entry true, flag present"
+rm -f "$flag"
+# orch_enabled the same way: true goes on past a stale orch-off flag, any other value stops the sheet, whatever
+# orch_inject_rules says
+for key in 'junkd@junk-drawer' 'junkd@other'; do
+    for v in false null 0 '"true"'; do
+        for inject in '' ',"orch_inject_rules":true'; do
+            rm -f "$offflag"
+            printf '{"theme":"dark","pluginConfigs":{"%s":{"options":{"orch_enabled":%s%s}}}}' "$key" "$v" "$inject" > "$hsettings"
+            expect none "setting $key orch_enabled=$v$inject, no flag"
+        done
+    done
+    printf '{"pluginConfigs":{"%s":{"options":{"orch_enabled":true}}}}' "$key" > "$hsettings"
+    : > "$offflag"
+    expect sheet "setting $key orch_enabled=true past a stale orch-off flag"
+    # orch_enabled on does not override orch_inject_rules off, nor its flag
+    printf '{"pluginConfigs":{"%s":{"options":{"orch_enabled":true,"orch_inject_rules":false}}}}' "$key" > "$hsettings"
+    expect none "setting $key orch_enabled=true, orch_inject_rules=false"
+    printf '{"pluginConfigs":{"%s":{"options":{"orch_enabled":true}}}}' "$key" > "$hsettings"
+    : > "$flag"
+    expect none "setting $key orch_enabled=true, the orch-rules-off flag"
+    rm -f "$flag"
+    # each setting decides on its own: orch_inject_rules=true past a stale orch-off flag still needs orch_enabled
+    printf '{"pluginConfigs":{"%s":{"options":{"orch_inject_rules":true}}}}' "$key" > "$hsettings"
+    expect none "setting $key orch_inject_rules=true, orch_enabled unset, the orch-off flag"
+done
+rm -f "$offflag"
+# the first junkd@ entry decides
+printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_inject_rules":true}},"junkd@b":{"options":{"orch_inject_rules":false}}}}' > "$hsettings"
+: > "$flag"
+expect sheet "first junkd@ entry true, flag present"
+rm -f "$flag"
+printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":false}},"junkd@b":{"options":{"orch_enabled":true}}}}' > "$hsettings"
+expect none "first junkd@ entry orch_enabled false"
 # never into a subagent, whatever the setting says
-printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":true}}}}' > "$hsettings"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_inject_rules":true}}}}' > "$hsettings"
 sub=$(printf '{"agent_id":"a1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "subagent with setting true: exit non-zero"
 [ -z "$sub" ] || fail "subagent with setting true: hook printed output"
 # ORCH_INJECT_RULES=0 still wins over a true setting
 off=$(printf '{}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES=0 "$hook") || fail "ORCH_INJECT_RULES=0 with setting true: exit non-zero"
 [ -z "$off" ] || fail "ORCH_INJECT_RULES=0 with setting true: hook printed output"
-# no value: another plugin's entry, a name that only starts with orch, no options, no key, no pluginConfigs, a file
-# that does not parse or holds two values, no file: the flag decides, both ways
-for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"inject_rules":true}}}}' \
-    '{"pluginConfigs":{"orchard@x":{"options":{"inject_rules":true}}}}' '{"pluginConfigs":{"orch@junk-drawer":{}}}' \
-    '{"pluginConfigs":{"orch@junk-drawer":{"options":{"rounds":5}}}}' '{"theme":"dark"}' '{"pluginConfigs":' \
-    '{"pluginConfigs":{"orch@a":{"options":{"inject_rules":true}}}} {}' 'NOFILE'; do
+# no value: another plugin's entry, a name that only starts or ends with junkd, the old orch plugin's entry and keys
+# (migrated by hand, never read), a key without its orch_ prefix, no options, no key, no pluginConfigs, a file that
+# does not parse or holds two values, no file: each flag decides, both ways
+for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"orch_inject_rules":true,"orch_enabled":true}}}}' \
+    '{"pluginConfigs":{"junkdx@x":{"options":{"orch_inject_rules":true,"orch_enabled":true}}}}' \
+    '{"pluginConfigs":{"xjunkd@x":{"options":{"orch_inject_rules":true,"orch_enabled":true}}}}' \
+    '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":true,"enabled":true}}}}' \
+    '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"inject_rules":true,"enabled":true}}}}' '{"pluginConfigs":{"junkd@junk-drawer":{}}}' \
+    '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_rounds":5}}}}' '{"theme":"dark"}' '{"pluginConfigs":' \
+    '{"pluginConfigs":{"junkd@a":{"options":{"orch_inject_rules":true,"orch_enabled":true}}}} {}' 'NOFILE'; do
     if [ "$content" = NOFILE ]; then rm -f "$hsettings"; else printf '%s' "$content" > "$hsettings"; fi
-    : > "$flag"
-    expect none "settings $content with the flag"
-    rm -f "$flag"
-    expect sheet "settings $content without the flag"
+    for f in "$flag" "$offflag"; do
+        : > "$f"
+        expect none "settings $content with the flag $f"
+        rm -f "$f"
+    done
+    expect sheet "settings $content without the flags"
 done
 # no jq on PATH (nothing added to it): the flag decides, a setting it cannot read does not
 mkdir -p "$tmp/nojq-hook"
-for t in bash cat dirname; do ln -sf "$(command -v "$t")" "$tmp/nojq-hook/$t"; done
-printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":true}}}}' > "$hsettings"
+for t in bash cat dirname readlink; do ln -sf "$(command -v "$t")" "$tmp/nojq-hook/$t"; done
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_inject_rules":true,"orch_enabled":true}}}}' > "$hsettings"
 : > "$flag"
 out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/nojq-hook" ORCH_INJECT_RULES= "$hook") || fail "no jq: exit non-zero"
 [ -z "$out" ] || fail "no jq, flag present: expected nothing (the setting can't be read)"
 rm -f "$flag"
-printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":false}}}}' > "$hsettings"
+: > "$offflag"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/nojq-hook" ORCH_INJECT_RULES= "$hook") || fail "no jq: exit non-zero"
+[ -z "$out" ] || fail "no jq, orch-off flag present: expected nothing (the setting can't be read)"
+rm -f "$offflag"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_inject_rules":false,"orch_enabled":false}}}}' > "$hsettings"
 out=$(printf '{}' | env -u CLAUDE_AGENT_ID PATH="$tmp/nojq-hook" ORCH_INJECT_RULES= "$hook") || fail "no jq: exit non-zero"
 [ "$out" = "$(cat "$sheet")" ] || fail "no jq, no flag: expected the sheet"
 rm -f "$hsettings"
 # with no CLAUDE_CONFIG_DIR the setting is read from $HOME/.claude/settings.json; with neither, exit 0 and the sheet
 mkdir -p "$tmp/hhome/.claude"
-printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"inject_rules":false}}}}' > "$tmp/hhome/.claude/settings.json"
-out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/hhome" ORCH_INJECT_RULES= "$hook") || fail "HOME settings: exit non-zero"
-[ -z "$out" ] || fail "HOME settings inject_rules false: expected nothing"
+for k in orch_inject_rules orch_enabled; do
+    printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"%s":false}}}}' "$k" > "$tmp/hhome/.claude/settings.json"
+    out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/hhome" ORCH_INJECT_RULES= "$hook") || fail "HOME settings: exit non-zero"
+    [ -z "$out" ] || fail "HOME settings $k false: expected nothing"
+done
 out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR -u HOME ORCH_INJECT_RULES= "$hook") || fail "no HOME: exit non-zero"
 [ "$out" = "$(cat "$sheet")" ] || fail "no HOME: expected the sheet"
 
@@ -380,48 +454,52 @@ git init -q "$tmp/w/.worktreesX/p"
 
 # orch-state settings: the user settings /orch runs with, from settings.json pluginConfigs (no config needed)
 settings_json="$CLAUDE_CONFIG_DIR/settings.json"
-defaults=$'rounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'
+defaults=$'enabled=true\nrounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'
 settings() { (cd "$tmp" && "$bin/orch-state" settings); }   # $tmp: no repo, no .orch/config.md
 mkdir -p "$CLAUDE_CONFIG_DIR"
 rm -f "$settings_json"
 [ "$(settings)" = "$defaults" ] || fail "settings, no settings.json: expected the defaults, got: $(settings)"
-# opts <json of orch@junk-drawer's options> -> what settings prints
-opts() { printf '{"theme":"dark","pluginConfigs":{"tldr@junk-drawer":{"options":{"rounds":9}},"orch@junk-drawer":{"options":%s}}}\n' "$1" > "$settings_json"; settings; }
-[ "$(opts '{"rounds":5,"ui_review":false,"implementer_ctx_k":600,"inject_rules":false}')" = $'rounds=5\nui_review=false\nimplementer_ctx_k=600\ninject_rules=false' ] ||
+# opts <json of junkd@junk-drawer's options> -> what settings prints
+opts() { printf '{"theme":"dark","pluginConfigs":{"tldr@junk-drawer":{"options":{"orch_rounds":9}},"junkd@junk-drawer":{"options":%s}}}\n' "$1" > "$settings_json"; settings; }
+[ "$(opts '{"orch_enabled":false,"orch_rounds":5,"orch_ui_review":false,"orch_implementer_ctx_k":600,"orch_inject_rules":false}')" = $'enabled=false\nrounds=5\nui_review=false\nimplementer_ctx_k=600\ninject_rules=false' ] ||
     fail "settings: values not read: $(settings)"
-[ "$(opts '{"ui_review":true,"inject_rules":true}')" = "$defaults" ] || fail "settings: explicit true switches: $(settings)"
+[ "$(opts '{"orch_enabled":true,"orch_ui_review":true,"orch_inject_rules":true}')" = "$defaults" ] || fail "settings: explicit true switches: $(settings)"
+# the keys without their orch_ prefix (the old plugin's) are no setting of junkd's
+[ "$(opts '{"enabled":false,"rounds":5,"ui_review":false,"implementer_ctx_k":600,"inject_rules":false}')" = "$defaults" ] ||
+    fail "settings: unprefixed keys read: $(settings)"
 # the exact bounds, one assertion each: in range kept, one past clamped
 for pair in rounds:0:1 rounds:1:1 rounds:10:10 rounds:11:10 rounds:-4:1 implementer_ctx_k:49:50 implementer_ctx_k:50:50 \
     implementer_ctx_k:1000:1000 implementer_ctx_k:1001:1000; do
     IFS=: read -r key in want <<<"$pair"
-    got=$(opts "{\"$key\":$in}" | rg "^$key=")
+    got=$(opts "{\"orch_$key\":$in}" | rg "^$key=")
     [ "$got" = "$key=$want" ] || fail "settings: $key $in: expected $want, got $got"
 done
 # not a whole number: rounded like the hooks module; a numeric string counts; anything else is the default
 for pair in '2.5:3' '2.4:2' '"4":4' '" 6 ":6' '"abc":3' '"":3' '" ":3' '"\t6\n":6' '"\u00a07":7' 'true:3' 'null:3' '[5]:3' '{}:3' '"nan":3' '"Infinity":3' '"1e999":3' '1e999:3'; do
     in=${pair%:*} want=${pair##*:}
-    got=$(opts "{\"rounds\":$in}" | rg '^rounds=')
+    got=$(opts "{\"orch_rounds\":$in}" | rg '^rounds=')
     [ "$got" = "rounds=$want" ] || fail "settings: rounds $in: expected $want, got $got"
 done
-got=$(opts '{"implementer_ctx_k":"250"}' | rg '^implementer_ctx_k=')
+got=$(opts '{"orch_implementer_ctx_k":"250"}' | rg '^implementer_ctx_k=')
 [ "$got" = implementer_ctx_k=250 ] || fail "settings: implementer_ctx_k \"250\": got $got"
 # a switch: missing = true, only a JSON true is true
 for in in false null 0 1 '"true"' '"on"'; do
-    got=$(opts "{\"ui_review\":$in,\"inject_rules\":$in}" | rg '^(ui_review|inject_rules)=' | tr '\n' ' ')
-    [ "$got" = "ui_review=false inject_rules=false " ] || fail "settings: switch $in: got $got"
+    got=$(opts "{\"orch_enabled\":$in,\"orch_ui_review\":$in,\"orch_inject_rules\":$in}" | rg '^(enabled|ui_review|inject_rules)=' | tr '\n' ' ')
+    [ "$got" = "enabled=false ui_review=false inject_rules=false " ] || fail "settings: switch $in: got $got"
 done
-# no orch@ entry (another plugin, a name that only starts with orch), no options, options not an object, the file
-# not one JSON object: the defaults
-for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"rounds":9}}}}' '{"pluginConfigs":{"orchard@x":{"options":{"rounds":9}}}}' \
-    '{"pluginConfigs":{"xorch@x":{"options":{"rounds":9}}}}' '{"pluginConfigs":{"orch@junk-drawer":{}}}' \
-    '{"pluginConfigs":{"orch@junk-drawer":{"options":[9]}}}' '{"pluginConfigs":[]}' '{}' '' '{"pluginConfigs":' '[]' '"x"' \
-    '{"pluginConfigs":{"orch@a":{"options":{"rounds":9}}}} {}' 'not json'; do
+# no junkd@ entry (another plugin, the old orch plugin, a name that only starts or ends with junkd), no options,
+# options not an object, the file not one JSON object: the defaults
+for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"orch_rounds":9}}}}' '{"pluginConfigs":{"junkdx@x":{"options":{"orch_rounds":9}}}}' \
+    '{"pluginConfigs":{"xjunkd@x":{"options":{"orch_rounds":9}}}}' '{"pluginConfigs":{"orch@junk-drawer":{"options":{"rounds":9,"orch_rounds":9}}}}' \
+    '{"pluginConfigs":{"junkd@junk-drawer":{}}}' \
+    '{"pluginConfigs":{"junkd@junk-drawer":{"options":[9]}}}' '{"pluginConfigs":[]}' '{}' '' '{"pluginConfigs":' '[]' '"x"' \
+    '{"pluginConfigs":{"junkd@a":{"options":{"orch_rounds":9}}}} {}' 'not json'; do
     printf '%s' "$content" > "$settings_json"
     [ "$(settings)" = "$defaults" ] || fail "settings, file $content: expected the defaults, got: $(settings)"
 done
-# the first orch@ entry decides (any marketplace)
-printf '{"pluginConfigs":{"orch@other":{"options":{"rounds":7}},"orch@junk-drawer":{"options":{"rounds":2}}}}' > "$settings_json"
-[ "$(settings | rg '^rounds=')" = rounds=7 ] || fail "settings: the first orch@ entry does not decide"
+# the first junkd@ entry decides (any marketplace)
+printf '{"pluginConfigs":{"junkd@other":{"options":{"orch_rounds":7}},"junkd@junk-drawer":{"options":{"orch_rounds":2}}}}' > "$settings_json"
+[ "$(settings | rg '^rounds=')" = rounds=7 ] || fail "settings: the first junkd@ entry does not decide"
 # no jq on PATH: the defaults, exit 0
 mkdir -p "$tmp/nojq"
 ln -sf "$(command -v bash)" "$tmp/nojq/bash"
@@ -429,13 +507,26 @@ out=$(cd "$tmp" && PATH="$tmp/nojq" "$bin/orch-state" settings) || fail "setting
 [ "$out" = "$defaults" ] || fail "settings without jq: expected the defaults, got: $out"
 # with no CLAUDE_CONFIG_DIR the file is $HOME/.claude/settings.json
 mkdir -p "$tmp/shome/.claude"
-printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"rounds":4}}}}' > "$tmp/shome/.claude/settings.json"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_rounds":4}}}}' > "$tmp/shome/.claude/settings.json"
 [ "$(cd "$tmp" && env -u CLAUDE_CONFIG_DIR HOME="$tmp/shome" "$bin/orch-state" settings | rg '^rounds=')" = rounds=4 ] ||
     fail "settings: \$HOME/.claude/settings.json not read without CLAUDE_CONFIG_DIR"
 # inside a project, and inside a project that is itself a worktree: the same user settings
-printf '{"pluginConfigs":{"orch@junk-drawer":{"options":{"rounds":6}}}}' > "$settings_json"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_rounds":6}}}}' > "$settings_json"
 [ "$(cd "$project" && "$bin/orch-state" settings | rg '^rounds=')" = rounds=6 ] || fail "settings in the project"
 [ "$(cd "$run" && "$bin/orch-state" settings | rg '^rounds=')" = rounds=6 ] || fail "settings in a worktree project"
+# the same scripts by every path they are reached through: the plugin root's bin/ (links into skills/junkd/bin, whose
+# entries link to ../../orch/bin), skills/junkd/bin, orch-init's bin (a link to ../orch/bin) and the real files; each
+# finds its sibling orch-state beside the path it was called by
+for via in "$plugin/bin" "$plugin/skills/junkd/bin" "$plugin/skills/orch-init/bin" "$plugin/skills/orch/bin"; do
+    [ "$(cd "$project" && "$via/orch-state" settings | rg '^rounds=')" = rounds=6 ] || fail "orch-state settings via $via"
+    rg -q 'no-op' <<<"$(cd "$project" && "$via/orch-sync" pull)" || fail "orch-sync pull via $via"
+    [ "$(cd "$project" && "$via/orch-worktree" slot T-2)" = 1 ] || fail "orch-worktree slot via $via"
+done
+for s in orch-state orch-sync orch-worktree; do
+    [ -L "$plugin/skills/junkd/bin/$s" ] || fail "skills/junkd/bin/$s is no link"
+    [ "$(cd -P "$(dirname "$plugin/skills/junkd/bin/$(readlink "$plugin/skills/junkd/bin/$s")")" && pwd)" = "$(cd -P "$plugin/skills/orch/bin" && pwd)" ] ||
+        fail "skills/junkd/bin/$s does not lead to skills/orch/bin"
+done
 rm -f "$settings_json"
 
 # orch-sync on the adhoc backend is a no-op in both directions

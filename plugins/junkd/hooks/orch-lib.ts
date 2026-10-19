@@ -1,6 +1,7 @@
-// The orch mod's `$`-free half: the settings and the main-loop guard. index.tsx does the awaits (the main loop's
+// orch's `$`-free half: the settings and the main-loop guard. orch.tsx does the awaits (the main loop's
 // model, the config dir, whether a Write target exists, the SendMessage target's record) and passes the values in.
 import type { JunkdOrchField as OrchField, JunkdOrchGuard as OrchGuard } from '../types'
+import { rowsOf } from './settings'
 
 // One row of the orch group as this file and orch-views.tsx read it: the field (not the `orch_` row key).
 export type OrchSchemaEntry = {
@@ -25,24 +26,23 @@ export type OrchState = {
   placed?: { path: string; configDir: string; binDir: string; repo: string } | null
 }
 
-// A mirror of plugin.json's `userConfig` (a hooks module cannot import JSON); tests/smoke.sh holds every entry to
-// the manifest. `main` marks the three a frame plugin shows first. `guard` is the manifest's string-with-options row.
-export const SCHEMA: readonly OrchSchemaEntry[] = [
-  { key: 'enabled', type: 'boolean', title: 'Orchestrator: enabled', default: true, main: true },
-  { key: 'guard', type: 'string', title: 'Main-loop guard', default: 'fable', main: true, options: ['fable', 'always', 'off'] },
-  { key: 'allow_fable_agents', type: 'boolean', title: 'Allow Fable subagents', default: false, main: true },
-  { key: 'implementer_ctx_k', type: 'number', title: 'Implementer context cap (k tokens)', default: 400, main: true },
-  { key: 'ui_review', type: 'boolean', title: 'UI review', default: true, main: false },
-  { key: 'inject_rules', type: 'boolean', title: 'Inject orchestrator rules', default: true, main: false },
-  { key: 'rounds', type: 'number', title: 'Fix rounds', default: 3, main: false },
-]
+// The orch rows of settings.ts (the one mirror of plugin.json's userConfig; tests/smoke.sh holds it to the
+// manifest), keyed by field. `main` marks the rows the /junkd pane draws first. `guard` is the string-with-options row.
+export const SCHEMA: readonly OrchSchemaEntry[] = rowsOf('orch').map(f => ({
+  key: f.field as OrchField,
+  type: f.type,
+  title: f.title,
+  default: f.default,
+  main: f.main,
+  ...(f.options ? { options: f.options } : {}),
+}))
 export const isField = (key: unknown): key is OrchField => SCHEMA.some(f => f.key === key)
 // The two number rows take a whole number in these bounds; the manifest has no min/max field, so they live here.
 export const ORCH_RANGE: Record<'implementer_ctx_k' | 'rounds', readonly [number, number]> = { implementer_ctx_k: [50, 1000], rounds: [1, 10] }
 export type OrchValues = { enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number }
 export const O: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 }
 
-// A raw value (typed in the pane, handed to $.orch.set, or written in the /config menu) to the field's kind;
+// A raw value (typed in the pane, handed to $.junkd.set, or written in the /config menu) to the field's kind;
 // `error` when it does not fit. The one check for every write path.
 export type Coerced = { value: OrchGuard | number | boolean; error?: undefined } | { error: string; value?: undefined }
 export function coerce(key: OrchField, raw: unknown): Coerced {
@@ -81,14 +81,14 @@ const ALLOW = new Set([
   'ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill',
   'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger',
 ])
-const REVIEWER = /^(orch:)?(verify-coordinator|ui-reviewer|test-planner|test-reviewer)$/
+const REVIEWER = /^(junkd:)?(verify-coordinator|ui-reviewer|test-planner|test-reviewer)$/
 const MODELS = new Set(['opus', 'sonnet', 'haiku']) // an Agent's `model`: never inherit; fable only as below
 const FABLE = /fable/i // `fable` or a full Fable id: an Agent's explicit model, only with allow_fable_agents
 const PLAIN_PATH = /^\/[\x20-\x7e]*$/ // absolute, printable ASCII: no `~`-relative, no Unicode alias of a name
 // The engine already refuses built-ins and disable-model-invocation skills from a scheduled prompt; this rule
-// keeps the main loop to /orch and /loop (of an allowed prompt) or a plain prompt, as defence in depth.
+// keeps the main loop to /junkd:orch and /loop (of an allowed prompt) or a plain prompt, as defence in depth.
 const LOOP = /^\/loop(\s+\d+[smhd])?(\s+|$)/
-const ORCH_CMD = /^\/orch(:orch)?(\s|$)/ // the plugin command, bare or namespaced
+const ORCH_CMD = /^\/(junkd:)?orch(\s|$)/ // the plugin's skill, namespaced or bare
 const scheduled = (p: string): boolean => {
   if (!p.startsWith('/') || ORCH_CMD.test(p)) return true
   const loop = LOOP.exec(p)
@@ -100,10 +100,10 @@ const DOTDOT = /(^|\/)\.\.(\/|$)/
 // Never written, even inside a root: settings and whatever Claude Code loads as config or instructions (a new skill
 // or agent would be live in this session): a .claude dir (the config dir's own roots aside), any plugin under a
 // plugins/ path (a marketplace's, the plugin cache, a --plugin-dir checkout), a .claude-plugin/ manifest dir, and
-// this module's own control state (orch/rules-off, the inject_rules flag, or anything under that name: a directory
-// there would read as the flag). Case-insensitive: macOS paths are.
+// this module's own control state (junkd/orch-off and junkd/orch-rules-off, the enabled and inject_rules flags, or
+// anything under those names: a directory there would read as the flag). Case-insensitive: macOS paths are.
 const NEVER_WRITE =
-  /\/orch\/rules-off(\/|$)|\/\.claude\/settings[^/]*\.json$|\/plugins\/(.*\/)?(agents|commands|skills|hooks|rules|output-styles)\/|\/\.claude-plugin\/|(^|\/)(CLAUDE|CLAUDE\.local|AGENTS|SKILL)\.md$/i
+  /\/junkd\/orch-(rules-)?off(\/|$)|\/\.claude\/settings[^/]*\.json$|\/plugins\/(.*\/)?(agents|commands|skills|hooks|rules|output-styles)\/|\/\.claude-plugin\/|(^|\/)(CLAUDE|CLAUDE\.local|AGENTS|SKILL)\.md$/i
 const DOT_CLAUDE = /\/\.claude\//i
 const LOADED = /\/(agents|commands|skills|hooks|rules|output-styles)\//i
 const SCRIPT = /^([A-Za-z0-9][A-Za-z0-9._-]*)([\s\S]*)$/ // a file right in bin/: no slash, so no `..` can lead out of it
@@ -123,7 +123,7 @@ const inRoots = (path: string, cfg: string) => {
   return SCRATCHPAD.test(path) || (rest !== undefined && (rest.startsWith('orch/') || rest.startsWith('handoffs/') || MEMORY.test(rest)))
 }
 
-// The repo's task store (.orch/: the config, the task files, _lessons.md), which /orch reads and writes first.
+// The repo's task store (.orch/: the config, the task files, _lessons.md), which /junkd:orch reads and writes first.
 const inStore = (path: string, repo: string) => repo !== '' && under(path, `${repo}/.orch`)
 // Write in the store: a .md only (task files, _lessons.md, notes), never the existing config: its tasks_dir steers the
 // bin scripts. A new config.md passes as any new .md does; changing one is delegated.
@@ -167,12 +167,12 @@ function isBinCall(command: string, binDir: string): boolean {
   return ARGS.test(args)
 }
 
-// Whether the guard holds the main loop right now: `fable` = the main loop's model is a Fable, `always` = any
-// model, `off` = never.
-export const guardActive = (model: string, o = O): boolean => o.guard === 'always' || (o.guard === 'fable' && FABLE.test(model))
+// Whether the guard holds the main loop right now: never while orch is disabled; else `fable` = the main loop's
+// model is a Fable, `always` = any model, `off` = never.
+export const guardActive = (model: string, o = O): boolean => o.enabled && (o.guard === 'always' || (o.guard === 'fable' && FABLE.test(model)))
 
 // A deny text, or undefined to let the call through. Only the main loop is guarded (a subagent's call passes),
-// and only while `guard` matches (guardActive).
+// and only while orch is enabled and `guard` matches (guardActive).
 export function orchGuard(e: { tool: string; agentId?: string; [k: string]: unknown }, s: OrchState, o = O): string | undefined {
   if (e.agentId || !guardActive(s.model, o)) return undefined
   switch (e.tool) {
@@ -189,24 +189,24 @@ export function orchGuard(e: { tool: string; agentId?: string; [k: string]: unkn
     case 'ScheduleWakeup': {
       const prompt = typeof e.prompt === 'string' ? e.prompt.trimStart() : undefined
       if (prompt === undefined || e.stop === true || scheduled(prompt)) return undefined
-      return `${PREFIX} ${e.tool} may schedule only /orch, /loop or a plain prompt; a scheduled ${prompt.split(/\s/)[0]} would run as a command in this loop.`
+      return `${PREFIX} ${e.tool} may schedule only /junkd:orch, /loop or a plain prompt; a scheduled ${prompt.split(/\s/)[0]} would run as a command in this loop.`
     }
     case 'Bash':
-      return isBinCall(String(e.command ?? ''), s.binDir) ? undefined : deny("Bash (only the orch plugin's own bin/ scripts, plain arguments)")
+      return isBinCall(String(e.command ?? ''), s.binDir) ? undefined : deny("Bash (only the junkd plugin's own bin/ scripts, plain arguments)")
     case 'Monitor': // a command runs in Bash's shell: the same rule; a WebSocket monitor runs nothing
-      return e.command === undefined || isBinCall(String(e.command), s.binDir) ? undefined : deny("Monitor with a command (only the orch plugin's own bin/ scripts)")
+      return e.command === undefined || isBinCall(String(e.command), s.binDir) ? undefined : deny("Monitor with a command (only the junkd plugin's own bin/ scripts)")
     case 'Agent': {
       const type = String(e.subagent_type ?? '')
       const model = e.model === undefined ? undefined : String(e.model).trim().toLowerCase()
-      if (type === 'fork' || (model === undefined ? !type.startsWith('orch:') : !MODELS.has(model) && !(o.allow_fable_agents && FABLE.test(model))))
-        return `${PREFIX} a fork, an Agent without a model (other than an orch: type) or with a model other than opus, sonnet or haiku runs on the main loop's model or a costlier one. Set model: opus|sonnet|haiku, or use an orch: agent type without a model (theirs is pinned). A Fable subagent needs the user's ask and allow_fable_agents on (/orch panel).`
+      if (type === 'fork' || (model === undefined ? !type.startsWith('junkd:') : !MODELS.has(model) && !(o.allow_fable_agents && FABLE.test(model))))
+        return `${PREFIX} a fork, an Agent without a model (other than a junkd: type) or with a model other than opus, sonnet or haiku runs on the main loop's model or a costlier one. Set model: opus|sonnet|haiku, or use a junkd: agent type without a model (theirs is pinned). A Fable subagent needs the user's ask and allow_fable_agents on (/junkd:orch panel).`
       return undefined
     }
     case 'SendMessage': {
       const a = s.agent
       if (a === null) return `${PREFIX} no agent "${String(e.to)}" is known (not in the agent list, no SubagentStop record). Spawn a fresh agent.`
       const type = a?.type ?? ''
-      if (REVIEWER.test(type)) return `${PREFIX} ${type.replace(/^orch:/, '')} is a reviewer, and reviewers are always fresh: spawn a new one.`
+      if (REVIEWER.test(type)) return `${PREFIX} ${type.replace(/^junkd:/, '')} is a reviewer, and reviewers are always fresh: spawn a new one.`
       if (a?.tokens !== undefined && a.tokens > o.implementer_ctx_k * 1000)
         return `${PREFIX} implementer context ${Math.round(a.tokens / 1000)}k exceeds cap ${o.implementer_ctx_k}k: spawn a fresh implementer, hand it \`git diff <base>...<branch>\` and why previous rounds failed.`
       return undefined
@@ -216,7 +216,7 @@ export function orchGuard(e: { tool: string; agentId?: string; [k: string]: unkn
 }
 
 // agent.spawn, as the engine resolved the Agent call: the backstop of the Agent rule above, on the main loop only.
-// A fork, or a model that resolves to a Fable (given; `inherit`, which is the parent's; or none on a non-orch
+// A fork, or a model that resolves to a Fable (given; `inherit`, which is the parent's; or none on a non-junkd
 // type, whose own definition has none pinned), is refused; a Fable given explicitly passes with allow_fable_agents.
 // A `context: fork` skill raises no agent.spawn (its loop starts without one), so it is not seen here.
 export function orchSpawn(
@@ -226,9 +226,9 @@ export function orchSpawn(
   if (e.parentAgentId || !guardActive(e.parentModel, o)) return undefined
   const given = e.model?.trim() ?? ''
   const inherits = given === '' || given.toLowerCase() === 'inherit'
-  const model = given.toLowerCase() === 'inherit' ? e.parentModel : given || (e.subagentType.startsWith('orch:') ? '' : e.parentModel)
+  const model = given.toLowerCase() === 'inherit' ? e.parentModel : given || (e.subagentType.startsWith('junkd:') ? '' : e.parentModel)
   if (e.fork || (FABLE.test(model) && (inherits || !o.allow_fable_agents)))
-    return `${PREFIX} this subagent would run on ${e.fork ? "the main loop's model (a fork)" : model}. Set model: opus|sonnet|haiku, or use an orch: agent type without a model.`
+    return `${PREFIX} this subagent would run on ${e.fork ? "the main loop's model (a fork)" : model}. Set model: opus|sonnet|haiku, or use a junkd: agent type without a model.`
   return undefined
 }
 

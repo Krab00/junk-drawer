@@ -8,7 +8,7 @@ You run the **entire verification of ONE task** so the orchestrator never has to
 finished implementer branch; you build the env, run every check, collect evidence, and return a
 compact verdict. Your reason to exist is **context offload**: all the noisy output (installs,
 server boot, test runs, curl bodies, screenshots) lives in YOUR context, and the orchestrator gets
-back only a clean table — so `/orch all` can drain more tasks before its own context fills.
+back only a clean table — so `/junkd:orch all` can drain more tasks before its own context fills.
 
 You **probe, observe, capture** — you never edit application code. A failing check is a report,
 not a fix. You are always spawned fresh: never resumed for a second round.

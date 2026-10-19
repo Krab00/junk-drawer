@@ -1,7 +1,8 @@
 // orch: the main-loop guard of orchestrator mode (tool.call, agent.spawn), the settings pane (/junkd:orch panel)
 // and the `orch` settings group. The `$`-free parts are orch-lib.ts (settings, the guard's rules) and orch-views.tsx
 // (the pane). index.tsx runs orchToolDeny inside the one tool.call hook and orchStart at session start.
-// CONTRACT (T11): the slice ports the enabled gate, the flag path under ${CLAUDE_CONFIG_DIR}/junkd/ and the names.
+// `enabled` off switches the guard off whole (tool.call, agent.spawn and their .catch pass, guardState is inactive)
+// and, through the flag file junkd/orch-off, the rule sheet scripts/orch-context.sh prints; the pane still works.
 import type { EngineInterface, On, RenderInput, ToolCallInput } from 'claude-code'
 import type { JunkdOrchField as OrchField, JunkdOrchGuard as OrchGuard } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
@@ -107,7 +108,7 @@ async function liveModel($: $): Promise<string> {
 
 // The guard's inputs, awaited here so orchGuard stays pure.
 async function orchCheck($: $, e: { tool: string; agentId?: string; [k: string]: unknown }) {
-  if (e.agentId || O.guard === 'off') return undefined
+  if (!O.enabled || e.agentId || O.guard === 'off') return undefined
   const model = O.guard === 'fable' ? await liveModel($) : ''
   if (!guardActive(model)) return undefined
   const cfg = await configDir($)
@@ -126,25 +127,28 @@ function redraw($: $) {
   return $.ui.invalidate('ui.render')
 }
 
-// inject_rules off is the flag file scripts/orch-context.sh falls back to when settings.json holds no value it
-// can read (a shell hook reads no `$.config`), written at every change of the row and at session start.
-async function writeRulesFlag($: $): Promise<void> {
-  const flag = `${await configDir($)}/orch/rules-off`
+// enabled off and inject_rules off are the flag files scripts/orch-context.sh falls back to when settings.json holds
+// no value it can read (a shell hook reads no `$.config`): ${CLAUDE_CONFIG_DIR}/junkd/orch-off and
+// .../junkd/orch-rules-off, each written at every change of its row and at session start.
+const FLAGS = { enabled: 'orch-off', inject_rules: 'orch-rules-off' } as const
+async function writeFlag($: $, key: keyof typeof FLAGS): Promise<void> {
+  const flag = `${await configDir($)}/junkd/${FLAGS[key]}`
   // Something that is no file under the flag's name (a directory) is not ours: the hook reads only a file (`-f`), so
   // it is left alone and said once, never written over or removed.
   if ((await $.fs.exists(flag)) && (await $.fs.stat(flag)).kind !== 'file') {
-    $.ui.toast(`orch: ${flag} is not a file, so the inject_rules setting is not mirrored there; remove it`)
+    $.ui.toast(`orch: ${flag} is not a file, so the ${key} setting is not mirrored there; remove it`)
     return
   }
-  if (O.inject_rules) await $.process.run(['rm', '-f', '--', flag])
+  if (O[key]) await $.process.run(['rm', '-f', '--', flag])
   else await $.fs.write(flag, '')
 }
 
-// A value the row took lands in O (and, for inject_rules, in the flag file). Idempotent: a write of ours passes the
-// other plugins' config.set hooks and skips our own, so setOption applies it; the menu's write reaches the hook.
+// A value the row took lands in O (and, for enabled and inject_rules, in the flag file). Idempotent: a write of ours
+// passes the other plugins' config.set hooks and skips our own, so setOption applies it; the menu's write reaches
+// the hook.
 async function apply($: $, key: OrchField, value: OrchGuard | number | boolean): Promise<void> {
   ;(O as Record<string, unknown>)[key] = value
-  if (key === 'inject_rules') await writeRulesFlag($)
+  if (key === 'enabled' || key === 'inject_rules') await writeFlag($, key)
   redraw($)
 }
 
@@ -169,7 +173,7 @@ async function setOption($: $, key: OrchField, raw: unknown) {
   return { value: O[key] }
 }
 
-// Who opened the pane through `$.orch.show({ owner })` (a frame's set of panes); any other open or close clears it,
+// Who opened the pane through orchShow({ owner }) (the /junkd set of panes); any other open or close clears it,
 // so `hide({ owner })` closes only a pane that owner opened and nobody reopened since.
 let owner: string | undefined
 
@@ -218,20 +222,23 @@ export async function orchHide($: $, input: HideInput = {}): Promise<void> {
   if (input.owner !== undefined && input.owner !== owner) return
   await closePane($)
 }
+// Each flag on its own: one that fails leaves the other written.
 export async function orchStart($: $): Promise<void> {
-  await writeRulesFlag($).catch(() => undefined)
+  await Promise.all([writeFlag($, 'enabled').catch(() => undefined), writeFlag($, 'inject_rules').catch(() => undefined)])
 }
+// Inactive while orch is disabled; the model is read either way (only the fable guard's read toasts).
 export async function orchGuardState($: $): Promise<{ active: boolean; model: string }> {
-  const model = O.guard === 'fable' ? await liveModel($) : await $.session.model().catch(() => '')
+  const model = O.enabled && O.guard === 'fable' ? await liveModel($) : await $.session.model().catch(() => '')
   return { active: guardActive(model), model }
 }
 // The guard: the model's own calls on the main loop (index.tsx asks only for those). A deny's reason, or undefined.
 export async function orchToolDeny($: $, e: ToolCallInput): Promise<string | undefined> {
   return orchCheck($, e as unknown as { tool: string; agentId?: string; [k: string]: unknown })
 }
-// tool.call's .catch: a hook that throws is skipped and the tool runs, so a guarded main loop refuses instead.
+// tool.call's and agent.spawn's .catch: a hook that throws is skipped and the call runs, so a main loop the guard may
+// hold (orch enabled, guard not off) refuses instead; a subagent's call (agentId, parentAgentId) passes.
 export function orchCatchDeny(agentId?: string): string | undefined {
-  return O.guard !== 'off' && !agentId ? `${PREFIX} guard error` : undefined
+  return O.enabled && O.guard !== 'off' && !agentId ? `${PREFIX} guard error` : undefined
 }
 
 export function registerOrch(on: On, options: Record<string, unknown>): void {
@@ -254,7 +261,11 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
   on('agent.spawn', async ($, e, next) => {
     const deny = next.origin.plugin === 'engine' ? orchSpawn(e) : undefined
     return deny ? { deny } : next(e)
-  }).catch(($, e, next) => (next.called ? next(e) : O.guard !== 'off' && !e.parentAgentId ? { deny: `${PREFIX} guard error` } : next(e)))
+  }).catch(($, e, next) => {
+    if (next.called) return next(e)
+    const deny = orchCatchDeny(e.parentAgentId)
+    return deny ? { deny } : next(e)
+  })
 
   // A stopped agent's type and context, for the SendMessage rule: by its id, and by its name when it has one.
   // ponytail: the transcript is read whole; tail it through the shell if it ever shows.

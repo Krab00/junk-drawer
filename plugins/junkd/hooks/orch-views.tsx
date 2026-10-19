@@ -1,7 +1,6 @@
-// The orch pane, `$`-free: the six settings of plugin.json's userConfig on one Settings tab (a choice row, switches,
-// number fields), in the frame the handoff pane draws (tabs, rule, title, rows, footer). index.tsx hands it the
-// elements, the current values, the note and the actions. Own copies of the few parts: a plugin imports nothing
-// from another plugin's hooks.
+// The orch pane, `$`-free: the seven orch rows of plugin.json's userConfig on one Settings tab (a choice row, switches,
+// number fields), in the frame the handoff pane draws (tabs, rule, title, rows, footer). orch.tsx hands it the
+// elements, the current values, the note and the actions. Own copies of the few parts the handoff pane draws alike.
 import type { ElementTable, RenderInput } from 'claude-code'
 import type { JunkdOrchField as OrchField } from '../types'
 import type { OrchSchemaEntry } from './orch-lib'
@@ -188,10 +187,10 @@ export function orchView(els: Els, props: RenderInput<'Pane'>['props'], values: 
       <Tabs c={c} close={act.close} />
       <Rule c={c} />
       <Box flexDirection="column" flexGrow={1} marginTop={1}>
-        <Title c={c} text="Orchestrator" sub="the main-loop guard, agents and /orch" />
+        <Title c={c} text="Orchestrator" sub="the main-loop guard, agents and /junkd:orch" />
         {SCHEMA.map(row)}
       </Box>
-      <Footer c={c} note={note || 'enter in a field saves it · also in /config, under orch'} hints={keys} />
+      <Footer c={c} note={note || 'enter in a field saves it · also in /config, under junkd (orch_…)'} hints={keys} />
     </Box>
   )
 }
