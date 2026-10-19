@@ -354,7 +354,8 @@ function api($: $): Api {
 
 // ------------------------------------------------------------------ what index.tsx and dispatch.ts call
 
-const checkRoute = (route: unknown) => {
+// $.junkd.open's route is any pane's tab: past this check it is one of handoff's own.
+function checkRoute(route: unknown): asserts route is Route | undefined {
   if (route !== undefined && !TABS.some(t => t[2] === route)) throw new Error(`handoff: no tab ${String(route)}`)
 }
 
