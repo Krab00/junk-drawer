@@ -103,8 +103,14 @@ for manifest in "${manifests[@]}"; do
         skill_name="${skill_name:-$(basename "$(dirname "$skill")")}"
         if [ "$runtime" = kimi ]; then
             printf '    /skill:%s\n        %s\n' "$skill_name" "$skill_desc"
-        else
+        elif [ "$runtime" = codex ]; then
             printf '    $%s\n        %s\n' "$skill_name" "$skill_desc"
+        else
+            # Claude Code runs a plugin's skill as /<plugin>:<skill>, with the skill's argument hint.
+            skill_hint="$(awk '/^---[[:space:]]*$/{n++; next} n==1{print}' "$skill" | sed -n 's/^argument-hint:[[:space:]]*//p' | tr -d '"')"
+            sname="/$name:$skill_name"
+            [ -n "$skill_hint" ] && sname="$sname $skill_hint"
+            printf '    %s\n        %s\n' "$sname" "$skill_desc"
         fi
     done
 
