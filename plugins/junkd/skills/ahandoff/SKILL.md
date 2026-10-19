@@ -10,5 +10,5 @@ On Claude Code the junkd plugin's hooks module answers `/junkd:ahandoff` before 
 
 If you are reading this, the module did not answer. Do nothing except tell the user in one line:
 
-- On Claude Code: the junkd hooks module is not loaded; run `/reload-plugins` after enabling `junkd@junk-drawer`.
-- On any other host (Codex, Kimi Code, OpenCode): the auto handoff loop is a Claude Code mod feature; the `handoff` and `handon` skills save and resume handoffs by hand.
+- Codex, Kimi Code, OpenCode or any other host that is not Claude Code: the auto handoff loop is a Claude Code mod feature; the `handoff` and `handon` skills save and resume handoffs by hand.
+- Claude Code: the junkd hooks module is not loaded; run `/reload-plugins` after enabling `junkd@junk-drawer`.

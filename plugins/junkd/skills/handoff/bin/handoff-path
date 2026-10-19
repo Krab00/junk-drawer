@@ -1,22 +1,13 @@
 #!/usr/bin/env bash
-# Target path for a new handoff + short session id (also copied to clipboard). Used by the handoff skill (/junkd:handoff).
-# Prints: line 1 = file path, line 2 = short id. Session id from CLAUDE_CODE_SESSION_ID.
-if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
-    dir="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/handoffs"
-elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
-    dir="${CODEX_HOME:-$HOME/.codex}/junk-drawer/handoffs"
-else
-    dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs"
-fi
-mkdir -p "$dir"
-if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
-    sid="${KIMI_SESSION_ID:-$(date +%s)-$$}"
-elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
-    sid="${CODEX_THREAD_ID:-$(date +%s)-$$}"
-else
-    sid="${CLAUDE_CODE_SESSION_ID:-$(date +%s)-$$}"
-fi
-short="${sid:0:8}"
+# Target path for a new handoff + short id (also copied to the clipboard). Used by the handoff skill (/junkd:handoff).
+# Prints: line 1 = file path, line 2 = short id (8 hex chars). The host and its handoffs folder come from host-lib
+# (JUNK_DRAWER_RUNTIME, else auto-detected); an unknown host exits 2 and writes nothing.
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac # no dirname: a hook may run with a bare PATH
+. "$here/host-lib" || exit 2
+jd_host || exit 2
+mkdir -p "$JD_HANDOFFS" || exit 1
+short=$(jd_short_id)
+[ "${#short}" = 8 ] || { echo "handoff-path: could not derive a short id (no shasum, md5sum or md5)" >&2; exit 1; }
 printf '%s' "$short" | pbcopy 2>/dev/null || true
-echo "$dir/$(date +%Y-%m-%dT%H-%M)_${short}.md"
+echo "$JD_HANDOFFS/$(date +%Y-%m-%dT%H-%M)_${short}.md"
 echo "$short"

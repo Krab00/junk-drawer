@@ -127,7 +127,11 @@ done
 
 junkd="$root/plugins/junkd"
 CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$junkd/bin/tldr-flag" on >/dev/null
-tldr_hook=$(CODEX_HOME="$runtime" PLUGIN_ROOT="$junkd" "$junkd/bin/tldr-hook")
+# As a Codex hook runs it: PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT name the installed plugin under $CODEX_HOME, and no
+# Claude Code signal of the shell that runs these tests leaks in.
+codex_plugin="$runtime/plugins/cache/junk-drawer/junkd/0.4.0"
+tldr_hook=$(env -u CLAUDECODE -u CLAUDE_CONFIG_DIR -u JUNK_DRAWER_RUNTIME CODEX_HOME="$runtime" PLUGIN_ROOT="$codex_plugin" \
+    CLAUDE_PLUGIN_ROOT="$codex_plugin" "$junkd/skills/tldr/bin/tldr-hook")
 rg -q 'TL;DR MODE ON' <<<"$tldr_hook"
 CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$junkd/bin/tldr-flag" off >/dev/null
 
@@ -226,6 +230,36 @@ rg -qF 'CLAUDE_CONFIG_DIR' "$panel" && rg -qF '/settings.json`' "$panel" &&
 rg -q '^name: STE$' "$junkd/output-styles/STE.md" && rg -qF '"junkd:STE"' "$junkd/skills/junkd/scripts/setup.sh" ||
     { echo "junkd: output-styles/STE.md is not named STE, or setup.sh does not set junkd:STE"; exit 1; }
 
+# Host detection and handoff ids: every helper lands in the detected host's data root, no signal exits 2.
+bash "$root/tests/hosts.sh" >/dev/null 2>&1 || { echo "tests/hosts.sh failed; run it alone for the reason"; exit 1; }
+
+# host-lib has one real copy per skill that ships its helpers (an installer that drops symlinks keeps each skill
+# whole), and handon ships a real copy of handoff-load: the copies stay byte-identical to handoff's.
+for copy in tldr/bin/host-lib handon/bin/host-lib handon/bin/handoff-load; do
+    [ -f "$junkd/skills/$copy" ] && [ ! -L "$junkd/skills/$copy" ] || { echo "junkd: skills/$copy is not a real file"; exit 1; }
+    cmp -s "$junkd/skills/handoff/bin/${copy##*/}" "$junkd/skills/$copy" ||
+        { echo "junkd: skills/$copy differs from skills/handoff/bin/${copy##*/}"; exit 1; }
+done
+[ -x "$junkd/skills/handon/bin/handoff-load" ] || { echo "junkd: skills/handon/bin/handoff-load is not executable"; exit 1; }
+
+# Codex refuses a hooks file with any top-level key but description and hooks, and hooks/hooks.json carries Claude
+# Code's modules: Codex reads its own file, named by its manifest, whose command reaches a real script (Codex drops
+# the plugin-root symlinks). Kimi's manifest names no agents (it would load agents/ as agent definitions) and its
+# hook command resolves inside the plugin.
+codex_hooks=$(jq -r '.hooks // empty' "$junkd/.codex-plugin/plugin.json")
+[ "$codex_hooks" = ./.codex-plugin/hooks.json ] && [ -f "$junkd/$codex_hooks" ] ||
+    { echo "junkd: .codex-plugin/plugin.json does not name ./.codex-plugin/hooks.json"; exit 1; }
+jq -e 'keys - ["description", "hooks"] == []' "$junkd/$codex_hooks" >/dev/null ||
+    { echo "junkd: $codex_hooks has a top-level key Codex refuses"; exit 1; }
+for cmd in $(jq -r '.hooks[][].hooks[].command' "$junkd/$codex_hooks" | rg -o '\$PLUGIN_ROOT/[^"]+'); do
+    script="$junkd/${cmd#\$PLUGIN_ROOT/}"
+    [ -f "$script" ] && [ ! -L "$script" ] || { echo "junkd: Codex hook command $cmd is not a real file in the plugin"; exit 1; }
+done
+jq -e '.agents == []' "$junkd/.kimi-plugin/plugin.json" >/dev/null || { echo "junkd: .kimi-plugin/plugin.json has no \"agents\": []"; exit 1; }
+for cmd in $(jq -r '.hooks[].command' "$junkd/.kimi-plugin/plugin.json" | rg -o '\./[^ ]+'); do
+    [ -f "$junkd/$cmd" ] && [ ! -L "$junkd/$cmd" ] || { echo "junkd: Kimi hook command $cmd is not a real file in the plugin"; exit 1; }
+done
+
 # The shell-side tests of tldr-flag and tldr-hook.
 bash "$root/tests/tldr.sh" >/dev/null 2>&1 || { echo "tests/tldr.sh failed; run it alone for the reason"; exit 1; }
 
@@ -291,12 +325,9 @@ for skill_md in "$installed"/*/SKILL.md; do
     if rg -q '\.\./' "$skill_md"; then
         echo "escapes skill dir with ../ : $skill_md"; exit 1
     fi
-    # `handon` ships no helpers and references no skill-local path at all -- it only delegates
-    # to the `handoff` skill -- so the extraction below would correctly find nothing and the
-    # fail-on-zero-refs rule does not apply to it. Its own contract is checked further down.
-    # junkd and ahandoff are the same kind: their text is only the fallback for a host or session where the hooks
-    # module did not answer the command, and it runs nothing.
-    case "$(basename "$skill_dir")" in handon | junkd | ahandoff) continue ;; esac
+    # junkd and ahandoff reference no skill-local path at all: their text is only the fallback for a host or session
+    # where the hooks module did not answer the command, and it runs nothing.
+    case "$(basename "$skill_dir")" in junkd | ahandoff) continue ;; esac
     # Every skill-local path it does reference must exist after the copy. No look-around
     # here -- ripgrep's default engine rejects it and would exit 2, silently checking
     # nothing. A `../../bin/x` would also match this pattern, but the ../ check above
@@ -323,16 +354,28 @@ cmp -s "$installed/orch-init/bin/orch-state" "$installed/orch/bin/orch-state" ||
 [ -e "$installed/orch/commands/init.md" ] ||
     { echo "orch skill is missing commands/init.md"; exit 1; }
 
-# `handon` gives skills-only installs the resume half of junkd's handoff. It must stay a
-# pure delegator: SKILL.md plus its Codex metadata, no helpers and no symlinks of its own.
+# `handon` gives skills-only installs the resume half of junkd's handoff, self-contained: SKILL.md, its Codex
+# metadata, and real copies of handoff-load and host-lib (Codex drops symlinks, Kimi rewrites them to absolute
+# checkout paths), so no symlinks of its own. Its SKILL.md puts the non-Claude line (./bin/handoff-load) first.
 [ -f "$installed/handon/SKILL.md" ] || { echo "handon: no SKILL.md"; exit 1; }
 [ -f "$installed/handon/agents/openai.yaml" ] || { echo "handon: no agents/openai.yaml"; exit 1; }
-handon_files=$(find "$installed/handon" -mindepth 1 ! -type d | wc -l | tr -d ' ')
-[ "$handon_files" = 2 ] || { echo "handon ships $handon_files files, expected 2"; exit 1; }
+handon_files=$(cd "$installed/handon" && find . -mindepth 1 ! -type d | LC_ALL=C sort | tr '\n' ' ')
+[ "$handon_files" = "./SKILL.md ./agents/openai.yaml ./bin/handoff-load ./bin/host-lib " ] ||
+    { echo "handon ships $handon_files, expected SKILL.md, agents/openai.yaml, bin/handoff-load, bin/host-lib"; exit 1; }
 [ -z "$(find "$root/plugins/junkd/skills/handon" -type l)" ] ||
     { echo "handon must not contain symlinks"; exit 1; }
-rg -qF '`handoff` skill' "$installed/handon/SKILL.md" ||
-    { echo "handon/SKILL.md does not delegate to the handoff skill"; exit 1; }
+cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load" ||
+    { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
+
+# The Kimi model followed whichever host line came first: handon, junkd and ahandoff put the non-Claude line before
+# the Claude Code one.
+for skill in handon junkd ahandoff; do
+    md="$root/plugins/junkd/skills/$skill/SKILL.md"
+    other=$(rg -n -m1 '^- Codex, Kimi Code, OpenCode or any other host' "$md" | cut -d: -f1)
+    claude_line=$(rg -n -m1 '^- Claude Code' "$md" | cut -d: -f1)
+    [ -n "$other" ] && [ -n "$claude_line" ] && [ "$other" -lt "$claude_line" ] ||
+        { echo "junkd: skills/$skill/SKILL.md does not put the non-Claude line before the Claude Code one"; exit 1; }
+done
 
 # The catalog degrades to listing sibling skills instead of claiming the marketplace is empty.
 standalone_catalog=$(cd "$installed/junk-drawer" && HOME=$home ./bin/junk-drawer)
