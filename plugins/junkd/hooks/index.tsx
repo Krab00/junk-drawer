@@ -15,6 +15,7 @@
 // - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
 // - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
 // - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools).
+// - dashboard.tsx (with dashboard.ts): /junkd:dashboard, the orch dashboard's status.js beside a copy of its page.
 // Settings: one userConfig row per `<group>_<field>` (settings.ts), the /config row `junkd.<group>_<field>`.
 // Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; the flag files live under its junkd/ folder.
 import type { Register } from 'claude-code'
@@ -30,6 +31,7 @@ import { SCHEMA, isKey } from './settings'
 import { registerStatusline, statuslineStart } from './statusline'
 import { registerTldr, tldrStart } from './tldr'
 import { registerTools, toolsCommandRan, toolsCount, toolsStart } from './tools-pane'
+import { dashboardStart, dashboardToolCall, registerDashboard } from './dashboard.tsx'
 
 const NO_HOOK = 'junkd: the hooks module did not answer'
 const ROUTES: readonly JunkdHandoffRoute[] = ['auto', 'handoffs', 'settings']
@@ -102,6 +104,7 @@ export const register: Register = (on, options) => {
       r => r.status === 'rejected',
     )
     if (failed) throw failed.reason
+    await dashboardStart($) // after the features' starts: it reads orch's settings; never throws
     return next(e)
   })
 
@@ -113,6 +116,7 @@ export const register: Register = (on, options) => {
     if (deny) return { deny }
     const r = await handoffToolCall($, e, next)
     if (next.origin.plugin === 'engine') await toolsCount($, e, r)
+    if (next.origin.plugin === 'engine') await dashboardToolCall($, e, r)
     return r
   }).catch(($, e, next) => {
     if (next.called) return next(e)
@@ -150,4 +154,5 @@ export const register: Register = (on, options) => {
   registerStatusline(on, options)
   registerTools(on, options)
   registerPanel(on, options)
+  registerDashboard(on, options)
 }

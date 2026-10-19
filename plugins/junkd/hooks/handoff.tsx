@@ -12,6 +12,7 @@ import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, coerce, current, idO
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
 import { VIEWS } from './handoff-views'
 import { toolsTurnEnd } from './tools-pane'
+import { dashboardTurnEnd } from './dashboard.tsx'
 
 const PANE = 'ahandoff'
 const EDGE = 2 // empty columns at the pane's right edge (a docked pane's last column may not show)
@@ -488,6 +489,7 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
   // The module's one turn.complete hook: the tools pane reads its tree again at every turn's end, first.
   on('turn.complete', async ($, e, next) => {
     toolsTurnEnd($)
+    void dashboardTurnEnd($) // the orch dashboard's status.js, while it is open; never throws
     if (!S.armed || e.agentId) return next(e)
     // ponytail: the host names no error kind here — an error with the 5h window at 99%+ is the limit.
     if (e.reason === 'error' && S.resumeAfterLimit && S.fiveHour >= 99) {

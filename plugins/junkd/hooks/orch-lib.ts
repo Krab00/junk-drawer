@@ -37,10 +37,20 @@ export const SCHEMA: readonly OrchSchemaEntry[] = rowsOf('orch').map(f => ({
   ...(f.options ? { options: f.options } : {}),
 }))
 export const isField = (key: unknown): key is OrchField => SCHEMA.some(f => f.key === key)
+// The dashboard's two number rows: any finite number, rounded and clamped to these bounds (the manifest has no
+// min/max: the engine would refuse the whole module over a stored value out of range).
+export type DashField = 'dashboard_refresh' | 'dashboard_window_h'
+export type DashValues = { dashboard_refresh: number; dashboard_window_h: number }
+export const DASH_RANGE: Record<DashField, readonly [number, number]> = { dashboard_refresh: [5, 600], dashboard_window_h: [1, 168] }
+export const DASH_DEFAULTS: DashValues = { dashboard_refresh: 30, dashboard_window_h: 24 }
+export const isDashField = (key: unknown): key is DashField => key === 'dashboard_refresh' || key === 'dashboard_window_h'
+export const clampDash = (key: DashField, n: number): number => Math.min(DASH_RANGE[key][1], Math.max(DASH_RANGE[key][0], Math.round(n)))
+// A number, or a string holding one (trimmed); NaN for anything else.
+const asNumber = (raw: unknown): number => (typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN)
 // The two number rows take a whole number in these bounds; the manifest has no min/max field, so they live here.
 export const ORCH_RANGE: Record<'implementer_ctx_k' | 'rounds', readonly [number, number]> = { implementer_ctx_k: [50, 1000], rounds: [1, 10] }
-export type OrchValues = { enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number; claude_md: boolean }
-export const O: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false }
+export type OrchValues = { enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number; claude_md: boolean } & DashValues
+export const O: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, ...DASH_DEFAULTS }
 
 // A raw value (typed in the pane, handed to $.junkd.set, or written in the /config menu) to the field's kind;
 // `error` when it does not fit. The one check for every write path.
@@ -49,6 +59,11 @@ export function coerce(key: OrchField, raw: unknown): Coerced {
   if (key === 'guard') {
     const v = String(raw).trim().toLowerCase()
     return v === 'fable' || v === 'always' || v === 'off' ? { value: v } : { error: `${String(raw)} is not a valid guard (fable, always or off)` }
+  }
+  if (isDashField(key)) {
+    const n = asNumber(raw)
+    const [lo, hi] = DASH_RANGE[key]
+    return Number.isFinite(n) ? { value: clampDash(key, n) } : { error: `${String(raw)} is not a valid ${key} (a number, ${lo}–${hi})` }
   }
   if (key === 'implementer_ctx_k' || key === 'rounds') {
     const [lo, hi] = ORCH_RANGE[key]
@@ -73,6 +88,10 @@ export function applyOrchSettings(v: Record<string, unknown>): void {
     const n = Math.round(typeof x === 'number' ? x : typeof x === 'string' && x.trim() ? Number(x) : NaN)
     const [lo, hi] = ORCH_RANGE[key]
     O[key] = Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : (SCHEMA.find(f => f.key === key)!.default as number)
+  }
+  for (const key of ['dashboard_refresh', 'dashboard_window_h'] as const) {
+    const n = asNumber(v[key])
+    O[key] = Number.isFinite(n) ? clampDash(key, n) : DASH_DEFAULTS[key]
   }
 }
 

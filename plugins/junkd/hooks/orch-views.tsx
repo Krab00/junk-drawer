@@ -5,9 +5,12 @@ import type { ElementTable, RenderInput } from 'claude-code'
 import type { JunkdOrchField as OrchField } from '../types'
 import type { OrchSchemaEntry } from './orch-lib'
 import { ORCH_RANGE, SCHEMA, type OrchValues } from './orch-lib'
+import { DASH_RANGE, isDashField } from './orch-lib'
 
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button' | 'Input'>
-export type OrchActs = { close(): void; set(key: OrchField, value: unknown): void; refuse(text: string): void; focus(key: string): void }
+export type OrchActs = { close(): void; set(key: OrchField, value: unknown): void; refuse(text: string): void; focus(key: string): void } & DashActs
+// The `dashboard: open ▸` line: the same open path as /junkd:dashboard (dashboard.tsx). Left out, no line.
+export type DashActs = { dashboard?(): void }
 type Draw = { ui: Els }
 type Hint = [key: string, label: string]
 
@@ -27,6 +30,8 @@ const HINTS: Record<OrchField, string> = {
   inject_rules: 'ORCHESTRATOR.md into the main session at start',
   rounds: 'fix rounds per task; --rounds overrides',
   claude_md: 'the CLAUDE.md orchestrator section as a pointer block; off removes it',
+  dashboard_refresh: 'status.js again every N s while the dashboard is open',
+  dashboard_window_h: 'the hours the dashboard timeline shows',
 }
 
 // The engine empties a field on Enter and only puts `value` back when it changed, so every Enter draws the field
@@ -168,6 +173,21 @@ export function orchView(els: Els, props: RenderInput<'Pane'>['props'], values: 
         </Row>
       )
     }
+    if (isDashField(s.key)) {
+      const key = s.key
+      const [dlo, dhi] = DASH_RANGE[key]
+      return (
+        <Box paddingLeft={2} flexDirection="column">
+          <Field c={c} k={id} label={s.title} hotkey={hotkey} hint={`${HINTS[key]} · ${dlo}–${dhi}, clamped`} value={draft[id] ?? String(current)}
+            onLabel={() => act.focus(fieldKey(id))}
+            onSubmit={v => {
+              const n = v.trim() === '' ? NaN : Number(v)
+              if (Number.isFinite(n)) return act.set(key, n)
+              act.refuse(`✗ ${key} takes a number ${dlo}–${dhi}, not "${v}"`)
+            }} />
+        </Box>
+      )
+    }
     const [lo, hi] = ORCH_RANGE[s.key as 'implementer_ctx_k' | 'rounds']
     return (
       <Box paddingLeft={2} flexDirection="column">
@@ -190,6 +210,13 @@ export function orchView(els: Els, props: RenderInput<'Pane'>['props'], values: 
       <Box flexDirection="column" flexGrow={1} marginTop={1}>
         <Title c={c} text="Orchestrator" sub="the main-loop guard, agents and /junkd:orch" />
         {SCHEMA.map(row)}
+        {act.dashboard ? (
+          <Box key="orch:dashboard-line" flexDirection="row" paddingLeft={2} columnGap={1}>
+            <Text>dashboard:</Text>
+            <c.ui.Button key="orch:dashboard" plain label="open ▸" onPress={act.dashboard} />
+            <Text color={P.secondary}>the task board and timeline in the browser · /junkd:dashboard</Text>
+          </Box>
+        ) : null}
       </Box>
       <Footer c={c} note={note || 'enter in a field saves it · also in /config, under junkd (orch_…)'} hints={keys} />
     </Box>
