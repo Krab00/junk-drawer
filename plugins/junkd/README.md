@@ -221,9 +221,9 @@ debug log (`junkd cache check: …`) and draws nothing; nothing reaches the mode
 
 It is a `main` row of the core group: the /junkd pane's Settings draws it as a number field, and `/config` has it
 as `junkd.core_cache_check_sessions`. A write (the pane, `/config`, `$.junkd.set`) of anything but a whole number
-0–30 is refused. Claude Code holds the stored option to the manifest's `min` and `max` before the module loads. A
-hand edit of `settings.json` to a value outside 0–30, or to a string, stops the module from loading. A fraction
-there is rounded.
+0–30 is refused. The stored option (a hand edit of `settings.json`) is clamped to 0–30 and rounded at load; the
+manifest row carries no `min` or `max`, so an out-of-range value never stops the module from loading. Claude Code
+does hold the option to the row's type: a string there stops the module from loading.
 
 `tests/cache-check.sh` (run by `tests/smoke.sh`) covers the script over fixture transcripts: both lines, their
 bounds, the nothing cases, the one count per message id, the 50 MB tail read and the 3 s cap.

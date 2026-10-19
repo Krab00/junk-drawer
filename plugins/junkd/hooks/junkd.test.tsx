@@ -1201,10 +1201,10 @@ test('AC3: a write another hook refuses keeps the old value, on both paths', W, 
   expect(await call($, 'get', { key: 'core_cache_check_sessions' })).toBe(10)
 })
 
-// The option at load is no write: rounded. The host holds an option to the manifest's type, min and max before the
-// module loads (31, -1 or a string fails the load of the whole module), so only these reach register through it;
-// the clamp of the rest is applyCacheSettings' own (below).
-for (const [stored, value] of [[0, 0], [30, 30], [2.5, 3], [2.4, 2], [29.6, 30]] as const) {
+// The option at load is no write: rounded, out of range clamped (the manifest row has no min or max, so the host
+// lets 31 and -1 through to register). The host still holds an option to the manifest's type: a string fails the
+// load of the whole module, so its reading is applyCacheSettings' own (below).
+for (const [stored, value] of [[0, 0], [30, 30], [31, 30], [-1, 0], [1000, 30], [2.5, 3], [2.4, 2], [29.6, 30]] as const) {
   test(`AC3: a core_cache_check_sessions option of ${JSON.stringify(stored)} at load reads as ${value}`, withOptions({ core_cache_check_sessions: stored }), async ($, on) => {
     world(on, fixture())
     await start($)

@@ -21,9 +21,7 @@
       "type": "number",
       "title": "Cache check: sessions read",
       "description": "Prompt-cache check at every main session start (not after a compaction): scripts/cache-check.sh reads the usage lines of the newest N sessions of the project (and their subagents) and shows one suggestion above the prompt when a threshold is hit. A whole number 0-30; 0 turns the check off.",
-      "default": 10,
-      "min": 0,
-      "max": 30
+      "default": 10
     },
     "handoff_enabled": {
       "type": "boolean",

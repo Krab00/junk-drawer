@@ -51,8 +51,10 @@ GAP_LINE='cache, last session: 100% of main requests came 5–60 min after the p
     fail "skills/junkd/scripts/cache-check.sh is not an executable file"
 [ "$script" -ef "$plugin/skills/junkd/scripts/cache-check.sh" ] || fail "scripts/cache-check.sh at the plugin root is not the skill's script"
 rg -qF '`${$.plugin.root}/scripts/cache-check.sh`' "$plugin/hooks/cache.tsx" || fail "hooks/cache.tsx does not run \${\$.plugin.root}/scripts/cache-check.sh"
-jq -e '.userConfig.core_cache_check_sessions | .type == "number" and .default == 10' "$plugin/.claude-plugin/plugin.json" >/dev/null ||
-    fail "plugin.json: userConfig.core_cache_check_sessions is not a number defaulting to 10"
+# no min or max in the manifest: the host would refuse the whole module's load on an out-of-range hand edit; the
+# module clamps (hooks/cache-lib.ts)
+jq -e '.userConfig.core_cache_check_sessions | .type == "number" and .default == 10 and (has("min") | not) and (has("max") | not)' "$plugin/.claude-plugin/plugin.json" >/dev/null ||
+    fail "plugin.json: userConfig.core_cache_check_sessions is not a number defaulting to 10 with no min or max"
 
 # ================================================================ the subagent line
 # 50 subagent requests over two agents at 50% (50 read, 50 write), the main session at 75%

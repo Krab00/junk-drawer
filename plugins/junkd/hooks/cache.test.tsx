@@ -244,6 +244,18 @@ test('AC2: the option at load is the N (1 is checked, 0 is off)', withOptions({ 
   expect(rec.checks.map(c => c.argv[1])).toEqual(['1'])
 })
 
+// The manifest row has no min or max, so an out-of-range hand edit loads, and the module's clamp is what holds it:
+// 31 runs with N 30, -1 is 0 (off: no run). The host still refuses a string at load ("must be a number"), min/max
+// or not, so a string never reaches the module there.
+for (const [stored, argv] of [[31, ['30']], [-1, []], [7.4, ['7']]] as const) {
+  test(`AC3: an option of ${stored} at load loads the module; the check runs with N ${argv[0] ?? 'none (off)'}`, { plugins: [HOST, SETTER], options: { core_cache_check_sessions: stored } }, async ($, on) => {
+    const rec = world(on)
+    await sessionStart($, { source: 'startup' })
+    await settle()
+    expect(rec.checks.map(c => c.argv[1])).toEqual([...argv])
+  })
+}
+
 test('AC2: an option of 0 at load runs no check', withOptions({ core_cache_check_sessions: 0 }), async ($, on) => {
   const rec = world(on)
   await sessionStart($, { source: 'startup' })
