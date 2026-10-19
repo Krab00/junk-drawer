@@ -1,6 +1,0 @@
-{
-  "name": "ctx-tokens",
-  "description": "Read the current context token usage of the live Claude Code session from its transcript.",
-  "version": "0.0.4",
-  "author": { "name": "Krab00" }
-}

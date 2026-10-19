@@ -1,1 +1,0 @@
-skills/statusline/statusline.sh

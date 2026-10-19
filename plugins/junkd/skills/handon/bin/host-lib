@@ -1,7 +1,9 @@
 # shellcheck shell=bash
-# Sourced (never run) by handoff-path, handoff-load, tldr-flag and tldr-hook: which host runs the helper, and where
-# that host's junk-drawer data lives. The handoff, handon and tldr skills each ship a real copy of this file (an
-# installer that drops symlinks leaves every skill whole); tests/smoke.sh keeps the copies byte-identical.
+# Sourced (never run) by handoff-path, handoff-load, tldr-flag, tldr-hook, ctx-limit, ctx-limit-hook and ctx-tokens:
+# which host runs the helper, and where that host's junk-drawer data lives. The handoff, handon, tldr, ctx-limit and
+# ctx-tokens skills each ship a real copy of this file (an installer that drops symlinks leaves every skill whole);
+# tests/smoke.sh keeps the copies byte-identical. ctx-limit keeps its files in a junkd/ folder under JD_FLAGS
+# (Claude Code: JD_CFG/junkd, which is JD_FLAGS itself).
 #
 # jd_host sets JD_HOST and the data paths, or prints one line to stderr and returns 2:
 #   claude    ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs/              ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/tldr-on
