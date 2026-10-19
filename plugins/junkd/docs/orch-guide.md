@@ -6,7 +6,7 @@ criterion against real tool evidence**, round-caps the fix loop, and opens **dra
 keeping the base branch untouchable and the heavy build/test/screenshot output out of the
 orchestrator's own context.
 
-orch is part of the **junkd** plugin. This is the long-form companion to [`orch.md`](orch.md), the
+orch is part of the **junkd** plugin. This is the long-form companion to the orch section of [junkd's README](../README.md#orch), the
 cheatsheet; this guide explains *why* the loop is shaped the way it is and walks through it end to
 end. Everything here matches the shipped `commands/`, `agents/`, and `bin/` files — no invented
 behaviour.

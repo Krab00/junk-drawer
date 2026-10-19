@@ -1,9 +1,10 @@
 # junk-drawer
 
 A multi-host marketplace of independently installable plugins for **Claude Code, Codex, and Kimi
-Code CLI** — plus a skills-only install path for **OpenCode** and other agents. It contains small context utilities, durable handoffs with an automatic
-context-limit continuation and 5h-rate-limit resume (*handoff* / `/ahandoff`), and a project-agnostic task orchestrator (*orch*) that delegates implementation and
-verification to subagents and gates acceptance criteria on real tool evidence.
+Code CLI** — plus a skills-only install path for **OpenCode** and other agents. It contains small context utilities and **junkd**, one plugin with durable handoffs (an
+automatic context-limit continuation and 5h-rate-limit resume on Claude Code), a project-agnostic task orchestrator
+(*orch*) that delegates implementation and verification to subagents and gates acceptance criteria on real tool
+evidence, TL;DR summaries and terse mode, and the `/junkd` frame over the marketplace.
 
 ## Install in Kimi Code CLI
 
@@ -24,7 +25,7 @@ new session) after installing or updating. Invoke workflows as skills, for examp
 `/skill:orch`, `/skill:tldr`, or `/skill:handoff` — or just describe the task and let the model
 invoke them.
 
-Kimi notes: `commands/` are Claude-only (Kimi uses the skills); hooks for `tldr` and `ctx-limit` are declared in each plugin's manifest and active while the plugin is enabled; `statusline`
+Kimi notes: `commands/` are Claude-only (Kimi uses the skills); the hooks of junkd (tldr's terse mode) and `ctx-limit` are declared in each plugin's manifest and active while the plugin is enabled; `statusline`
 only documents Kimi's fixed footer (theme via `/theme`), it does not install a script.
 
 ## Install in Codex
@@ -33,11 +34,9 @@ only documents Kimi's fixed footer (theme via `/theme`), it does not install a s
 codex plugin marketplace add Krab00/junk-drawer
 codex plugin add statusline@junk-drawer
 codex plugin add ctx-tokens@junk-drawer
-codex plugin add tldr@junk-drawer
-codex plugin add handoff@junk-drawer
 codex plugin add ctx-limit@junk-drawer
 codex plugin add junk-drawer@junk-drawer
-codex plugin add orch@junk-drawer
+codex plugin add junkd@junk-drawer
 ```
 
 For local development, run `codex plugin marketplace add .` from the repository root. After an
@@ -53,45 +52,41 @@ Invoke Codex workflows by mentioning their skill, for example `$orch-init`, `$or
 /plugin marketplace add Krab00/junk-drawer
 /plugin install statusline@junk-drawer
 /plugin install ctx-tokens@junk-drawer
-/plugin install tldr@junk-drawer
-/plugin install handoff@junk-drawer
 /plugin install ctx-limit@junk-drawer
 /plugin install junk-drawer@junk-drawer
-/plugin install orch@junk-drawer
 /plugin install junkd@junk-drawer
 ```
+
+handoff, orch and tldr are part of junkd; every command is `/junkd:<name>` (`/junkd:handoff`, `/junkd:handon`,
+`/junkd:ahandoff`, `/junkd:orch`, `/junkd:orch-init`, `/junkd:tldr`). Coming from the separate `handoff`, `orch`
+and `tldr` plugins: uninstall them and see "Moving from the handoff, orch and tldr plugins" in
+[`plugins/junkd/README.md`](plugins/junkd/README.md) for the renamed commands, settings keys and flag files.
 
 After installing or updating: `/plugin marketplace update junk-drawer`, then `/reload-plugins`.
 
 ## junkd
 
-The optional frame over the marketplace. Every feature plugin stands on its own: `handoff`, `orch`
-and `tldr` keep their commands, panes and `/config` rows whether junkd is installed or not. junkd only
-calls what they export on the engine's `$` (`$.handoff`, `$.orch`, `$.tldr`, see "API for other
-plugins" in each README), so nothing needs it.
+One plugin for handoff, orch and tldr, and the frame over the marketplace. Its skills (`handoff`, `handon`,
+`ahandoff`, `orch`, `orch-init`, `tldr`, `junkd`) run on every host; on Claude Code each is `/junkd:<name>`, and the
+hooks module adds the automatic handoff loop, the orch main-loop guard, the panes and `$.junkd` for other mods.
 
-Install per host:
+- Claude Code: `/plugin install junkd@junk-drawer`, then `/reload-plugins`.
+- Codex: `codex plugin add junkd@junk-drawer`; the skills answer as `$handoff`, `$orch-init`, `$orch`, `$tldr`.
+- Kimi: `/plugins install junkd`; the skills answer as `/skill:<name>`, and its manifest declares tldr's
+  terse-mode hook. The mod parts (the pane, the auto handoff loop, the guard) are Claude Code only.
 
-- Claude Code: `/plugin install junkd@junk-drawer`, then `/reload-plugins`. The marketplace entry
-  pulls `handoff`, `orch` and `tldr` in as dependencies.
-- Codex, Kimi, OpenCode: no. junkd is a mod (a hooks module, plus one shell SessionStart hook for its
-  output style; no skill), and only Claude Code runs mods. The `/junk-drawer` cheatsheet plugin stays the catalog on those hosts. The Kimi marketplace
-  lists junkd so the id is known; its Kimi manifest (`.kimi-plugin/plugin.json`) says it is Claude Code
-  only and ships no skill and no hook, so an install there succeeds and does nothing.
-
-`/junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs (junkd,
-handoff's, orch's) and closes them together. The junkd pane has three sections:
+`/junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs (junkd, handoff's,
+orch's) and closes them together. The junkd pane has three sections:
 
 - **Plugins**: every plugin of the marketplace, on or off at user scope; a number flips one, then
   `/reload-plugins`.
-- **Settings**: the main settings of the enabled plugins that export a noun (today `handoff`, `orch`,
-  `tldr`), edited in place and validated by the owning plugin; `settings ▸` jumps into that plugin's
-  own pane.
+- **Settings**: junkd's setting groups (core, handoff, orch, tldr), each with its `enabled` switch first, edited
+  in place and validated by the group's rules; `settings ▸` jumps into the handoff or orch pane.
 - **Commands**: the enabled plugins' slash commands with their descriptions.
 
 junkd also ships the `junkd:STE` output style (Simplified Technical English). At session start it
 becomes the default once, and only when `~/.claude/settings.json` has no `outputStyle` yet; a style you
-chose is never touched. To skip that step set `output_style` to `off` in `/config` under plugin
+chose is never touched. To skip that step set `core_output_style` to `off` in `/config` under plugin
 `junkd`, or pick any style with `/output-style`. Details in
 [`plugins/junkd/README.md`](plugins/junkd/README.md).
 
@@ -129,7 +124,7 @@ lifecycle hooks, so `tldr` and `ctx-limit` lose their automatic hook behavior an
 them explicitly instead.
 
 ```bash
-npx skills add Krab00/junk-drawer                     # all ten skills
+npx skills add Krab00/junk-drawer                     # all eleven skills
 npx skills add Krab00/junk-drawer --skill orch        # just one
 npx skills add Krab00/junk-drawer --list              # preview, install nothing
 ```
@@ -139,7 +134,9 @@ or `.agents/skills/<name>/` for Codex and Cursor. Add `-g` for a global install.
 
 Each skill directory owns its files. The real helpers live inside it and the plugin root reaches
 them through relative symlinks: `plugins/<p>/bin -> skills/<p>/bin`, statusline's `statusline.sh`
-and `setup-statusline.sh`, and for `orch` its `bin`, `commands`, and `agents -> skills/orch/roles`.
+and `setup-statusline.sh`, and for junkd `bin -> skills/junkd/bin` and `scripts -> skills/junkd/scripts`
+(each entry a link to the real file in its own skill: `skills/handoff/bin`, `skills/orch/bin`,
+`skills/tldr/bin`, `skills/orch/scripts`) and `agents -> skills/orch/roles`.
 Plugin manifests, hooks, and slash commands therefore keep resolving `${CLAUDE_PLUGIN_ROOT}/bin/...`
 unchanged, `npx skills add` dereferences the links into real files with executable bits intact, and
 every SKILL.md addresses its helpers as `./bin/<script>`, never `../../bin/<script>`, because a path
@@ -149,7 +146,7 @@ git tree hash moves and `npx skills update` reinstalls. The reverse layout hid e
 because a git tree entry hashes a symlink's target text rather than the target's content.
 `tests/smoke.sh` enforces the layout.
 
-The `handoff` plugin's `/handon` half also ships as its own skill (`handon`), so a skills-only
+junkd's handoff ships its resume half as its own skill (`handon`), so a skills-only
 install can resume a handoff by id: `/handon <id>` in Claude Code, and in OpenCode through the
 wrapper `bin/opencode-commands.sh` generates.
 
@@ -175,12 +172,9 @@ Known limits of the skills-only install:
 |---|---|---|
 | `statusline` | Claude custom line; Codex footer configuration; Kimi footer notes | `$statusline` / `/skill:statusline` |
 | `ctx-tokens` | Read context usage from Claude, Codex, or Kimi transcripts | `$ctx-tokens` / `/skill:ctx-tokens` |
-| `tldr` | Summarize on demand; optional persistent terse mode | `$tldr` / `/skill:tldr` |
-| `handoff` | Save or restore a durable handoff by id; `/ahandoff [prompt]` (= `/handoff auto`) continues past a context threshold and resumes after the 5h rate limit, `/handoff panel` opens its pane (Claude Code only) | `$handoff` / `/skill:handoff` |
 | `ctx-limit` | Context threshold hook with block, warn, or command actions | `$ctx-limit` / `/skill:ctx-limit` |
 | `junk-drawer` | Runtime catalog of the marketplace | `$junk-drawer` / `/skill:junk-drawer` |
-| `orch` | Implementation and independent verification through subagents | `$orch-init`, then `$orch` / `/skill:orch-init`, then `/skill:orch` |
-| `junkd` | The frame over the marketplace (Claude Code only): `/junkd` opens and closes a set of tabs (junkd, handoff, orch); the junkd pane has every plugin on/off, the main settings of `handoff`, `orch` and `tldr`, and the enabled plugins' commands | — |
+| `junkd` | handoff (`/junkd:handoff`, `/junkd:handon`; `/junkd:ahandoff` continues past a context threshold and resumes after the 5h rate limit on Claude Code), orch (`/junkd:orch-init`, then `/junkd:orch`: implementation and independent verification through subagents), tldr (`/junkd:tldr`: summarize on demand, optional persistent terse mode), and on Claude Code the `/junkd` frame: tabs for junkd, handoff and orch, every plugin on/off, the setting groups, the commands | `$handoff`, `$orch-init`, `$orch`, `$tldr` / `/skill:handoff`, `/skill:orch-init`, `/skill:orch`, `/skill:tldr` |
 
 ## Layout
 
@@ -199,8 +193,9 @@ plugins/<plugin>/
   hooks/hooks.json                    # optional shared lifecycle hooks
 ```
 
-`orch` goes one step further: its `commands/` and `agents/` are symlinks too (`agents -> skills/orch/roles`),
-because the `orch` skill reads the command spec and the role files as its canonical workflow.
+junkd has several skills with helpers, so its plugin-root `bin/` and `scripts/` link to a folder of links in
+`skills/junkd/`, each to the real file in its own skill, and `agents -> skills/orch/roles`. It has no plugin-root
+`commands/`: every junkd command is a skill.
 
 
 Codex exposes `${PLUGIN_ROOT}` and compatibility aliases including `${CLAUDE_PLUGIN_ROOT}`; Kimi
