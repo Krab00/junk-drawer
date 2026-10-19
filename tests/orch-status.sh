@@ -214,6 +214,18 @@ for args in "--bogus" "--out" "extra" "--out="; do
   [ "$rc" = 2 ] && grep -q usage "$tmp/errb"; ok $? "bad args '$args': usage, exit 2 (got $rc)"
 done
 
+# ---------------------------------------------------------------- a skills-only copy
+# `npx skills add` copies each skill with its links dereferenced: the dashboard skill's bin/ becomes a real folder
+# with no dashboard/ beside it, so its orch-status takes the page from the sibling orch skill.
+inst="$tmp/installed"
+mkdir -p "$inst"
+for sk in dashboard orch handoff; do cp -RL "$junkd/skills/$sk" "$inst/$sk"; done
+[ -f "$inst/dashboard/bin/orch-status" ] && [ ! -L "$inst/dashboard/bin" ] && [ ! -e "$inst/dashboard/dashboard" ]; ok $? "the copy: a real dashboard/bin, no page folder of its own"
+printed=$(cd "$proj" && PATH="$stub:$PATH" "$inst/dashboard/bin/orch-status" --open --out "$tmp/outi" 2>/dev/null); rc=$?
+ok "$rc" "the copy's orch-status --open exits 0"
+cmp -s "$tmp/outi/index.html" "$inst/orch/dashboard/orch-dashboard.html" && cmp -s "$tmp/outi/scale.js" "$inst/orch/dashboard/scale.js"; ok $? "the copy's --open copies the orch skill's page"
+expect "$tmp/outi/status.js" 'S.tasks.length > 0' "the copy builds the status"
+
 # ---------------------------------------------------------------- the layout
 [ -f "$junkd/skills/orch/bin/orch-status" ] && [ ! -L "$junkd/skills/orch/bin/orch-status" ] && [ -x "$junkd/skills/orch/bin/orch-status" ]; ok $? "a real executable in skills/orch/bin"
 [ "$(readlink "$junkd/skills/junkd/bin/orch-status")" = ../../orch/bin/orch-status ]; ok $? "skills/junkd/bin/orch-status links ../../orch/bin/orch-status"
