@@ -39,8 +39,8 @@ export const SCHEMA: readonly OrchSchemaEntry[] = rowsOf('orch').map(f => ({
 export const isField = (key: unknown): key is OrchField => SCHEMA.some(f => f.key === key)
 // The two number rows take a whole number in these bounds; the manifest has no min/max field, so they live here.
 export const ORCH_RANGE: Record<'implementer_ctx_k' | 'rounds', readonly [number, number]> = { implementer_ctx_k: [50, 1000], rounds: [1, 10] }
-export type OrchValues = { enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number }
-export const O: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3 }
+export type OrchValues = { enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number; claude_md: boolean }
+export const O: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false }
 
 // A raw value (typed in the pane, handed to $.junkd.set, or written in the /config menu) to the field's kind;
 // `error` when it does not fit. The one check for every write path.
@@ -67,6 +67,7 @@ export function applyOrchSettings(v: Record<string, unknown>): void {
   O.allow_fable_agents = v.allow_fable_agents === true
   O.ui_review = v.ui_review === undefined ? true : v.ui_review === true
   O.inject_rules = v.inject_rules === undefined ? true : v.inject_rules === true
+  O.claude_md = v.claude_md === true
   for (const key of ['implementer_ctx_k', 'rounds'] as const) {
     const x = v[key]
     const n = Math.round(typeof x === 'number' ? x : typeof x === 'string' && x.trim() ? Number(x) : NaN)
