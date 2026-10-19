@@ -1,7 +1,0 @@
-{
-  "name": "handoff", "version": "0.1.0",
-  "description": "Save task state to disk and resume it in a fresh Codex task by id. Automatic /ahandoff is Claude Code only; here use $handoff and $handoff resume <id> by hand.",
-  "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
-  "keywords": ["handoff", "continuity", "context"], "skills": "./skills/",
-  "interface": { "displayName": "Handoff", "shortDescription": "Save and resume durable task context", "longDescription": "Writes durable Markdown handoffs and restores them by short id in another task. The automatic /ahandoff loop is Claude Code only.", "developerName": "Krab00", "category": "Productivity", "capabilities": ["Read", "Write"], "defaultPrompt": ["Save a handoff for this task.", "Resume the newest handoff."] }
-}
