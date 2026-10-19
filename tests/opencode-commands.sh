@@ -28,6 +28,12 @@ skill straddle "Drain a backlog with implementation agents and then run a long a
 # exactly 100 chars, no period: as it is
 hundred=$(printf 'word%.0s ' $(seq 1 20) | cut -c1-99)x
 skill hundred "$hundred"
+# a first sentence of exactly 100 characters (". " at index 100): that sentence, whole
+skill edge100 "Keep every reply terse across all sessions of this host until the user turns the mode off again now. Use when asked."
+# a word ends exactly at character 97 (character 98 is a space): that word stays
+skill wordend "Drain the backlog with implementation agents and independent verification agents in parallel runs then report back to the user with a short summary"
+# the kept text ends with a comma: the comma goes before the "..."
+skill comma "Save a durable Markdown handoff for the current task and resume it later by its short id or name, continuing exactly where the previous session stopped"
 skill statusline "Configure the status line"
 mkdir -p "$tmp/out"
 printf 'hand-written\n' > "$tmp/out/short.md"
@@ -51,6 +57,15 @@ d=$(desc_of straddle)
     fail "straddling word: got '$d'"
 d=$(desc_of hundred)
 [ "$d" = "$hundred" ] || fail "a 100-char description was changed: got '$d'"
+d=$(desc_of edge100)
+[ "$d" = "Keep every reply terse across all sessions of this host until the user turns the mode off again now." ] ||
+    fail "100-char first sentence: got '$d'"
+d=$(desc_of wordend)
+[ "$d" = "Drain the backlog with implementation agents and independent verification agents in parallel runs..." ] ||
+    fail "a word ending at the cut was dropped: got '$d'"
+d=$(desc_of comma)
+[ "$d" = "Save a durable Markdown handoff for the current task and resume it later by its short id or name..." ] ||
+    fail "trailing comma before ...: got '$d'"
 # every wrapper: at most 100 chars, and the text before "..." ends where a word of the original ends
 for f in "$tmp"/out/*.md; do
     name=$(basename "$f" .md)
@@ -60,7 +75,9 @@ for f in "$tmp"/out/*.md; do
     stem=${d%...}
     case "$orig" in "$stem"*) ;; *) fail "$name: '$d' is not a prefix of the description" ;; esac
     rest=${orig#"$stem"}
-    [ -z "$rest" ] || [ "${rest:0:1}" = " " ] || [ "${stem: -1}" = . ] || fail "$name: cut inside a word: '$d'"
+    # what was dropped starts at a word's end: a space, or the stripped punctuation (,;:(-) and then a space
+    punct_space='^[,;:(-]*( |$)'
+    [ -z "$rest" ] || [[ "$rest" =~ $punct_space ]] || [ "${stem: -1}" = . ] || fail "$name: cut inside a word: '$d'"
 done
 # the real skills: every generated description ends on a word boundary too
 sh "$root/bin/opencode-commands.sh" "$root/plugins/junkd/skills" "$tmp/real" >/dev/null || fail "real skills: exited non-zero"

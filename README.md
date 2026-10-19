@@ -33,8 +33,9 @@ Kimi notes:
 - A local-path install keeps the plugin's symlinks, rewritten to absolute paths into your checkout (junkd's
   plugin-root `bin/` and `scripts/`, orch-init's `bin/` and `commands/`). Moving the checkout breaks them, and
   switching its branch changes what they run. The skills' own `bin/` are real copies and do not move.
-- Skills in `~/.agents/skills` shadow a plugin's skills of the same name: a stale `npx skills add -g` copy wins over
-  the installed plugin. Remove it (or `npx skills update -g`) when you switch to the plugin.
+- Skills in `~/.agents/skills` shadow a plugin's skills of the same name, on Kimi and on Codex: a stale
+  `npx skills add -g` copy wins over the installed plugin. Remove it (or `npx skills update -g`) when you switch to
+  the plugin.
 
 ## Install in Codex
 
@@ -63,6 +64,11 @@ Codex notes:
   Claude Code-only `modules` key of `hooks/hooks.json`. Codex runs a plugin hook only once you trust it: a new
   session asks you to review the plugin's hooks ("Trust all and continue"). `codex exec` never asks, so an
   untrusted hook stays silent there.
+- Skills in `~/.agents/skills` shadow the plugin's skills of the same name here too: a stale `npx skills add -g`
+  copy wins over the installed plugin.
+- junkd keeps its Codex data (handoffs, the terse flag) in `${CODEX_HOME:-$HOME/.codex}/junk-drawer`, outside the
+  workspace: `codex exec -s workspace-write` refuses writes there unless you add
+  `--add-dir "${CODEX_HOME:-$HOME/.codex}/junk-drawer"`.
 
 ## Install in Claude Code
 

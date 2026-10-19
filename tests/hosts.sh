@@ -93,6 +93,12 @@ probe "PLUGIN_ROOT outside .codex, no CODEX_HOME" "$claude_h" "$claude_f" "$repo
     CLAUDE_PLUGIN_ROOT="$tmp/elsewhere/junkd"
 probe "PLUGIN_ROOT holding CODEX_HOME's path further down" "$claude_h" "$claude_f" "$repo" CODEX_HOME="$tmp/cx" \
     PLUGIN_ROOT="$tmp/elsewhere$tmp/cx/plugins/junkd" CLAUDE_PLUGIN_ROOT="$tmp/elsewhere$tmp/cx/plugins/junkd"
+# a sibling of the Codex home (its path plus a suffix) is outside it: no Codex signal
+probe "PLUGIN_ROOT under a sibling of CODEX_HOME" "$claude_h" "$claude_f" "$repo" CODEX_HOME="$tmp/cx" \
+    PLUGIN_ROOT="$tmp/cx2/plugins/junkd" CLAUDE_PLUGIN_ROOT="$tmp/cx2/plugins/junkd"
+# a CODEX_HOME spelled with a trailing slash still contains its plugins
+probe "PLUGIN_ROOT under CODEX_HOME with a trailing slash" "$tmp/cx//junk-drawer/handoffs" "$tmp/cx//junk-drawer" "$repo" \
+    CODEX_HOME="$tmp/cx/" PLUGIN_ROOT="$tmp/cx/plugins/junkd" CLAUDE_PLUGIN_ROOT="$tmp/cx/plugins/junkd"
 probe "CODEX_HOME alone" "$tmp/cx/junk-drawer/handoffs" "$tmp/cx/junk-drawer" "$repo" CODEX_HOME="$tmp/cx"
 # Kimi Code: its hooks' KIMI_PLUGIN_ROOT; its bash tool runs the helper from <home>/plugins/managed/<plugin>/
 probe "KIMI_PLUGIN_ROOT" "$kimi_h" "$kimi_f" "$repo" KIMI_PLUGIN_ROOT="$root/plugins/junkd"
@@ -100,7 +106,24 @@ install_at "$tmp/km/plugins/managed/junkd"
 probe "\$0 under plugins/managed" "$tmp/km/junk-drawer/handoffs" "$tmp/km/junk-drawer" "$tmp/km/plugins/managed/junkd/skills" \
     KIMI_CODE_HOME="$tmp/km" CLAUDE_CONFIG_DIR="$tmp/cc"
 probe "\$0 under plugins/managed, no KIMI_CODE_HOME" "$kimi_h" "$kimi_f" "$tmp/km/plugins/managed/junkd/skills"
+# Kimi's helper path wins over an OPENCODE inherited from a parent OpenCode shell: the script's own location names
+# the install that runs it
+probe "\$0 under plugins/managed over OPENCODE" "$kimi_h" "$kimi_f" "$tmp/km/plugins/managed/junkd/skills" OPENCODE=1 \
+    OPENCODE_PID=4242
 probe "KIMI_CODE_HOME alone" "$tmp/km/junk-drawer/handoffs" "$tmp/km/junk-drawer" "$repo" KIMI_CODE_HOME="$tmp/km"
+# step 3 order: with only config-dir variables, CODEX_HOME comes before KIMI_CODE_HOME
+probe "CODEX_HOME over KIMI_CODE_HOME" "$tmp/cx/junk-drawer/handoffs" "$tmp/cx/junk-drawer" "$repo" CODEX_HOME="$tmp/cx" \
+    KIMI_CODE_HOME="$tmp/km"
+# Kimi keeps a local-path install's plugin-root bin/ as an absolute symlink into the checkout: the helper reached
+# through it is still under plugins/managed/ (the logical path, not the resolved one)
+mkdir -p "$tmp/km2/plugins/managed/junkd"
+ln -s "$repo/junkd/bin" "$tmp/km2/plugins/managed/junkd/bin"
+rm -rf "$H" && mkdir -p "$H"
+out=$("${noh[@]}" "$tmp/km2/plugins/managed/junkd/bin/handoff-path") || fail "managed bin link: handoff-path exited non-zero"
+[ "$(head -1 <<<"$out" | sed 's#/[^/]*$##')" = "$kimi_h" ] || fail "managed bin link: handoff-path wrote $(head -1 <<<"$out"), expected under $kimi_h"
+"${noh[@]}" "$tmp/km2/plugins/managed/junkd/bin/tldr-flag" on >/dev/null || fail "managed bin link: tldr-flag on exited non-zero"
+[ -f "$kimi_f/tldr-on" ] || fail "managed bin link: tldr-flag on did not write $kimi_f/tldr-on"
+
 # OpenCode: what it exports to its bash tool (OPENCODE, OPENCODE_PID), even beside a profile's CLAUDE_CONFIG_DIR
 # (the observed leak into Claude Code); a skills install under .agents/skills or .opencode
 probe "OPENCODE" "$oc_h" "$oc_f" "$repo" OPENCODE=1
@@ -145,6 +168,26 @@ set -e
 [ "$rc" = 2 ] && rg -qF 'JUNK_DRAWER_RUNTIME' <<<"$out" || fail "JUNK_DRAWER_RUNTIME=cursor: exited $rc, got: $out"
 [ ! -e "$H/.claude" ] || fail "JUNK_DRAWER_RUNTIME=cursor: wrote under \$HOME/.claude"
 
+# ---------------------------------------------------------------- status and off create nothing
+for host in claude codex kimi opencode; do
+    for arg in status off; do
+        rm -rf "$H" && mkdir -p "$H"
+        out=$("${noh[@]}" JUNK_DRAWER_RUNTIME=$host "$repo/tldr/bin/tldr-flag" $arg) || fail "$host $arg: exited non-zero"
+        [ -z "$(find "$H" -mindepth 1)" ] || fail "$host tldr-flag $arg created $(find "$H" -mindepth 1 | head -3)"
+    done
+done
+
+# ---------------------------------------------------------------- handoff-path failures leave nothing behind
+# an unwritable data root: exit 1, no path printed
+rm -rf "$H" && mkdir -p "$H" && chmod 555 "$H"
+set +e
+out=$("${noh[@]}" JUNK_DRAWER_RUNTIME=codex "$repo/handoff/bin/handoff-path" 2>/dev/null)
+rc=$?
+set -e
+chmod 755 "$H"
+[ "$rc" = 1 ] && [ -z "$out" ] || fail "unwritable root: handoff-path exited $rc and printed: $out"
+[ -z "$(find "$H" -mindepth 1)" ] || fail "unwritable root: handoff-path left $(find "$H" -mindepth 1)"
+
 # ---------------------------------------------------------------- short ids
 path_id() { "${noh[@]}" "$@" "$repo/handoff/bin/handoff-path" | tail -1; }
 is_hex8() { [[ "$1" =~ ^[0-9a-f]{8}$ ]]; }
@@ -181,6 +224,33 @@ k=$(path_id JUNK_DRAWER_RUNTIME=kimi KIMI_SESSION_ID=session_a9cdb046-fa37-4906-
 c1=$(path_id CLAUDECODE=1)
 c2=$(path_id CLAUDECODE=1)
 is_hex8 "$c1" && [ "$c1" != "$c2" ] || fail "claude without a session id: ids $c1 $c2"
+
+# no shasum: md5sum, else md5 -q, hashes the id (stubs that print the real MD5, so the fallback is pinned on any
+# platform); no hash tool at all: exit 1, no path, no folder
+py=$(command -v python3)
+mkdir -p "$tmp/m5" "$tmp/m5q" "$tmp/nohash"
+for d in m5 m5q nohash; do
+    for t in bash mkdir date od tr cut; do ln -s "$(command -v $t)" "$tmp/$d/$t"; done
+    cp "$tmp/stub/pbcopy" "$tmp/$d/pbcopy"
+done
+printf '#!%s\nimport hashlib, sys\nprint(hashlib.md5(sys.stdin.buffer.read()).hexdigest() + "  -")\n' "$py" > "$tmp/m5/md5sum"
+printf '#!%s\nimport hashlib, sys\nassert sys.argv[1:] == ["-q"]\nprint(hashlib.md5(sys.stdin.buffer.read()).hexdigest())\n' "$py" > "$tmp/m5q/md5"
+chmod +x "$tmp/m5/md5sum" "$tmp/m5q/md5"
+want=$("$py" -c 'import hashlib, sys; print(hashlib.md5(sys.argv[1].encode()).hexdigest()[:8])' "$v7a")
+for d in m5 m5q; do
+    rm -rf "$H" && mkdir -p "$H"
+    got=$("${noh[@]}" PATH="$tmp/$d" CODEX_THREAD_ID=$v7a "$tmp/$d/bash" "$repo/handoff/bin/handoff-path" | tail -1) ||
+        fail "no shasum ($d): handoff-path exited non-zero"
+    [ "$got" = "$want" ] || fail "no shasum ($d): id $got, expected the MD5 prefix $want"
+done
+rm -rf "$H" && mkdir -p "$H"
+set +e
+out=$("${noh[@]}" PATH="$tmp/nohash" CODEX_THREAD_ID=$v7a "$tmp/nohash/bash" "$repo/handoff/bin/handoff-path" 2>"$tmp/err")
+rc=$?
+set -e
+[ "$rc" = 1 ] && [ -z "$out" ] || fail "no hash tool: handoff-path exited $rc and printed: $out"
+rg -qF 'could not derive a short id' "$tmp/err" || fail "no hash tool: no reason given: $(cat "$tmp/err")"
+[ -z "$(find "$H" -mindepth 1)" ] || fail "no hash tool: handoff-path left $(find "$H" -mindepth 1)"
 
 # ---------------------------------------------------------------- handoff-load: a fragment, an exact id, the newest
 rm -rf "$H" && mkdir -p "$codex_h"
