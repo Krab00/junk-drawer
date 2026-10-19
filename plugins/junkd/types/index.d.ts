@@ -12,7 +12,10 @@
 
 export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr' | 'ctx' | 'statusline' | 'tools'
 export type JunkdHandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
-export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md'
+export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md' | JunkdOrchWatchdogField
+// The agent watchdog's rows (hooks/watchdog.tsx): the whole watchdog, stopping idle leftovers, the idle minutes before a
+// stop and the stall minutes of an implementer (a reviewer's are 5 more).
+export type JunkdOrchWatchdogField = 'watchdog' | 'idle_stop' | 'idle_stop_minutes' | 'stall_minutes'
 export type JunkdTldrField = 'enabled' | 'terse' | 'sentences'
 export type JunkdCoreField = 'output_style' | 'cache_check_sessions'
 export type JunkdCtxField = 'enabled' | 'threshold' | 'action' | 'cmd'
