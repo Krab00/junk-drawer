@@ -655,28 +655,21 @@ the name used when the agent list does not know it) and falls back to what the m
 main loop may not write into `junkd/orch/_agents/`. Records are never pruned: each is under 100 bytes, and old
 session folders can be removed by hand.
 
-##### Deliberate differences from the guard this one was ported from
+##### Notes on the rules
 
-Row by row, against the table above:
-
-- **Always allowed:** `advisor` is not on the list, so it is denied here. It runs on the server and
-  raises no tool call, so in practice nothing changes. The earlier guard's own decision tool is not
-  ported at all (out of scope).
-- **`ScheduleWakeup`:** the earlier guard listed it as always allowed, but its `CronCreate` rule ran
-  first, so it was restricted there too. Here it is off the always list, and the table says what
-  holds: the `CronCreate` rule (only `/junkd:orch`, `/loop` of an allowed prompt, a plain prompt, or a
-  stop). Same behaviour, no shadowed entry.
-- **`SendMessage`:** `test-planner` and `test-reviewer` count as reviewers too (they exist only in
-  this plugin), so they are always spawned fresh. The record on disk comes first, and the module's own
-  `SubagentStop` record is the fallback when no file holds one (new here).
-- **`Read`, `Write`:** the task store is `<repo>/.orch/` in the project, not a folder in the config
-  dir, so the repo's `.orch/` is a root of its own (new here). Writes there take a `.md` only and
-  never an existing `config.md`. The config dir's `orch/` stays a root for scratch state.
-- **`Write`:** stricter on `.claude/`: anything in any `.claude/` dir is refused, not only its
-  loaded folders. Beside the records folder `junkd/orch/_agents/`, the module's own control files
-  `junkd/orch-off` and `junkd/orch-rules-off` (and any path under them) are refused.
-- **`Bash`, `Monitor`:** no separate `..` check on the script path. The script name may not hold a
-  `/`, so a `..` cannot lead out of `bin/`.
+- **Always allowed:** `advisor` is not on the list, so it is denied. It runs on the server and raises no
+  tool call, so nothing changes in practice.
+- **`ScheduleWakeup`:** not on the always-allowed list. The `CronCreate` row holds for it: only
+  `/junkd:orch`, `/loop` of an allowed prompt, a plain prompt, or a stop.
+- **`SendMessage`:** `test-planner` and `test-reviewer` count as reviewers, so they are spawned fresh
+  every time and never messaged. The record file on disk is read first, and the module's own
+  `SubagentStop` record is the fallback.
+- **`Read`, `Write`:** the task store `<repo>/.orch/` is a root of its own. Writes there take a `.md`
+  only and never an existing `config.md`. The config dir's `orch/` stays a root for scratch state.
+- **`Write`:** refuses anything in any `.claude/` dir, the records folder `junkd/orch/_agents/`, and
+  the control files `junkd/orch-off` and `junkd/orch-rules-off` (and any path under them).
+- **`Bash`, `Monitor`:** the script name may not hold a `/`, so a `..` cannot lead out of `bin/`. No
+  separate `..` check is needed.
 
 #### Settings
 
