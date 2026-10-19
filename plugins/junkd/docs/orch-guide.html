@@ -219,8 +219,8 @@
     untouchable and the heavy build/test/screenshot output out of the orchestrator's own context.</p>
   </header>
 
-  <p>This is the long-form companion to the plugin <code>README.md</code>. The README is the
-  cheatsheet; this guide explains <em>why</em> the loop is shaped the way it is and walks through it
+  <p>orch is part of the <strong>junkd</strong> plugin. This is the long-form companion to
+  <code>orch.md</code>, the cheatsheet; this guide explains <em>why</em> the loop is shaped the way it is and walks through it
   end to end. Everything here matches the shipped <code>commands/</code>, <code>agents/</code>, and
   <code>bin/</code> files — no invented behaviour.</p>
 
@@ -256,11 +256,11 @@
   <p>Two more principles hold the whole thing together:</p>
   <ul>
     <li><strong>State lives in files + git, so a run is resumable.</strong> Task status is YAML frontmatter in the task file; evidence is committed alongside; work happens on real branches in worktrees. A killed run leaves a clean, inspectable state you can resume from.</li>
-    <li><strong>Everything ends with a <code>BACKLOG:</code> line</strong>, so an outer <code>/loop</code> driver can decide whether to keep going. That single machine-readable line turns <code>orch</code> from a one-shot into an autonomous drain (<code>/loop /orch all</code>).</li>
+    <li><strong>Everything ends with a <code>BACKLOG:</code> line</strong>, so an outer <code>/loop</code> driver can decide whether to keep going. That single machine-readable line turns <code>orch</code> from a one-shot into an autonomous drain (<code>/loop /junkd:orch all</code>).</li>
   </ul>
 
   <h2 id="s2">2. How it works — the loop <a class="anchor" href="#s2">#</a></h2>
-  <pre><code>                 read .orch/config.md   (no config → STOP: run /orch:init)
+  <pre><code>                 read .orch/config.md   (no config → STOP: run /junkd:orch-init)
                               │
                     ┌─────────▼──────────┐
                     │  1. SYNC + SELECT  │  orch-sync pull · reset-stale · pick eligible todo(s)
@@ -381,11 +381,11 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Invocation</th><th>What it does</th></tr></thead>
     <tbody>
-      <tr><td><code>/orch "&lt;free text&gt;"</code></td><td><strong>Adhoc single task</strong> — creates a canonical task file from your prompt (id <code>ADHOC-N</code>), runs the freeze ladder <strong>interactively</strong> (shows the criteria, waits for approval), then the standard loop for that one task.</td></tr>
-      <tr><td><code>/orch &lt;ID&gt; [&lt;ID&gt;…]</code></td><td>Run <strong>explicit tasks</strong> already in the store (skips selection; still enforces <code>deps</code>).</td></tr>
-      <tr><td><code>/orch batch [N]</code></td><td>Up to <strong>N independent tasks in parallel</strong> (default N=3). Picks tasks with no unsatisfied deps and no shared files; spawns all implementers, then all verify-coordinators.</td></tr>
-      <tr><td><code>/orch chain [N]</code></td><td><strong>Task-by-task</strong>, each branch <strong>stacked</strong> on the previous finished branch.</td></tr>
-      <tr><td><code>/orch all</code></td><td><code>chain</code> with no limit — <strong>drain</strong> until no <code>todo</code> remains.</td></tr>
+      <tr><td><code>/junkd:orch "&lt;free text&gt;"</code></td><td><strong>Adhoc single task</strong> — creates a canonical task file from your prompt (id <code>ADHOC-N</code>), runs the freeze ladder <strong>interactively</strong> (shows the criteria, waits for approval), then the standard loop for that one task.</td></tr>
+      <tr><td><code>/junkd:orch &lt;ID&gt; [&lt;ID&gt;…]</code></td><td>Run <strong>explicit tasks</strong> already in the store (skips selection; still enforces <code>deps</code>).</td></tr>
+      <tr><td><code>/junkd:orch batch [N]</code></td><td>Up to <strong>N independent tasks in parallel</strong> (default N=3). Picks tasks with no unsatisfied deps and no shared files; spawns all implementers, then all verify-coordinators.</td></tr>
+      <tr><td><code>/junkd:orch chain [N]</code></td><td><strong>Task-by-task</strong>, each branch <strong>stacked</strong> on the previous finished branch.</td></tr>
+      <tr><td><code>/junkd:orch all</code></td><td><code>chain</code> with no limit — <strong>drain</strong> until no <code>todo</code> remains.</td></tr>
     </tbody>
   </table></div>
   <p><strong>Flags</strong> (any mode):</p>
@@ -398,7 +398,7 @@
       <tr><td><code>--single-pr[=&lt;branch&gt;]</code></td><td>Ship the whole run as <strong>one</strong> integration branch + <strong>one</strong> draft PR (each task is still independently verified; only the PR tail changes).</td></tr>
     </tbody>
   </table></div>
-  <p><strong>Autonomous drain:</strong> <code>/loop /orch all</code> runs a fresh cycle each
+  <p><strong>Autonomous drain:</strong> <code>/loop /junkd:orch all</code> runs a fresh cycle each
   iteration, keying off the final <code>BACKLOG:</code> line and stopping on <code>DRAINED</code> or
   <code>BLOCKED</code>.</p>
 
@@ -406,11 +406,11 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Situation</th><th>Use</th></tr></thead>
     <tbody>
-      <tr><td>One small task, no task file yet</td><td><code>/orch "&lt;describe it&gt;"</code></td></tr>
-      <tr><td>One big task that splits into layers</td><td><code>/orch &lt;ID&gt; --deep</code> (or <code>/orch "&lt;text&gt;" --deep</code>)</td></tr>
-      <tr><td>Several independent tasks, want speed</td><td><code>/orch batch [N]</code></td></tr>
-      <tr><td>Several tasks that build on each other</td><td><code>/orch chain [N]</code></td></tr>
-      <tr><td>Drain the whole backlog, hands-off</td><td><code>/loop /orch all</code></td></tr>
+      <tr><td>One small task, no task file yet</td><td><code>/junkd:orch "&lt;describe it&gt;"</code></td></tr>
+      <tr><td>One big task that splits into layers</td><td><code>/junkd:orch &lt;ID&gt; --deep</code> (or <code>/junkd:orch "&lt;text&gt;" --deep</code>)</td></tr>
+      <tr><td>Several independent tasks, want speed</td><td><code>/junkd:orch batch [N]</code></td></tr>
+      <tr><td>Several tasks that build on each other</td><td><code>/junkd:orch chain [N]</code></td></tr>
+      <tr><td>Drain the whole backlog, hands-off</td><td><code>/loop /junkd:orch all</code></td></tr>
       <tr><td>Everything should land as one PR</td><td>add <code>--single-pr</code> to any mode</td></tr>
     </tbody>
   </table></div>
@@ -419,7 +419,7 @@
   <p>Every run ends with <strong>exactly one</strong> of these — an outer <code>/loop</code> driver
   keys off it:</p>
   <pre><code>BACKLOG: DRAINED   — no todo tasks remain
-BACKLOG: REMAINING — &lt;count&gt; (&lt;ids&gt;); resume: /orch &lt;mode&gt; [N] --base &lt;last-finished-branch&gt;
+BACKLOG: REMAINING — &lt;count&gt; (&lt;ids&gt;); resume: /junkd:orch &lt;mode&gt; [N] --base &lt;last-finished-branch&gt;
 BACKLOG: BLOCKED   — remaining tasks need a human: &lt;ids + one-line reasons&gt;</code></pre>
   <p><code>BLOCKED</code> (not <code>REMAINING</code>) is used when every remaining task is
   ineligible for a <em>human</em> reason — <code>blocked</code> after the round cap, or a
@@ -429,11 +429,18 @@ BACKLOG: BLOCKED   — remaining tasks need a human: &lt;ids + one-line reasons&
   <h2 id="s7">7. Setup &amp; usage walkthrough <a class="anchor" href="#s7">#</a></h2>
   <h3>Install</h3>
   <pre><code>/plugin marketplace add Krab00/junk-drawer
-/plugin install orch@junk-drawer</code></pre>
+/plugin install junkd@junk-drawer</code></pre>
+  <p>orch ships inside junkd. Coming from the former <code>orch</code> plugin: the commands are
+  <code>/junkd:orch</code> and <code>/junkd:orch-init</code>, the agent types <code>junkd:&lt;role&gt;</code>, the
+  settings <code>pluginConfigs["junkd@junk-drawer"].options.orch_&lt;field&gt;</code> (formerly
+  <code>pluginConfigs["orch@junk-drawer"].options.&lt;field&gt;</code>; set them again in <code>/config</code> or
+  <code>/junkd:orch panel</code>), and the rule-sheet flag file <code>~/.claude/junkd/orch-rules-off</code>
+  (formerly <code>~/.claude/orch/rules-off</code>). The new <code>orch_enabled</code> setting switches the
+  main-loop guard and the rule sheet off whole.</p>
 
   <h3>Initialise the project (once per repo)</h3>
-  <pre><code>/orch:init</code></pre>
-  <p><code>/orch:init</code> <strong>scans</strong> the repo — it reads rather than guesses:</p>
+  <pre><code>/junkd:orch-init</code></pre>
+  <p><code>/junkd:orch-init</code> <strong>scans</strong> the repo — it reads rather than guesses:</p>
   <ul>
     <li>the <strong>git default branch</strong> (becomes the <code>--base</code> default);</li>
     <li>the <strong>layout + package manager</strong> (workspaces? <code>package.json</code> / <code>go.mod</code> / <code>pyproject.toml</code> / <code>Cargo.toml</code> / …);</li>
@@ -468,7 +475,7 @@ criteria_source: derived # verbatim | derived
 | Criterion | Tool | Evidence | Verdict |</code></pre>
   <p>Evidence files land in <code>&lt;tasks_dir&gt;/&lt;ID&gt;.evidence/</code>.</p>
 
-  <h3>A concrete run: <code>/orch "fix login redirect bug"</code></h3>
+  <h3>A concrete run: <code>/junkd:orch "fix login redirect bug"</code></h3>
   <ol>
     <li><strong>Adhoc task created.</strong> <code>orch-state new ADHOC-1 "fix login redirect bug"</code> writes the skeleton file; the orchestrator fills the description from your prompt.</li>
     <li><strong>Criteria frozen (interactively).</strong> No structured DoD exists, so the loop <em>derives</em> criteria — e.g. <em>“AC1: after a successful login the user lands on <code>/dashboard</code>, not <code>/login</code> (modality: ui)”</em> — each traceable to a sentence in your prompt, and shows them to you for approval.</li>
@@ -484,10 +491,10 @@ criteria_source: derived # verbatim | derived
   <div class="table-wrap"><table>
     <thead><tr><th>Backend</th><th>Where tasks live</th><th>What sync does</th></tr></thead>
     <tbody>
-      <tr><td><code>adhoc</code></td><td>The task files in <code>tasks_dir</code> are the whole source of truth; <code>/orch "&lt;free text&gt;"</code> creates them.</td><td><code>orch-sync</code> is a <strong>no-op</strong> (the files <em>are</em> canon).</td></tr>
+      <tr><td><code>adhoc</code></td><td>The task files in <code>tasks_dir</code> are the whole source of truth; <code>/junkd:orch "&lt;free text&gt;"</code> creates them.</td><td><code>orch-sync</code> is a <strong>no-op</strong> (the files <em>are</em> canon).</td></tr>
       <tr><td><code>manifest</code></td><td>Same as adhoc, but you maintain the task files <strong>by hand</strong>.</td><td>No-op.</td></tr>
       <tr><td><code>github-issues</code></td><td>GitHub issues carrying a configured label (default <code>orch</code>).</td><td><strong>Pull:</strong> issues → task files (<code>id</code> becomes <code>GH-&lt;number&gt;</code>, the body checklist → acceptance criteria, <code>updatedAt</code> stamped as <code>source_updated_at</code>). <strong>Push:</strong> a status comment with the verification table + PR link. Needs the <code>gh</code> CLI authenticated.</td></tr>
-      <tr><td><code>linear-mcp</code></td><td>Linear, via the Linear MCP.</td><td>Sync happens <strong>in-conversation</strong> through the MCP — <code>/orch</code> does the pull/push itself. Thin in v0.1 (see <a href="#s11">§11</a>).</td></tr>
+      <tr><td><code>linear-mcp</code></td><td>Linear, via the Linear MCP.</td><td>Sync happens <strong>in-conversation</strong> through the MCP — <code>/junkd:orch</code> does the pull/push itself. Thin in v0.1 (see <a href="#s11">§11</a>).</td></tr>
     </tbody>
   </table></div>
   <div class="note"><p><strong>Field ownership + drift guard (<code>github-issues</code>).</strong> The
@@ -509,8 +516,8 @@ criteria_source: derived # verbatim | derived
   </ul>
 
   <h2 id="s10">10. Config reference <a class="anchor" href="#s10">#</a></h2>
-  <p><code>/orch</code> reads every project fact from <code>.orch/config.md</code>. <strong>No
-  config → it stops and tells you to run <code>/orch:init</code>.</strong> YAML frontmatter +
+  <p><code>/junkd:orch</code> reads every project fact from <code>.orch/config.md</code>. <strong>No
+  config → it stops and tells you to run <code>/junkd:orch-init</code>.</strong> YAML frontmatter +
   free-form prose notes:</p>
   <pre><code>---
 backend: adhoc            # adhoc | manifest | github-issues | linear-mcp
@@ -524,7 +531,7 @@ capabilities:
 standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
 github: { label: "orch" }      # github-issues backend only; drop otherwise
 ---
-Free-form project notes /orch should know: conventions, gotchas, where the visual spec lives,
+Free-form project notes /junkd:orch should know: conventions, gotchas, where the visual spec lives,
 calibration values that must never be guessed, etc.</code></pre>
   <div class="table-wrap"><table>
     <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
