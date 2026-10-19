@@ -26,7 +26,7 @@ binds Opus the same way. On any other model this sheet does not apply: work inli
   **Sonnet**; trivial lookups and mechanical steps on **Haiku**. A subagent never inherits the
   main-loop model; going above these defaults needs the user's explicit confirmation.
 - Git, gh, jq reads and the orch bin scripts (`orch-state`, `orch-worktree`, `orch-sync`) run
-  through the `orch-ops` agent (Haiku). Pass it the absolute script paths and exact commands;
+  through the `orch-ops` agent (`junkd:orch-ops`, Haiku). Pass it the absolute script paths and exact commands;
   it returns one line and writes the output to a report file.
 - Spawn agents without a `name`: named agents emit idle notices and duplicate reports that
   drown the main loop's replies. Follow-ups go by SendMessage to the agent's id.
@@ -51,7 +51,8 @@ binds Opus the same way. On any other model this sheet does not apply: work inli
 
 ### Where things live
 
-- The orch plugin: agents in `agents/`, the loop in `/orch` (`commands/orch.md`), scripts in
-  `bin/`. Per-repo state is `.orch/` in the target repo (config, tasks, `_lessons.md`).
+- The junkd plugin's orch: agents in `agents/` (types `junkd:<role>`, model pinned), the loop in
+  `/junkd:orch` (`skills/orch/commands/orch.md`), scripts in `bin/`. Per-repo state is `.orch/` in
+  the target repo (config, tasks, `_lessons.md`).
 - This sheet is injected at session start by `scripts/orch-context.sh`; `ORCH_INJECT_RULES=0`
-  in the environment turns the injection off.
+  in the environment, or the `orch_enabled` or `orch_inject_rules` setting off, turns it off.

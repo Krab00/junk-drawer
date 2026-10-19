@@ -1,6 +1,6 @@
 ---
 name: orch-ops
-description: Runs the mechanical commands of an /orch run on the orchestrator's behalf — the bin scripts (orch-state, orch-worktree, orch-sync), git, gh and jq reads — and returns one line. Use for every step of a run that is a command, not a decision.
+description: Runs the mechanical commands of a /junkd:orch run on the orchestrator's behalf — the bin scripts (orch-state, orch-worktree, orch-sync), git, gh and jq reads — and returns one line. Use for every step of a run that is a command, not a decision.
 model: haiku
 tools: Bash, Read, Write
 ---
