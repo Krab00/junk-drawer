@@ -2,21 +2,20 @@
 // resume), the 🪃 segment and its pane. The `$`-free parts are handoff-lib.ts (state, options), handoff-ui.tsx and
 // handoff-views.tsx (the pane). index.tsx runs handoffStart at session start, handoffToolCall inside the one tool.call
 // hook and handoffSegment inside the one PromptHint render.
-// CONTRACT (T11): the slice ports the names (/junkd:*, junkd.handoff_* rows) and the tests.
 import { atom, update } from 'claude-code'
 import type { Next, On, RenderInput, RenderSurface, ToolCallInput } from 'claude-code'
 
 import type { JunkdAhandoff as Ahandoff } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
-import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, SCHEMA, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
+import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
 import { VIEWS } from './handoff-views'
 
 const PANE = 'ahandoff'
 const EDGE = 2 // empty columns at the pane's right edge (a docked pane's last column may not show)
 const HANDOFF_FILE = /\/handoffs\/[^/]+\.md$/
-// What arming says while the `enabled` setting is off; /handoff, /handon and the pane keep working.
+// What arming says while the `enabled` setting is off; /junkd:handoff, /junkd:handon and the pane keep working.
 const OFF = 'handoff: auto handoff is disabled (the enabled setting is off: /config, or the pane\'s Settings tab)'
 
 function redraw($: $) {
@@ -30,10 +29,10 @@ const view = atom({ plugin: 'junkd', key: 'ahandoff' } as const, {
   prompt: '', lastId: '', count: 0, route: 'auto', paneOpen: false,
 } satisfies Ahandoff)
 
-// ponytail: plugin commands are namespaced (`handoff:handon`) — find by suffix instead of guessing the prefix.
+// ponytail: plugin commands are namespaced (`junkd:handon`) — junkd's own first, else any plugin's by suffix.
 async function findCommand($: $, suffix: 'handoff' | 'handon'): Promise<string> {
   const names = (await $.command.list()).map(c => c.name)
-  return names.find(n => n === `handoff:${suffix}`) ?? names.find(n => n.endsWith(`:${suffix}`)) ?? `handoff:${suffix}`
+  return names.find(n => n === `junkd:${suffix}`) ?? names.find(n => n.endsWith(`:${suffix}`)) ?? `junkd:${suffix}`
 }
 
 let home = ''
@@ -144,14 +143,14 @@ async function load($: $) {
   }
 }
 
-// /handoff in the next turn. ponytail: detached — $.command.run is refused inside a hook the turn waits on.
+// /junkd:handoff in the next turn. ponytail: detached — $.command.run is refused inside a hook the turn waits on.
 function queueHandoff($: $) {
   void $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') }))
 }
 
-// /clear → /handon <id> → the continuation prompt, detached like queueHandoff.
+// /clear → /junkd:handon <id> → the continuation prompt, detached like queueHandoff.
 // A slash prompt cannot ride along as text (the host refuses it and the model would only read it),
-// so it runs as the command itself right after /handon.
+// so it runs as the command itself right after /junkd:handon.
 function continueFrom($: $, id: string) {
   const text = S.prompt || DEFAULT_PROMPT
   void $.clock.sleep(0).then(async () => {
@@ -201,7 +200,7 @@ async function off($: $) {
   return { text: 'handoff auto off.' }
 }
 
-// Who opened the pane through `$.handoff.show({ owner })` (a frame's set of panes); any other open or close clears
+// Who opened the pane through handoffShow({ owner }) (the /junkd set of panes); any other open or close clears
 // it, so `hide({ owner })` closes only a pane that owner opened and nobody reopened since.
 let owner: string | undefined
 
@@ -262,7 +261,7 @@ async function remove($: $, ids: string[]) {
   return paths.length
 }
 
-// Writes one field to its `/config` row (`handoff.<field>`) and mirrors it into S. `{ deny }` when the value
+// Writes one field to its `/config` row (`junkd.handoff_<field>`) and mirrors it into S. `{ deny }` when the value
 // does not fit or a hook refused; the pane's note says which either way.
 async function setOption($: $, field: Field, raw: string | number | boolean) {
   const c = coerce(field, raw)
@@ -296,7 +295,7 @@ async function apply($: $, field: Field, value: number | boolean) {
 }
 
 // `enabled` as the row took it. Off disarms the loop (and drops a pending 5h-limit resume), and arm() refuses while
-// it is off, so the loop's hooks need only `S.armed`. On arms nothing: the loop waits for /ahandoff (autoOn arms at
+// it is off, so the loop's hooks need only `S.armed`. On arms nothing: the loop waits for /junkd:ahandoff (autoOn arms at
 // load only).
 async function applyEnabled($: $, on: boolean) {
   S.enabled = on
@@ -395,9 +394,9 @@ export function handoffStatus() {
 
 export async function handoffStart($: $): Promise<void> {
   const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string }; resumeAt?: number } | undefined
-  if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /handoff:handon ${saved.pending.id}`)
+  if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /junkd:handon ${saved.pending.id}`)
   if (saved?.resumeAt && saved.resumeAt > Date.now()) {
-    const how = S.enabled ? 're-arm with /ahandoff' : 'auto handoff is disabled: turn the enabled setting on (/config, or the pane\'s Settings tab), then /ahandoff'
+    const how = S.enabled ? 're-arm with /junkd:ahandoff' : 'auto handoff is disabled: turn the enabled setting on (/config, or the pane\'s Settings tab), then /junkd:ahandoff'
     $.ui.toast(`handoff: a 5h-limit resume was due at ${hhmm(saved.resumeAt)} — ${how}`)
   }
   if (saved?.resumeAt) await $.store.set(STORE, { ...saved, resumeAt: undefined })
@@ -427,7 +426,7 @@ export async function handoffToolCall($: $, e: ToolCallInput, next: Next<'tool.c
   if (isHandoffWrite) S.written = String(e.file_path)
   if (isHandoffWrite || isHandoffPath || isHandoffSkill) return next(e)
   return {
-    deny: 'ahandoff: context limit reached. Stop the current work now. Call the Skill tool with skill "handoff:handoff" and follow it (run its bin/handoff-path, then Write the handoff markdown to the path it prints — include task ids, branch, worktree, round and what to do next). Then end the turn with one line. Every other tool is denied until the handoff is written.',
+    deny: 'ahandoff: context limit reached. Stop the current work now. Call the Skill tool with skill "junkd:handoff" and follow it (run its bin/handoff-path, then Write the handoff markdown to the path it prints — include task ids, branch, worktree, round and what to do next). Then end the turn with one line. Every other tool is denied until the handoff is written.',
   }
 }
 
@@ -497,7 +496,7 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     if (S.fresh) {
       // nothing: the first measurement of the new window decides (session.measure)
     } else if (S.phase === 'handoff' && !S.written) {
-      queueHandoff($) // model never wrote it mid-turn: ask /handoff as the next turn
+      queueHandoff($) // model never wrote it mid-turn: ask /junkd:handoff as the next turn
     } else if (S.phase === 'idle' && percent >= limit()) {
       S.phase = 'handoff'
       queueHandoff($)
