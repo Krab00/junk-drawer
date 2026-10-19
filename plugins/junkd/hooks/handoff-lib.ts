@@ -19,7 +19,7 @@ export const S = {
   enabled: true, // false = no auto loop at all: it cannot be armed, every loop hook passes, no 🪃 segment
   armed: false,
   phase: 'idle' as Phase,
-  prompt: DEFAULT_PROMPT, // what the fresh session is told after /handon; `p` in the pane changes it
+  prompt: DEFAULT_PROMPT, // what the fresh session is told after /junkd:handon; `p` in the pane changes it
   written: null as string | null, // handoff file written this cycle
   calls: 0,
   count: 0,
