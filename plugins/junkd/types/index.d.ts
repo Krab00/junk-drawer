@@ -10,16 +10,18 @@
 // keys in a manifest's userConfig, so the group and the field are joined by `_`, and the /config row is
 // `junkd.<group>_<field>`. The group is the part before the first `_`.
 
-export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr'
+export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr' | 'tools'
 export type JunkdHandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
 export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md'
 export type JunkdTldrField = 'enabled' | 'terse' | 'sentences'
 export type JunkdCoreField = 'output_style' | 'cache_check_sessions'
+export type JunkdToolsField = 'enabled' | 'refresh' | 'agents_only'
 export type JunkdKey =
   | `core_${JunkdCoreField}`
   | `handoff_${JunkdHandoffField}`
   | `orch_${JunkdOrchField}`
   | `tldr_${JunkdTldrField}`
+  | `tools_${JunkdToolsField}`
 export type JunkdValue = string | number | boolean
 export type JunkdOrchGuard = 'fable' | 'always' | 'off'
 export type JunkdStyle = 'ste' | 'off'
@@ -38,6 +40,8 @@ export type JunkdSchemaEntry = {
 }
 
 export type JunkdHandoffRoute = 'auto' | 'handoffs' | 'settings'
+// The tools pane's tabs: the agents tree, the tool table, the MCP servers, the skills run.
+export type JunkdToolsRoute = 'agents' | 'tools' | 'mcp' | 'skills'
 export type JunkdHandoffPhase = 'idle' | 'handoff' | 'clear' | 'resume'
 export type JunkdHandoffStatus = { armed: boolean; percent: number; phase: JunkdHandoffPhase }
 // Whether the main-loop guard holds right now (enabled and guard against the live main-loop model), and that model.
@@ -62,10 +66,12 @@ export type JunkdAhandoff = {
 // unknown pane or route) rejects the promise with the reason.
 export type JunkdGetInput = { key: JunkdKey }
 export type JunkdSetInput = { key: JunkdKey; value: JunkdValue; scope?: 'user' }
-// `open` toggles one pane: `junkd` is the /junkd set (junkd, handoff and orch as tabs), `handoff` and `orch` the
-// feature's own pane. `route` (handoff only) opens on that tab, or switches to it while the pane is up.
-export type JunkdPane = 'junkd' | 'handoff' | 'orch'
-export type JunkdOpenInput = { pane: JunkdPane; route?: JunkdHandoffRoute }
+// `open` toggles one pane: `junkd` is the /junkd set (junkd, handoff, orch and tools as tabs), `handoff`, `orch` and
+// `tools` the feature's own pane. `route` opens on that tab, or switches to it while the pane is up: each pane takes
+// its own routes (handoff a JunkdHandoffRoute, tools a JunkdToolsRoute) and refuses the others; junkd and orch have
+// no tabs.
+export type JunkdPane = 'junkd' | 'handoff' | 'orch' | 'tools'
+export type JunkdOpenInput = { pane: JunkdPane; route?: JunkdHandoffRoute | JunkdToolsRoute }
 
 export type Junkd = {
   schema(): Promise<JunkdSchemaEntry[]>

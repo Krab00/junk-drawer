@@ -6,7 +6,7 @@
 import type { JunkdGroup, JunkdKey, JunkdSchemaEntry, JunkdValue } from '../types'
 
 export const PLUGIN = 'junkd'
-export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr']
+export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr', 'tools']
 
 export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'core_output_style', group: 'core', field: 'output_style', type: 'string', title: 'Output style', default: 'ste', main: true, options: ['ste', 'off'] },
@@ -29,6 +29,9 @@ export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'tldr_enabled', group: 'tldr', field: 'enabled', type: 'boolean', title: 'TL;DR: enabled', default: true, main: true },
   { key: 'tldr_terse', group: 'tldr', field: 'terse', type: 'boolean', title: 'Terse mode', default: false, main: true },
   { key: 'tldr_sentences', group: 'tldr', field: 'sentences', type: 'number', title: 'Sentences in a summary', default: 3, main: true },
+  { key: 'tools_enabled', group: 'tools', field: 'enabled', type: 'boolean', title: 'Tools pane: enabled', default: true, main: true },
+  { key: 'tools_refresh', group: 'tools', field: 'refresh', type: 'number', title: 'Tools pane: refresh every N seconds', default: 60, main: false },
+  { key: 'tools_agents_only', group: 'tools', field: 'agents_only', type: 'boolean', title: 'Tools pane: only worktrees with an agent', default: false, main: false },
 ]
 
 export const isKey = (key: unknown): key is JunkdKey => SCHEMA.some(f => f.key === key)

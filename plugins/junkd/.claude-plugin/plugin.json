@@ -135,6 +135,24 @@
       "title": "Sentences in a summary",
       "description": "How many sentences a /junkd:tldr without a number may use.",
       "default": 3
+    },
+    "tools_enabled": {
+      "type": "boolean",
+      "title": "Tools pane: enabled",
+      "description": "Off: the tools pane closes, its tab leaves the /junkd set, /junkd:tools says it is off and no tool, MCP or skill use is counted.",
+      "default": true
+    },
+    "tools_refresh": {
+      "type": "number",
+      "title": "Tools pane: refresh every N seconds",
+      "description": "Seconds between two reads of the agents, the worktrees and the MCP schemas while the tools pane is open. A value under 10 is read as 10, one over 600 as 600.",
+      "default": 60
+    },
+    "tools_agents_only": {
+      "type": "boolean",
+      "title": "Tools pane: only worktrees with an agent",
+      "description": "The Agents tab hides the worktrees that hold no agent of this session (the main checkout stays).",
+      "default": false
     }
   }
 }
