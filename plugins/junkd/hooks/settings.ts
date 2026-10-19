@@ -10,6 +10,7 @@ export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr']
 
 export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'core_output_style', group: 'core', field: 'output_style', type: 'string', title: 'Output style', default: 'ste', main: true, options: ['ste', 'off'] },
+  { key: 'core_cache_check_sessions', group: 'core', field: 'cache_check_sessions', type: 'number', title: 'Cache check: sessions read', default: 10, main: true },
   { key: 'handoff_enabled', group: 'handoff', field: 'enabled', type: 'boolean', title: 'Auto handoff: enabled', default: true, main: true },
   { key: 'handoff_threshold', group: 'handoff', field: 'threshold', type: 'number', title: 'Auto handoff: context threshold (%)', default: 85, main: true },
   { key: 'handoff_checkEvery', group: 'handoff', field: 'checkEvery', type: 'number', title: 'Auto handoff: check every N tool calls', default: 5, main: false },

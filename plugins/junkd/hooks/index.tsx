@@ -8,12 +8,14 @@
 // - handoff.tsx: /junkd:handoff, /junkd:handon, /junkd:ahandoff, the auto handoff loop, the 🪃 segment, its pane.
 // - orch.tsx: the main-loop guard (tool.call, agent.spawn), /junkd:orch panel and its pane.
 // - tldr.tsx: /junkd:tldr's sentences and the terse flag file bin/tldr-hook reads.
-// - core.ts: the output_style row and the flag file scripts/setup.sh reads.
+// - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
+// - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
 // - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch).
 // Settings: one userConfig row per `<group>_<field>` (settings.ts), the /config row `junkd.<group>_<field>`.
 // Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; the flag files live under its junkd/ folder.
 import type { Register } from 'claude-code'
 import type { JunkdHandoffRoute } from '../types'
+import { registerCache } from './cache'
 import { coreStart, registerCore } from './core'
 import { allSettings, getSetting, openPane, setSetting } from './dispatch'
 import { handoffSegment, handoffStart, handoffStatus, handoffToolCall, registerHandoff } from './handoff'
@@ -119,6 +121,7 @@ export const register: Register = (on, options) => {
   })
 
   registerCore(on, options)
+  registerCache(on, options)
   registerHandoff(on, options)
   registerOrch(on, options)
   registerTldr(on, options)

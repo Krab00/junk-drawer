@@ -7,6 +7,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { panelView, type Els } from './junkd-views'
+import { C, applyCacheSettings } from './cache-lib'
 import { SCHEMA } from './settings'
 
 const CFG = '/fake/claude'
@@ -248,7 +249,7 @@ const junkdRows = (rec: { config: { key: string; value: unknown }[] }) => rec.co
 
 // Every group's `main` rows, in settings.ts order with `enabled` first, as the pane draws them.
 const MAIN_ROWS = [
-  'setting:core:output_style',
+  'setting:core:output_style', 'setting:core:cache_check_sessions',
   'setting:handoff:enabled', 'setting:handoff:threshold', 'setting:handoff:autoOn', 'setting:handoff:resumeAfterLimit', 'setting:handoff:segment',
   'setting:orch:enabled', 'setting:orch:guard', 'setting:orch:allow_fable_agents', 'setting:orch:implementer_ctx_k', 'setting:orch:claude_md',
   'setting:tldr:enabled', 'setting:tldr:terse', 'setting:tldr:sentences',
@@ -635,7 +636,7 @@ test('AC2: a tenth plugin has no hotkey; 1-9 stay with the first nine; the pane 
 })
 
 // Values away from the defaults where a default drawn in a value's place would show.
-const AWAY = { handoff_threshold: 70, orch_allow_fable_agents: true, tldr_sentences: 4 }
+const AWAY = { core_cache_check_sessions: 7, handoff_threshold: 70, orch_allow_fable_agents: true, tldr_sentences: 4 }
 
 test("AC3: Settings draws every group's main rows (enabled first) with their values; a letter flips a boolean through its group's set; enter saves a number, a press a choice; settings ▸ opens the pane", withOptions(AWAY), async ($, on) => {
   const rec = world(on, fixture())
@@ -676,6 +677,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   expect((await pane.find({ type: 'Input', key: 'set:handoff:threshold' }))?.props.value).toBe('70') // the value, not the default 85
   expect((await pane.find({ type: 'Input', key: 'set:orch:implementer_ctx_k' }))?.props.value).toBe('400')
   expect((await pane.find({ type: 'Input', key: 'set:tldr:sentences' }))?.props.value).toBe('4') // not the default 3
+  expect((await pane.find({ type: 'Input', key: 'set:core:cache_check_sessions' }))?.props.value).toBe('7') // not the default 10
   expect((await pane.find({ type: 'Button', key: 'set:orch:allow_fable_agents' }))?.text).toBe('off') // on by the option, off by default
   // A choice: the current option an inverse block, the others Buttons; no engine Select.
   expect(await pane.find({ type: 'Select' })).toBeUndefined()
@@ -697,6 +699,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   await pane.press({ key: 'set:tldr:terse' })
   await pane.input({ key: 'set:handoff:threshold', text: '90' })
   await pane.input({ key: 'set:tldr:sentences', text: '5' })
+  await pane.input({ key: 'set:core:cache_check_sessions', text: '12' })
   await pane.press({ key: 'set:orch:guard=always' })
   await pane.press({ key: 'set:core:output_style=off' })
   expect(junkdRows(rec)).toEqual([
@@ -709,6 +712,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
     { key: 'junkd.tldr_terse', value: true },
     { key: 'junkd.handoff_threshold', value: 90 },
     { key: 'junkd.tldr_sentences', value: 5 },
+    { key: 'junkd.core_cache_check_sessions', value: 12 },
     { key: 'junkd.orch_guard', value: 'always' },
     { key: 'junkd.core_output_style', value: 'off' },
   ])
@@ -717,7 +721,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   expect((await pane.find({ type: 'Button', key: 'set:handoff:autoOn' }))?.text).toBe('off')
   expect((await pane.find({ type: 'Button', key: 'set:tldr:terse' }))?.text).toBe('off')
   expect((await pane.find({ key: 'set:core:output_style=off' }))?.text).toBe(' off ')
-  expect(await call($, 'config')).toMatchObject({ handoff_threshold: 90, tldr_sentences: 5, orch_guard: 'always', orch_enabled: false, tldr_enabled: false, core_output_style: 'off' })
+  expect(await call($, 'config')).toMatchObject({ handoff_threshold: 90, tldr_sentences: 5, orch_guard: 'always', orch_enabled: false, tldr_enabled: false, core_output_style: 'off', core_cache_check_sessions: 12 })
   // A refused set is the note, nothing else; the field is redrawn under its next key (fieldKey).
   const rows = junkdRows(rec).length
   await pane.input({ key: 'set:orch:implementer_ctx_k', text: '0' })
@@ -1140,11 +1144,88 @@ test('AC3: a write another hook refuses leaves the flag file alone, on both path
   expect(styleRms(rec)).toHaveLength(2)
 })
 
+// ------------------------------------------------------------------ core_cache_check_sessions (the cache check's N)
+
+const CACHE_ROW = 'junkd.core_cache_check_sessions'
+const cacheWhy = (raw: unknown) => `junkd: ${String(raw)} is not a valid cache_check_sessions (a whole number 0–30)`
+
+test('AC3: set core_cache_check_sessions takes a whole number 0-30 (the bounds included), a numeric string too; get and config follow', W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  expect(await call($, 'get', { key: 'core_cache_check_sessions' })).toBe(10) // the manifest default
+  for (const [raw, value] of [[0, 0], [30, 30], [1, 1], [29, 29], ['7', 7], [' 12 ', 12], [10, 10]] as const) {
+    expect(await call($, 'set', { key: 'core_cache_check_sessions', value: raw }), String(raw)).toBe(value)
+    expect(rec.config.at(-1), String(raw)).toEqual({ key: CACHE_ROW, value })
+    expect(await call($, 'get', { key: 'core_cache_check_sessions' }), String(raw)).toBe(value)
+  }
+  await call($, 'set', { key: 'core_cache_check_sessions', value: 0 })
+  expect(await call($, 'config')).toMatchObject({ core_cache_check_sessions: 0 })
+})
+
+test('AC3: set core_cache_check_sessions refuses 31, -1, 2.5 and what is no number; the row and get untouched', W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await call($, 'set', { key: 'core_cache_check_sessions', value: 5 })
+  const rows = rec.config.length
+  for (const bad of [31, -1, 2.5, 29.5, '31', '-1', '2.5', 'x', '', ' ', true, false, null]) {
+    expect(await refusal($, 'set', { key: 'core_cache_check_sessions', value: bad }), String(bad)).toContain(cacheWhy(bad))
+    expect(await call($, 'get', { key: 'core_cache_check_sessions' }), String(bad)).toBe(5)
+  }
+  expect(rec.config).toHaveLength(rows)
+})
+
+test('AC3: the /config menu writes to junkd.core_cache_check_sessions as set does: 0 and 30 stored as numbers, 31, -1 and 2.5 denied', W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  for (const [raw, value] of [[0, 0], ['30', 30], [30, 30], [' 4 ', 4]] as const) {
+    expect(await menuSet($, CACHE_ROW, raw), String(raw)).toEqual({ value })
+    expect(rec.config.at(-1), String(raw)).toEqual({ key: CACHE_ROW, value })
+    expect(await call($, 'get', { key: 'core_cache_check_sessions' }), String(raw)).toBe(value)
+  }
+  const rows = rec.config.length
+  for (const bad of [31, -1, 2.5, 'x', true]) {
+    expect(await menuSet($, CACHE_ROW, bad), String(bad)).toEqual({ deny: cacheWhy(bad) })
+    expect(await call($, 'get', { key: 'core_cache_check_sessions' }), String(bad)).toBe(4)
+  }
+  expect(rec.config).toHaveLength(rows)
+  // the output_style row still has its own check beside it
+  expect(await menuSet($, 'junkd.core_output_style', 7)).toEqual({ deny: 'junkd: 7 is not a valid output_style (ste or off)' })
+})
+
+test('AC3: a write another hook refuses keeps the old value, on both paths', W, async ($, on) => {
+  on('config.set', { key: CACHE_ROW }, () => ({ deny: 'locked' }))
+  world(on, fixture())
+  await start($)
+  expect(await menuSet($, CACHE_ROW, 3)).toEqual({ deny: 'locked' })
+  expect(await refusal($, 'set', { key: 'core_cache_check_sessions', value: 3 })).toContain('locked')
+  expect(await call($, 'get', { key: 'core_cache_check_sessions' })).toBe(10)
+})
+
+// The option at load is no write: rounded. The host holds an option to the manifest's type, min and max before the
+// module loads (31, -1 or a string fails the load of the whole module), so only these reach register through it;
+// the clamp of the rest is applyCacheSettings' own (below).
+for (const [stored, value] of [[0, 0], [30, 30], [2.5, 3], [2.4, 2], [29.6, 30]] as const) {
+  test(`AC3: a core_cache_check_sessions option of ${JSON.stringify(stored)} at load reads as ${value}`, withOptions({ core_cache_check_sessions: stored }), async ($, on) => {
+    world(on, fixture())
+    await start($)
+    expect(await call($, 'get', { key: 'core_cache_check_sessions' })).toBe(value)
+  })
+}
+
+test('AC3: applyCacheSettings: out of range clamped to the bound, a numeric string taken, anything else the default', () => {
+  for (const [stored, value] of [[0, 0], [30, 30], [31, 30], [-1, 0], [1000, 30], [-0.4, 0], [2.5, 3], ['12', 12], [' 7 ', 7], ['31', 30], ['x', 10], ['', 10], [' ', 10], [true, 10], [null, 10], [undefined, 10], [Number.NaN, 10], [Infinity, 10]] as const) {
+    C.sessions = -99
+    applyCacheSettings(stored)
+    expect(C.sessions, String(stored)).toBe(value)
+  }
+  C.sessions = 10
+})
+
 // ------------------------------------------------------------------ the `$.junkd` noun (index.tsx)
 
 // The manifest's userConfig rows, in order (tests/smoke.sh holds settings.ts to plugin.json row for row).
 const MANIFEST_KEYS = [
-  'core_output_style',
+  'core_output_style', 'core_cache_check_sessions',
   'handoff_enabled', 'handoff_threshold', 'handoff_checkEvery', 'handoff_autoOn', 'handoff_resumeAfterLimit', 'handoff_staleDays', 'handoff_segment',
   'orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md',
   'tldr_enabled', 'tldr_terse', 'tldr_sentences',
@@ -1163,6 +1244,7 @@ test('$.junkd.schema() is the manifest rows: keys, groups and fields, in order, 
   expect([...new Set(schema.map(f => f.group))]).toEqual(['core', 'handoff', 'orch', 'tldr'])
   for (const g of ['handoff', 'orch', 'tldr']) expect(schema.find(f => f.group === g)?.field, g).toBe('enabled')
   expect(schema.find(f => f.key === 'core_output_style')).toMatchObject({ type: 'string', default: 'ste', options: ['ste', 'off'], main: true })
+  expect(schema.find(f => f.key === 'core_cache_check_sessions')).toEqual({ key: 'core_cache_check_sessions', group: 'core', field: 'cache_check_sessions', type: 'number', title: 'Cache check: sessions read', default: 10, main: true })
 })
 
 test('$.junkd.config() answers every row: the defaults, then the values the options and the writes gave', withOptions(AWAY), async ($, on) => {
