@@ -79,7 +79,7 @@ async function orchPlace($: $, path: string, cfg: string, repo: string): Promise
   }
 }
 
-// The session's repo (git's toplevel of its cwd), whose .orch/ is the task store /orch reads first; '' when the
+// The session's repo (git's toplevel of its cwd), whose .orch/ is the task store /junkd:orch reads first; '' when the
 // cwd is in no repo or git fails. Cached per cwd: a `/cd` moves it.
 const repos = new Map<string, string>()
 async function sessionRepo($: $): Promise<string> {
