@@ -255,8 +255,9 @@ const MAIN_ROWS = [
   'setting:tldr:enabled', 'setting:tldr:terse', 'setting:tldr:sentences',
   'setting:ctx:enabled', 'setting:ctx:threshold', 'setting:ctx:action',
   'setting:statusline:enabled',
+  'setting:tools:enabled',
 ]
-const GROUP_BOXES = ['group:core', 'group:handoff', 'group:orch', 'group:tldr', 'group:ctx', 'group:statusline']
+const GROUP_BOXES = ['group:core', 'group:handoff', 'group:orch', 'group:tldr', 'group:ctx', 'group:statusline', 'group:tools']
 
 test('paths: CLAUDE_CONFIG_DIR and HOME unset -> `sh -c echo $HOME`, trimmed, then /.claude', W, async ($, on) => {
   const files: Record<string, string> = {
@@ -309,6 +310,7 @@ test("AC6: ✚ junkd is drawn under the prompt, alone or beside what is beneath 
     { id: 'ahandoff', title: 'handoff', focus: undefined },
     { id: 'orch', title: 'orch', focus: undefined },
     { id: 'statusline', title: 'statusline', focus: undefined },
+    { id: 'junkd-tools', title: 'tools', focus: undefined },
   ])
   expect(closes(rec, 'junkd')).toEqual([])
   await hint.press({ key: 'junkd-toggle' })
@@ -355,19 +357,19 @@ test('AC6: /junkd and /junkd:junkd toggle the pane; q closes it; a close by the 
 })
 
 // The set's calls as they arrive: junkd's own open first (before any await), then each feature pane closed (one
-// open on its own would keep its tab ahead of junkd's), then all three opened in tab order, marked as the set's; closing
+// open on its own would keep its tab ahead of junkd's), then each opened in tab order, marked as the set's; closing
 // closes junkd and each feature pane only while it is still the set's. handoff's pane is `ahandoff`.
-const OPEN_SET = ['ui.open junkd focus', 'ui.close ahandoff', 'ui.close orch', 'ui.close statusline', 'ui.open ahandoff', 'ui.open orch', 'ui.open statusline']
-const CLOSE_SET = ['ui.close junkd', 'ui.close ahandoff', 'ui.close orch', 'ui.close statusline']
+const OPEN_SET = ['ui.open junkd focus', 'ui.close ahandoff', 'ui.close orch', 'ui.close statusline', 'ui.close junkd-tools', 'ui.open ahandoff', 'ui.open orch', 'ui.open statusline', 'ui.open junkd-tools']
+const CLOSE_SET = ['ui.close junkd', 'ui.close ahandoff', 'ui.close orch', 'ui.close statusline', 'ui.close junkd-tools']
 
-test('AC1: /junkd, /junkd:junkd, ✚ junkd and q open the set (junkd focused, then handoff, orch, statusline) and close all four', W, async ($, on) => {
+test('AC1: /junkd, /junkd:junkd, ✚ junkd and q open the set (junkd focused, then handoff, orch, statusline, tools) and close all five', W, async ($, on) => {
   const rec = world(on, fixture())
   await start($)
   for (const command of ['junkd', 'junkd:junkd']) {
     rec.log.length = 0
     await run($, command)
     expect(rec.log, command).toEqual(OPEN_SET)
-    expect(rec.tabs, command).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+    expect(rec.tabs, command).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
     rec.log.length = 0
     await run($, command)
     expect(rec.log, command).toEqual(CLOSE_SET)
@@ -389,16 +391,17 @@ test('AC1: /junkd, /junkd:junkd, ✚ junkd and q open the set (junkd focused, th
   expect(rec.toasts).toEqual([])
 })
 
-test('AC1: the tabs are junkd, handoff, orch, statusline; only junkd asks for the keys; a second /junkd closes all four', W, async ($, on) => {
+test('AC1: the tabs are junkd, handoff, orch, statusline, tools; only junkd asks for the keys; a second /junkd closes all five', W, async ($, on) => {
   const rec = world(on, fixture())
   await start($)
   await run($, 'junkd')
-  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
   expect(rec.opens).toEqual([
     { id: 'junkd', title: 'junkd', focus: true },
     { id: 'ahandoff', title: 'handoff', focus: undefined },
     { id: 'orch', title: 'orch', focus: undefined },
     { id: 'statusline', title: 'statusline', focus: undefined },
+    { id: 'junkd-tools', title: 'tools', focus: undefined },
   ])
   await run($, 'junkd')
   expect(rec.tabs).toEqual([])
@@ -410,31 +413,31 @@ test('AC2: a feature pane open on its own is closed and reopened behind junkd; o
   await run($, 'junkd:handoff', 'panel') // handoff's own toggle
   expect(rec.tabs).toEqual(['ahandoff'])
   await run($, 'junkd')
-  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline']) // never ahead of junkd
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools']) // never ahead of junkd
   await run($, 'junkd')
   expect(rec.tabs).toEqual([]) // reopened in the set: the set's now
 
   await run($, 'junkd')
   await run($, 'junkd:handoff', 'panel') // the person closes handoff ...
-  expect(rec.tabs).toEqual(['junkd', 'orch', 'statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'orch', 'statusline', 'junkd-tools'])
   await run($, 'junkd:handoff', 'panel') // ... and opens it on its own
-  expect(rec.tabs).toEqual(['junkd', 'orch', 'statusline', 'ahandoff'])
+  expect(rec.tabs).toEqual(['junkd', 'orch', 'statusline', 'junkd-tools', 'ahandoff'])
   await run($, 'junkd')
   expect(rec.tabs).toEqual(['ahandoff']) // the set closes without it
 
   await run($, 'junkd:orch', 'panel')
   expect(rec.tabs).toEqual(['ahandoff', 'orch'])
   await run($, 'junkd') // both up on their own: both go behind junkd
-  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
 })
 
-test('AC1: the set opens and closes the junkd, ahandoff, orch and statusline panes and nothing else (tldr and ctx have no pane)', W, async ($, on) => {
+test('AC1: the set opens and closes the junkd, ahandoff, orch, statusline and junkd-tools panes and nothing else (tldr and ctx have no pane)', W, async ($, on) => {
   const rec = world(on, fixture())
   await start($)
   await run($, 'junkd')
   await run($, 'junkd')
   expect(rec.log).toEqual([...OPEN_SET, ...CLOSE_SET])
-  expect(rec.opens.map(o => o.id)).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.opens.map(o => o.id)).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
 })
 
 test('AC1: junkd opens and every feature pane goes out before the pane data is read (a held read does not delay them)', W, async ($, on) => {
@@ -457,22 +460,22 @@ test('AC2: a set pane the person closes by hand loses the mark: closing the set 
   await run($, 'junkd')
   const before = rec.closed.length
   await run($, 'shut', 'ahandoff') // the person's close mark on handoff's tab
-  expect(rec.tabs).toEqual(['junkd', 'orch', 'statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'orch', 'statusline', 'junkd-tools'])
   await run($, 'junkd')
   expect(rec.tabs).toEqual([])
   // handoff closed exactly once from here: the person's close; the set's close leaves it alone
-  expect(rec.closed.slice(before)).toEqual(['ahandoff', 'junkd', 'orch', 'statusline'])
+  expect(rec.closed.slice(before)).toEqual(['ahandoff', 'junkd', 'orch', 'statusline', 'junkd-tools'])
 })
 
 test("AC2: the person's close of junkd (×, the tab's close) closes the set's feature panes too; one opened on its own stays", W, async ($, on) => {
   const rec = world(on, fixture())
   await start($)
   await run($, 'junkd')
-  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
   await run($, 'shut', 'junkd')
   expect(rec.tabs).toEqual([])
   await run($, 'junkd') // the next toggle opens the set again
-  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
   await run($, 'junkd:handoff', 'panel') // the person closes handoff ...
   await run($, 'junkd:handoff', 'panel') // ... and opens it on its own
   await run($, 'shut', 'junkd')
@@ -531,7 +534,7 @@ test('AC3: settings ▸ whose focused open is refused: open, junkd closes, the f
   rec.denyFocusedOpen.orch = 'orch: keys refused'
   const at = rec.log.length
   await pane.press({ key: 'pane:orch' })
-  expect(rec.log.slice(at)).toEqual(['ui.open orch', 'ui.close junkd', 'ui.close ahandoff', 'ui.close statusline', 'ui.open orch focus'])
+  expect(rec.log.slice(at)).toEqual(['ui.open orch', 'ui.close junkd', 'ui.close ahandoff', 'ui.close statusline', 'ui.close junkd-tools', 'ui.open orch focus'])
   expect(rec.toasts).toHaveLength(1)
   expect(rec.toasts[0]).toMatch(/^✗ .*orch: keys refused$/)
 })
@@ -548,7 +551,7 @@ test('AC5: the header is ✚ junkd, the marketplace and the short sha of its che
     // its own box that never shrinks, so a long subtitle cannot wrap it ("Plugin" / "s")
     expect((await pane.find({ type: 'Box', key: `title:${heading}` }))?.props.flexShrink, heading).toBe(0)
   }
-  expect((await pane.find({ type: 'Text', text: /^the main settings of/ }))?.text).toBe('the main settings of core, handoff, orch, tldr, ctx, statusline')
+  expect((await pane.find({ type: 'Text', text: /^the main settings of/ }))?.text).toBe('the main settings of core, handoff, orch, tldr, ctx, statusline, tools')
   const mark = (await pane.findAll({ type: 'Text' })).find(t => t.text === '✚ junkd')
   expect(mark?.props.color).toBe('claude')
   expect(mark?.props.bold).toBe(true)
@@ -660,7 +663,7 @@ test('AC2: a tenth plugin has no hotkey; 1-9 stay with the first nine; the pane 
   world(on, files)
   const pane = await openPane($)
   for (const [i, n] of names.entries()) expect((await pane.find({ type: 'Button', key: `plugin:${n}` }))?.props.hotkey, n).toBe(i < 9 ? String(i + 1) : undefined)
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-9 plugin  a-k setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-9 plugin  a-l setting  tab move  q close')
 })
 
 // Values away from the defaults where a default drawn in a value's place would show.
@@ -670,10 +673,10 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   const rec = world(on, fixture())
   const pane = await openPane($)
 
-  // Each group: a blank row (marginTop), a dim rule, its name bold in the accent colour; handoff, orch and
-  // statusline have `settings ▸`, core, tldr and ctx have no pane.
+  // Each group: a blank row (marginTop), a dim rule, its name bold in the accent colour; handoff, orch,
+  // statusline and tools have `settings ▸`, core, tldr and ctx have no pane.
   expect(await keysOf(pane, 'group:')).toEqual(GROUP_BOXES)
-  for (const group of ['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline']) {
+  for (const group of ['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools']) {
     expect((await pane.find({ type: 'Box', key: `group:${group}` }))?.props.marginTop, group).toBe(1)
     const nodes = await pane.findAll({ type: 'Text' })
     const at = nodes.findLastIndex(t => t.text === group)
@@ -683,6 +686,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   }
   expect((await pane.find({ type: 'Button', key: 'pane:handoff' }))?.text).toBe('settings ▸')
   expect((await pane.find({ type: 'Button', key: 'pane:orch' }))?.text).toBe('settings ▸')
+  expect((await pane.find({ type: 'Button', key: 'pane:tools' }))?.text).toBe('settings ▸')
   expect(await pane.find({ type: 'Button', key: 'pane:core' })).toBeUndefined()
   expect((await pane.find({ type: 'Button', key: 'pane:statusline' }))?.text).toBe('settings ▸')
   expect(await pane.find({ type: 'Button', key: 'pane:tldr' })).toBeUndefined()
@@ -697,9 +701,9 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
     expect(row?.text, f.key).toContain(f.field)
     expect(row?.text, f.key).toContain(f.title)
   }
-  // The switches, a-k in drawn order, each showing the value its group answers.
-  const switches = ['handoff:enabled', 'handoff:autoOn', 'handoff:resumeAfterLimit', 'handoff:segment', 'orch:enabled', 'orch:allow_fable_agents', 'orch:claude_md', 'tldr:enabled', 'tldr:terse', 'ctx:enabled', 'statusline:enabled']
-  for (const [i, k] of switches.entries()) expect((await pane.find({ type: 'Button', key: `set:${k}` }))?.props.hotkey, k).toBe('abcdefghijk'[i])
+  // The switches, a-l in drawn order, each showing the value its group answers.
+  const switches = ['handoff:enabled', 'handoff:autoOn', 'handoff:resumeAfterLimit', 'handoff:segment', 'orch:enabled', 'orch:allow_fable_agents', 'orch:claude_md', 'tldr:enabled', 'tldr:terse', 'ctx:enabled', 'statusline:enabled', 'tools:enabled']
+  for (const [i, k] of switches.entries()) expect((await pane.find({ type: 'Button', key: `set:${k}` }))?.props.hotkey, k).toBe('abcdefghijkl'[i])
   expect((await pane.find({ type: 'Button', key: 'set:ctx:enabled' }))?.text).toBe('on') // off by default
   expect((await pane.find({ type: 'Button', key: 'set:statusline:enabled' }))?.text).toBe('off') // on by default
   expect((await pane.find({ type: 'Input', key: 'set:ctx:threshold' }))?.props.value).toBe('300000')
@@ -720,7 +724,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   expect((await pane.find({ type: 'Button', key: 'set:orch:guard=always' }))?.text).toBe('always')
   expect((await pane.find({ key: 'set:core:output_style=ste' }))?.text).toBe(' ste ')
   expect((await pane.find({ type: 'Button', key: 'set:core:output_style=off' }))?.text).toBe('off')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-k setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-l setting  tab move  q close')
 
   // Each write goes to its group's row through the group's set: a flip sends the other state, a number as typed
   // (the group coerces and validates it), a choice its option.
@@ -789,7 +793,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   // it is the person's pane from then on.
   let at = rec.log.length
   await pane.press({ key: 'pane:handoff' })
-  expect(rec.log.slice(at)).toEqual(['ui.open ahandoff', 'ui.close junkd', 'ui.close orch', 'ui.close statusline', 'ui.open ahandoff focus'])
+  expect(rec.log.slice(at)).toEqual(['ui.open ahandoff', 'ui.close junkd', 'ui.close orch', 'ui.close statusline', 'ui.close junkd-tools', 'ui.open ahandoff focus'])
   at = rec.log.length
   await pane.press({ key: 'pane:orch' })
   expect(rec.log.slice(at)).toEqual(['ui.open orch', 'ui.close junkd', 'ui.open orch focus']) // handoff is the person's now
@@ -813,7 +817,7 @@ test("AC3: Settings draws every group whatever the marketplace's entries say; a 
   rec.denyOpen.orch = 'orch: no room'
   const at = rec.log.length
   await pane.press({ key: 'pane:orch' })
-  expect(rec.log.slice(at)).toEqual(['ui.open orch', 'ui.close junkd', 'ui.close ahandoff', 'ui.close statusline'])
+  expect(rec.log.slice(at)).toEqual(['ui.open orch', 'ui.close junkd', 'ui.close ahandoff', 'ui.close statusline', 'ui.close junkd-tools'])
   expect(rec.toasts).toHaveLength(1)
   expect(rec.toasts[0]).toMatch(/^✗ .*orch: no room$/)
 })
@@ -850,14 +854,14 @@ test('AC5: with no other plugin on, /junkd opens the set with Plugins, every set
   const rec = world(on, fixture({}))
   rec.commands = [{ name: 'junkd', description: 'Toggle the junkd pane', source: 'plugin', plugin: 'junkd' }]
   const pane = await openPane($)
-  expect(rec.opens.map(o => o.id)).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.opens.map(o => o.id)).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
   for (const heading of ['Plugins', 'Settings', 'Commands']) expect((await pane.find({ type: 'Text', text: heading }))?.text, heading).toBe(heading)
   expect(await keysOf(pane, 'group:')).toEqual(GROUP_BOXES)
   expect(await keysOf(pane, 'setting:')).toEqual(MAIN_ROWS)
   expect(await pane.find({ key: 'no-settings' })).toBeUndefined()
   expect((await pane.find({ type: 'Text', text: '/junkd' }))?.text).toBe('/junkd')
   expect((await pane.find({ key: 'note' }))?.text).toBe('')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-k setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-l setting  tab move  q close')
 })
 
 test('AC6: PromptHint with nothing beneath (next throws) -> the toggle alone, and it still opens', withOptions({ handoff_segment: false }), async ($, on) => {
@@ -909,7 +913,7 @@ test('AC2: no marketplace.json anywhere -> the error note and no plugin rows; Se
   expect(await keysOf(pane, 'setting:')).toEqual(MAIN_ROWS)
   expect(await pane.find({ key: 'no-settings' })).toBeUndefined()
   expect((await pane.find({ type: 'Text', text: 'No commands.' }))?.text).toBe('No commands.')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-k setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-l setting  tab move  q close')
 })
 
 test('AC2: a broken marketplace.json is the note; an empty object draws no rows and the default name', W, async ($, on) => {
@@ -928,7 +932,7 @@ test('AC2: a broken marketplace.json is the note; an empty object draws no rows 
   expect((await pane3.find({ key: 'note' }))?.text).toBe('')
   expect(await keysOf(pane3, 'plugin-row:')).toEqual([])
   expect((await pane3.find({ type: 'Text', text: /junk-drawer$/ }))?.text).toBe('✚ junkd  junk-drawer')
-  expect((await pane3.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-k setting  tab move  q close')
+  expect((await pane3.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-l setting  tab move  q close')
 })
 
 test('AC2: no settings.json yet -> created with enabledPlugins only, the temp file gone', W, async ($, on) => {
@@ -1078,7 +1082,7 @@ test('AC3: after settings ▸ the next /junkd opens again; a reopen clears the n
   expect((await pane.find({ key: 'note' }))?.text).toBe('✓ orch.guard = "off"')
   const at = rec.log.length
   await pane.press({ key: 'pane:orch' })
-  expect(rec.log.slice(at)).toEqual(['ui.open orch', 'ui.close junkd', 'ui.close ahandoff', 'ui.close statusline', 'ui.open orch focus'])
+  expect(rec.log.slice(at)).toEqual(['ui.open orch', 'ui.close junkd', 'ui.close ahandoff', 'ui.close statusline', 'ui.close junkd-tools', 'ui.open orch focus'])
   expect(closes(rec, 'junkd')).toEqual(['junkd'])
   await pane.unmount()
   await run($, 'junkd')
@@ -1282,6 +1286,7 @@ const MANIFEST_KEYS = [
   'tldr_enabled', 'tldr_terse', 'tldr_sentences',
   'ctx_enabled', 'ctx_threshold', 'ctx_action', 'ctx_cmd',
   'statusline_enabled', 'statusline_ctx', 'statusline_branch', 'statusline_worktree', 'statusline_model', 'statusline_effort', 'statusline_limits',
+  'tools_enabled', 'tools_refresh', 'tools_agents_only',
 ]
 
 test('$.junkd.schema() is the manifest rows: keys, groups and fields, in order, each feature group led by enabled', W, async ($, on) => {
@@ -1294,8 +1299,8 @@ test('$.junkd.schema() is the manifest rows: keys, groups and fields, in order, 
     expect(typeof f.default, f.key).toBe(f.type)
     expect(f.title, f.key).toMatch(/\S/)
   }
-  expect([...new Set(schema.map(f => f.group))]).toEqual(['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline'])
-  for (const g of ['handoff', 'orch', 'tldr', 'ctx', 'statusline']) expect(schema.find(f => f.group === g)?.field, g).toBe('enabled')
+  expect([...new Set(schema.map(f => f.group))]).toEqual(['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools'])
+  for (const g of ['handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools']) expect(schema.find(f => f.group === g)?.field, g).toBe('enabled')
   expect(schema.find(f => f.key === 'core_output_style')).toMatchObject({ type: 'string', default: 'ste', options: ['ste', 'off'], main: true })
   expect(schema.find(f => f.key === 'core_cache_check_sessions')).toEqual({ key: 'core_cache_check_sessions', group: 'core', field: 'cache_check_sessions', type: 'number', title: 'Cache check: sessions read', default: 10, main: true })
 })
