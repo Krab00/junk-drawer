@@ -314,7 +314,7 @@ test("AC6: ✚ junkd is drawn under the prompt, alone or beside what is beneath 
   ])
   expect(closes(rec, 'junkd')).toEqual([])
   await hint.press({ key: 'junkd-toggle' })
-  expect(rec.opens).toHaveLength(4)
+  expect(rec.opens).toHaveLength(5)
   expect(closes(rec, 'junkd')).toEqual(['junkd'])
   expect(rec.tabs).toEqual([])
 })
@@ -508,13 +508,13 @@ test("AC3: settings ▸ on statusline opens the statusline pane unfocused, close
   const rec = world(on, fixture())
   await start($)
   await run($, 'junkd')
-  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
   const pane = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
   expect((await pane.find({ type: 'Button', key: 'pane:statusline' }))?.text).toBe('settings ▸')
   const at = rec.log.length
   await pane.press({ key: 'pane:statusline' })
   // statuslineShow: the first open without focus (junkd still holds the keys), the second with it.
-  expect(rec.log.slice(at)).toEqual(['ui.open statusline', 'ui.close junkd', 'ui.close ahandoff', 'ui.close orch', 'ui.open statusline focus'])
+  expect(rec.log.slice(at)).toEqual(['ui.open statusline', 'ui.close junkd', 'ui.close ahandoff', 'ui.close orch', 'ui.close junkd-tools', 'ui.open statusline focus'])
   expect(rec.opens.filter(o => o.id === 'statusline').slice(-2)).toEqual([
     { id: 'statusline', title: 'statusline', focus: undefined },
     { id: 'statusline', title: 'statusline', focus: true },
@@ -523,7 +523,7 @@ test("AC3: settings ▸ on statusline opens the statusline pane unfocused, close
   expect(rec.toasts).toEqual([])
   await pane.unmount()
   await run($, 'junkd') // statusline is the person's now: the set opens behind junkd ...
-  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools'])
   await run($, 'junkd') // ... and, reopened in the set, closes with it
   expect(rec.tabs).toEqual([])
 })
