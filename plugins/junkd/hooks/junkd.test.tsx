@@ -6,6 +6,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { panelStart } from './panel'
 import { panelView, type Els } from './junkd-views'
 import { C, applyCacheSettings } from './cache-lib'
 import { SCHEMA } from './settings'
@@ -896,7 +897,10 @@ test('T27: session.start never registers the bare junkd command (the engine refu
 test('T27: a refusing command.register or a failing ui.panes leaves session.start resolved and the segment drawn', W, async ($, on) => {
   const rec = world(on, fixture(), { registerThrows: true, panesThrows: true })
   await start($)
-  expect(rec.started).toBe(1) // a start step that threw would have skipped next()
+  expect(rec.started).toBe(1)
+  // The engine swallows a throwing hook, so the start step itself is called with the same failures.
+  const failing = { ui: { panes: () => Promise.reject(new Error('panes broke')) }, command: { register: () => Promise.reject(new Error('refused')) } }
+  await expect(panelStart(failing as never)).resolves.toBeUndefined()
   const hint = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...HINT })
   expect((await hint.find({ type: 'Button', key: 'junkd-toggle' }))?.text).toBe('✚ junkd')
 })
