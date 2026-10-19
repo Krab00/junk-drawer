@@ -2,13 +2,15 @@
 // function only when it is called by name, so each group is spelled out with its own `if` (see feature.ts).
 import type { JunkdKey, JunkdValue } from '../types'
 import { coreGet, coreSet } from './core'
+import { ctxGet, ctxSet } from './ctx'
 import type { $, HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { handoffGet, handoffHide, handoffOpen, handoffSet, handoffShow } from './handoff'
 import { orchGet, orchHide, orchOpen, orchSet, orchShow } from './orch'
 import { SCHEMA, entryOf } from './settings'
+import { statuslineGet, statuslineHide, statuslineOpen, statuslineSet, statuslineShow } from './statusline'
 import { tldrGet, tldrSet } from './tldr'
 
-export type FeaturePane = 'handoff' | 'orch'
+export type FeaturePane = 'handoff' | 'orch' | 'statusline'
 
 // One row's current value. The key is a row of SCHEMA (the caller checked).
 export async function getSetting($: $, key: JunkdKey): Promise<JunkdValue> {
@@ -16,6 +18,8 @@ export async function getSetting($: $, key: JunkdKey): Promise<JunkdValue> {
   if (group === 'core') return coreGet($, field)
   if (group === 'handoff') return handoffGet($, field)
   if (group === 'orch') return orchGet($, field)
+  if (group === 'ctx') return ctxGet($, field)
+  if (group === 'statusline') return statuslineGet($, field)
   return tldrGet($, field)
 }
 
@@ -25,6 +29,8 @@ export async function setSetting($: $, key: JunkdKey, raw: unknown): Promise<Set
   if (group === 'core') return coreSet($, field, raw)
   if (group === 'handoff') return handoffSet($, field, raw)
   if (group === 'orch') return orchSet($, field, raw)
+  if (group === 'ctx') return ctxSet($, field, raw)
+  if (group === 'statusline') return statuslineSet($, field, raw)
   return tldrSet($, field, raw)
 }
 
@@ -37,13 +43,16 @@ export async function allSettings($: $): Promise<Record<JunkdKey, JunkdValue>> {
 
 export async function showPane($: $, pane: FeaturePane, input: ShowInput = {}): Promise<void> {
   if (pane === 'handoff') return handoffShow($, input)
+  if (pane === 'statusline') return statuslineShow($, input)
   return orchShow($, input)
 }
 export async function hidePane($: $, pane: FeaturePane, input: HideInput = {}): Promise<void> {
   if (pane === 'handoff') return handoffHide($, input)
+  if (pane === 'statusline') return statuslineHide($, input)
   return orchHide($, input)
 }
 export async function openPane($: $, pane: FeaturePane, input: OpenInput = {}): Promise<void> {
   if (pane === 'handoff') return handoffOpen($, input)
+  if (pane === 'statusline') return statuslineOpen($, input)
   return orchOpen($, input)
 }

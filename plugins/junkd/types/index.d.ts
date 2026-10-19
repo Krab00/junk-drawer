@@ -10,19 +10,26 @@
 // keys in a manifest's userConfig, so the group and the field are joined by `_`, and the /config row is
 // `junkd.<group>_<field>`. The group is the part before the first `_`.
 
-export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr'
+export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr' | 'ctx' | 'statusline'
 export type JunkdHandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
 export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md'
 export type JunkdTldrField = 'enabled' | 'terse' | 'sentences'
 export type JunkdCoreField = 'output_style' | 'cache_check_sessions'
+export type JunkdCtxField = 'enabled' | 'threshold' | 'action' | 'cmd'
+// The status line's segments, in the order the line draws them; each is the row `statusline_<segment>`.
+export type JunkdStatuslineSegment = 'ctx' | 'branch' | 'worktree' | 'model' | 'effort' | 'limits'
+export type JunkdStatuslineField = 'enabled' | JunkdStatuslineSegment
 export type JunkdKey =
   | `core_${JunkdCoreField}`
   | `handoff_${JunkdHandoffField}`
   | `orch_${JunkdOrchField}`
   | `tldr_${JunkdTldrField}`
+  | `ctx_${JunkdCtxField}`
+  | `statusline_${JunkdStatuslineField}`
 export type JunkdValue = string | number | boolean
 export type JunkdOrchGuard = 'fable' | 'always' | 'off'
 export type JunkdStyle = 'ste' | 'off'
+export type JunkdCtxAction = 'block' | 'warn' | 'cmd'
 
 // One row of schema(): the manifest's userConfig row (a string row with `options` is a choice), its group and
 // field, and `main` (the rows the /junkd pane draws in its Settings section; the rest live in the feature's pane).
@@ -62,9 +69,10 @@ export type JunkdAhandoff = {
 // unknown pane or route) rejects the promise with the reason.
 export type JunkdGetInput = { key: JunkdKey }
 export type JunkdSetInput = { key: JunkdKey; value: JunkdValue; scope?: 'user' }
-// `open` toggles one pane: `junkd` is the /junkd set (junkd, handoff and orch as tabs), `handoff` and `orch` the
-// feature's own pane. `route` (handoff only) opens on that tab, or switches to it while the pane is up.
-export type JunkdPane = 'junkd' | 'handoff' | 'orch'
+// `open` toggles one pane: `junkd` is the /junkd set (junkd, handoff, orch and statusline as tabs), `handoff`, `orch`
+// and `statusline` the feature's own pane. `route` (handoff only) opens on that tab, or switches to it while the pane
+// is up.
+export type JunkdPane = 'junkd' | 'handoff' | 'orch' | 'statusline'
 export type JunkdOpenInput = { pane: JunkdPane; route?: JunkdHandoffRoute }
 
 export type Junkd = {

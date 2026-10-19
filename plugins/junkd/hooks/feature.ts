@@ -1,5 +1,5 @@
-// The shapes every feature file (core.ts, handoff.tsx, orch.tsx, tldr.tsx, panel.tsx) shares with index.tsx and
-// dispatch.ts. `$`-free, types and constants only.
+// The shapes every feature file (core.ts, handoff.tsx, orch.tsx, tldr.tsx, ctx.ts, statusline.tsx, panel.tsx) shares
+// with index.tsx and dispatch.ts. `$`-free, types and constants only.
 //
 // The engine takes `$` into a function of another file only when that function is called by its own name
 // (`handoffGet($, field)`), never through an object or a table (`SETTINGS[group].get($, ...)` fails the load). So

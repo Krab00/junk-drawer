@@ -1,7 +1,7 @@
 {
   "name": "junkd",
-  "description": "One plugin for handoff, orch and tldr, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff and orch tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr) and the commands. The hooks module exports $.junkd for other mods.",
-  "version": "0.4.0",
+  "description": "One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens and the status line, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd:ctx-limit sets a context-size limit a prompt hook enforces (block, warn or a command); /junkd:ctx-tokens reads the live context usage. /junkd:statusline wires a colored status line (context, branch, worktree, model, effort, rate limits; each segment a setting) into settings.json. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff, orch and statusline tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr, ctx, statusline) and the commands. The hooks module exports $.junkd for other mods.",
+  "version": "0.5.0",
   "author": {
     "name": "Krab00"
   },
@@ -135,6 +135,77 @@
       "title": "Sentences in a summary",
       "description": "How many sentences a /junkd:tldr without a number may use.",
       "default": 3
+    },
+    "ctx_enabled": {
+      "type": "boolean",
+      "title": "Context limit: enabled",
+      "description": "On: the per-prompt hook (bin/ctx-limit-hook) acts once the session's context passes the threshold. The file ~/.claude/junkd/ctx-limit-threshold, there while on, is what the hook reads; /junkd:ctx-limit on|off|<tokens> is the same switch.",
+      "default": false
+    },
+    "ctx_threshold": {
+      "type": "number",
+      "title": "Context limit: threshold (tokens)",
+      "description": "The context size, in tokens, past which the action applies. A whole number, 1000 or more; 300k and 1m are read too.",
+      "default": 300000
+    },
+    "ctx_action": {
+      "type": "string",
+      "title": "Context limit: action past it",
+      "description": "block: the prompt is refused until /clear, /junkd:handoff or /junkd:ctx-limit off; warn: a warning goes into the context and the prompt runs; cmd: the command below runs (CTX_TOKENS and CTX_LIMIT set) and the prompt runs.",
+      "options": [
+        "block",
+        "warn",
+        "cmd"
+      ],
+      "default": "block"
+    },
+    "ctx_cmd": {
+      "type": "string",
+      "title": "Context limit: command of action cmd",
+      "description": "The shell command action cmd runs past the threshold, e.g. a desktop notification.",
+      "default": ""
+    },
+    "statusline_enabled": {
+      "type": "boolean",
+      "title": "Status line: wired into settings.json",
+      "description": "On: ~/.claude/settings.json's statusLine points at ~/.claude/junkd/statusline.sh (a copy of bin/statusline.sh, refreshed when the plugin updates). A statusLine of your own is never replaced: turning this on refuses with the reason. Off removes the statusLine key only while it is junkd's.",
+      "default": true
+    },
+    "statusline_ctx": {
+      "type": "boolean",
+      "title": "Segment: context free/used",
+      "description": "Draw context free and used, in tokens and percent in the status line.",
+      "default": true
+    },
+    "statusline_branch": {
+      "type": "boolean",
+      "title": "Segment: git branch",
+      "description": "Draw the git branch (or the detached commit) in the status line.",
+      "default": true
+    },
+    "statusline_worktree": {
+      "type": "boolean",
+      "title": "Segment: linked worktree",
+      "description": "Draw the linked worktree's folder, only inside one in the status line.",
+      "default": true
+    },
+    "statusline_model": {
+      "type": "boolean",
+      "title": "Segment: model",
+      "description": "Draw the model's name in the status line.",
+      "default": true
+    },
+    "statusline_effort": {
+      "type": "boolean",
+      "title": "Segment: effort",
+      "description": "Draw the effort level in the status line.",
+      "default": true
+    },
+    "statusline_limits": {
+      "type": "boolean",
+      "title": "Segment: 5h/week rate limits",
+      "description": "Draw the 5-hour and weekly rate-limit use, colored by how full in the status line.",
+      "default": true
     }
   }
 }
