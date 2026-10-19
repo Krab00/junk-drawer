@@ -67,16 +67,25 @@ function agentRow(c: Draw, n: Node, guide: string, isOn: boolean, width: number,
   const glyph = n.kind === 'agent' && n.status ? GLYPH[n.status] : undefined
   const parts = n.kind === 'agent' ? [n.type, n.model, n.status === 'done' ? 'done' : undefined] : [n.branch || undefined]
   const extra = parts.filter(Boolean).join('  ')
-  const head = `${guide}${mark}${glyph ? `${glyph[0]} ` : ''}`
-  const name = fit(n.label || '?', Math.max(1, width - [...head].length))
-  const rest = fit(extra ? `  ${extra}` : '', Math.max(0, width - [...head].length - [...name].length))
+  // Each part in turn takes what room is left, so a deep row in a narrow pane is cut, never wider than it.
+  let room = width
+  const take = (text: string) => {
+    const part = fit(text, room)
+    room -= [...part].length
+    return part
+  }
+  const lead = take(guide)
+  const fold = take(mark)
+  const sign = glyph ? take(`${glyph[0]} `) : ''
+  const name = take(n.label || '?')
+  const rest = take(extra ? `  ${extra}` : '')
   return (
     <Box key={`row-${n.id}`} height={1} overflow="hidden" backgroundColor={isOn ? P.bg : undefined}>
-      <Button key={`node:${n.id}`} plain label={n.label || n.id} onPress={press}>
+      <Button key={`node:${n.id}`} plain label={clean(n.label || n.id)} onPress={press}>
         <Text>
-          <Text color={P.dim}>{guide || ''}</Text>
-          <Text color={P.accent}>{mark}</Text>
-          {glyph ? <Text color={glyph[1]}>{`${glyph[0]} `}</Text> : null}
+          <Text color={P.dim}>{lead}</Text>
+          <Text color={P.accent}>{fold}</Text>
+          {glyph && sign ? <Text color={glyph[1]}>{sign}</Text> : null}
           <Text bold={n.kind !== 'agent' || undefined}>{name}</Text>
           <Text color={P.secondary}>{rest}</Text>
         </Text>
@@ -256,7 +265,7 @@ function Footer({ c, note, keys }: { c: Draw; note: JSX.Element | string; keys: 
 // `now` is the clock's time for the Skills tab's `last` column (the module reads it; a view reads no clock).
 export function toolsView(els: Els, props: RenderInput<'Pane'>['props'], now: number, act: ToolsActs) {
   const c: Draw = { ui: els }
-  const cols = Math.max(20, props.bodyColumns - EDGE)
+  const cols = Math.max(1, props.bodyColumns - EDGE) // never wider than the pane, however narrow
   const s = TAB_VIEW[ROUTES.includes(T.route) ? T.route : 'agents'](c, act, cols, now)
   return (
     <els.Box flexDirection="column" paddingRight={EDGE}>
