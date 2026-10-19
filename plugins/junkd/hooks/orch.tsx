@@ -235,7 +235,8 @@ export async function orchGuardState($: $): Promise<{ active: boolean; model: st
 export async function orchToolDeny($: $, e: ToolCallInput): Promise<string | undefined> {
   return orchCheck($, e as unknown as { tool: string; agentId?: string; [k: string]: unknown })
 }
-// tool.call's .catch: a hook that throws is skipped and the tool runs, so a guarded main loop refuses instead.
+// tool.call's and agent.spawn's .catch: a hook that throws is skipped and the call runs, so a main loop the guard may
+// hold (orch enabled, guard not off) refuses instead; a subagent's call (agentId, parentAgentId) passes.
 export function orchCatchDeny(agentId?: string): string | undefined {
   return O.enabled && O.guard !== 'off' && !agentId ? `${PREFIX} guard error` : undefined
 }
@@ -260,7 +261,11 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
   on('agent.spawn', async ($, e, next) => {
     const deny = next.origin.plugin === 'engine' ? orchSpawn(e) : undefined
     return deny ? { deny } : next(e)
-  }).catch(($, e, next) => (next.called ? next(e) : O.enabled && O.guard !== 'off' && !e.parentAgentId ? { deny: `${PREFIX} guard error` } : next(e)))
+  }).catch(($, e, next) => {
+    if (next.called) return next(e)
+    const deny = orchCatchDeny(e.parentAgentId)
+    return deny ? { deny } : next(e)
+  })
 
   // A stopped agent's type and context, for the SendMessage rule: by its id, and by its name when it has one.
   // ponytail: the transcript is read whole; tail it through the shell if it ever shows.
