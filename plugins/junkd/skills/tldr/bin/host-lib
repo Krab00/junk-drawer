@@ -1,0 +1,126 @@
+# shellcheck shell=bash
+# Sourced (never run) by handoff-path, handoff-load, tldr-flag and tldr-hook: which host runs the helper, and where
+# that host's junk-drawer data lives. The handoff, handon and tldr skills each ship a real copy of this file (an
+# installer that drops symlinks leaves every skill whole); tests/smoke.sh keeps the copies byte-identical.
+#
+# jd_host sets JD_HOST and the data paths, or prints one line to stderr and returns 2:
+#   claude    ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs/              ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/tldr-on
+#   codex     ${CODEX_HOME:-$HOME/.codex}/junk-drawer/handoffs/          ${CODEX_HOME:-$HOME/.codex}/junk-drawer/tldr-on
+#   kimi      ${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/handoffs/  ${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/tldr-on
+#   opencode  ${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer/handoffs/  .../opencode/junk-drawer/tldr-on
+# JD_HANDOFFS is the handoffs folder, JD_FLAGS the folder of tldr-on (and, on Claude Code, tldr-off), JD_CFG the
+# Claude Code config dir (claude only).
+#
+# Order:
+#   1. JUNK_DRAWER_RUNTIME (claude, codex, kimi or opencode); any other value is an error.
+#   2. What the host process itself sets for its tools and hooks:
+#      CLAUDECODE -> claude;
+#      CODEX_THREAD_ID, or PLUGIN_ROOT under a .codex folder or under $CODEX_HOME -> codex (a Codex hook also gets
+#        CLAUDE_PLUGIN_ROOT, the same path, so this comes before the next line);
+#      CLAUDE_PLUGIN_ROOT -> claude;
+#      KIMI_PLUGIN_ROOT, or this script under a plugins/managed/ folder (Kimi's install dir) -> kimi;
+#      OPENCODE or OPENCODE_PID (what OpenCode exports to its bash tool), or this script under .agents/skills/ or
+#        .opencode/ -> opencode.
+#   3. A config-dir variable a shell profile may export for any host: CLAUDE_CONFIG_DIR -> claude, CODEX_HOME ->
+#      codex, KIMI_CODE_HOME -> kimi. Checked last, so a profile's CLAUDE_CONFIG_DIR never pulls another host's
+#      helper into the Claude Code folders.
+#   4. Nothing: exit 2 naming JUNK_DRAWER_RUNTIME. Nothing is ever written under ~/.claude on a guess.
+
+jd_under() { # <path> <dir>: is path inside dir (dir non-empty)?
+    [ -n "$2" ] || return 1
+    case "${1%/}/" in "${2%/}"/*) return 0 ;; esac
+    return 1
+}
+
+jd_host() {
+    local self
+    case "$0" in */*) self=${0%/*} ;; *) self=. ;; esac
+    self="$(cd "$self" 2>/dev/null && pwd -L || printf '%s' "$self")/"
+    JD_HOST=""
+    case "${JUNK_DRAWER_RUNTIME:-}" in
+        claude | codex | kimi | opencode) JD_HOST=$JUNK_DRAWER_RUNTIME ;;
+        "") ;;
+        *)
+            echo "junk-drawer: JUNK_DRAWER_RUNTIME='$JUNK_DRAWER_RUNTIME' is not claude, codex, kimi or opencode" >&2
+            return 2
+            ;;
+    esac
+    if [ -z "$JD_HOST" ]; then
+        if [ -n "${CLAUDECODE:-}" ]; then
+            JD_HOST=claude
+        elif [ -n "${CODEX_THREAD_ID:-}" ]; then
+            JD_HOST=codex
+        elif [ -n "${PLUGIN_ROOT:-}" ] && { case "${PLUGIN_ROOT%/}/" in */.codex/*) true ;; *) false ;; esac ||
+            jd_under "$PLUGIN_ROOT" "${CODEX_HOME:-}"; }; then
+            JD_HOST=codex
+        elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+            JD_HOST=claude
+        elif [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
+            JD_HOST=kimi
+        else
+            case "$self" in
+                */plugins/managed/*) JD_HOST=kimi ;;
+                *)
+                    if [ -n "${OPENCODE:-}" ] || [ -n "${OPENCODE_PID:-}" ]; then
+                        JD_HOST=opencode
+                    else
+                        case "$self" in
+                            */.agents/skills/* | */.opencode/*) JD_HOST=opencode ;;
+                            *)
+                                if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+                                    JD_HOST=claude
+                                elif [ -n "${CODEX_HOME:-}" ]; then
+                                    JD_HOST=codex
+                                elif [ -n "${KIMI_CODE_HOME:-}" ]; then
+                                    JD_HOST=kimi
+                                fi
+                                ;;
+                        esac
+                    fi
+                    ;;
+            esac
+        fi
+    fi
+    if [ -z "$JD_HOST" ]; then
+        echo "junk-drawer: cannot tell which host runs this helper; set JUNK_DRAWER_RUNTIME to claude, codex, kimi or opencode" >&2
+        return 2
+    fi
+    JD_CFG=""
+    case "$JD_HOST" in
+        claude)
+            JD_CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+            JD_HANDOFFS="$JD_CFG/handoffs"
+            JD_FLAGS="$JD_CFG/junkd"
+            return 0
+            ;;
+        codex) JD_DATA="${CODEX_HOME:-$HOME/.codex}/junk-drawer" ;;
+        kimi) JD_DATA="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer" ;;
+        opencode) JD_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer" ;;
+    esac
+    JD_HANDOFFS="$JD_DATA/handoffs"
+    JD_FLAGS="$JD_DATA"
+    return 0
+}
+
+jd_hash8() { # <text>: the first 8 hex chars of its SHA-1 (MD5 where shasum is missing)
+    local h=""
+    h=$(printf '%s' "$1" | shasum -a 1 2>/dev/null) || h=""
+    [ -n "$h" ] || h=$(printf '%s' "$1" | md5sum 2>/dev/null) || h=""
+    [ -n "$h" ] || h=$(printf '%s' "$1" | md5 -q 2>/dev/null) || h=""
+    printf '%s' "${h:0:8}"
+}
+
+# The short id of a new handoff: 8 hex chars. Claude Code session ids are UUIDv4, whose first 8 hex chars are
+# random, so they are used as they are (the junkd pane spells ids the same way). Every other host hashes its full
+# session id (a Codex thread id is a UUIDv7, whose first 8 hex chars are a timestamp shared by the sessions of the
+# same minute), or, with no session id, the time, the pid and two random numbers. Never a timestamp prefix.
+jd_short_id() {
+    local sid=""
+    case "$JD_HOST" in
+        claude) if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then printf '%s' "${CLAUDE_CODE_SESSION_ID:0:8}"; return 0; fi ;;
+        codex) sid="${CODEX_THREAD_ID:-}" ;;
+        kimi) sid="${KIMI_SESSION_ID:-}" ;;
+    esac
+    [ -n "$sid" ] || sid="$(date +%s%N 2>/dev/null)-$$-$RANDOM-$RANDOM-$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+    jd_hash8 "$sid"
+}

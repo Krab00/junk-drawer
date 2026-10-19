@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# orch-state — canonical task-file store CRUD. Frontmatter is the source of truth
+# (no separate manifest). Zero deps (bash + coreutils). ALL status edits go through here.
+#   orch-state list                 # id (file name) | status | deps table; status `invalid` = the file
+#                                   # has no closed --- frontmatter block (never selected; `set` refuses it).
+#                                   # Files starting with `_` (_lessons.md, _notes.md) are not tasks: hidden
+#   orch-state set <id> <status>    # status in: todo|in_progress|done|blocked (a CRLF file is rewritten LF)
+#   orch-state reset-stale [--blocked]
+#                                   # in_progress -> todo (a crashed run); --blocked: blocked -> todo too
+#   orch-state new <id> [title...]  # write a skeleton task file (spec layout)
+#   orch-state cfg <key>            # print a top-level key of the config's frontmatter
+#   orch-state tasks-dir            # print the task dir (tasks_dir, checked to be a folder under .orch/; orch-sync uses it)
+# tasks_dir is read from .orch/config.md (legacy fallback: .claude/orch.config.md).
+#   orch-state id <id>              # print <id> if it is a valid task id, else fail (orch-worktree uses it)
+#   orch-state root                 # print the project root the scripts use (see _root)
+#   orch-state settings             # the user settings /junkd:orch runs with, one key=value per line:
+#                                   # enabled, rounds, ui_review, implementer_ctx_k, inject_rules. Read from
+#                                   # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json pluginConfigs["junkd@<marketplace>"]
+#                                   # .options.orch_<key> (the first junkd@ key), clamped as the hooks module does; the
+#                                   # defaults when jq is missing or the file is absent or does not parse. Needs no config.
+set -euo pipefail
+
+# A task id names a file in tasks/, a worktree in .worktrees/ and part of a branch: one plain word.
+# A leading `_` is reserved for non-task files (_lessons.md), so it is never a task id.
+_id() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$1" != *..* ]] || { echo "orch: bad task id '$1' (letters, digits, . _ -; not starting with _)" >&2; exit 1; }
+  echo "$1"
+}
+
+# _settings: the five orch settings /junkd:orch uses, as applyOrchSettings (hooks/orch-lib.ts) loads them: a number row is
+# rounded and clamped (rounds 1-10, default 3; implementer_ctx_k 50-1000, default 400), a numeric string counts,
+# anything else is the default; a switch is true when missing, else only a JSON true is true.
+_settings() {
+  local out
+  # -s: a file of anything but one JSON value is no settings file; any jq error (no jq, no file, no object where
+  # one belongs) prints the defaults.
+  out=$(jq -rs '
+    def num($k; $lo; $hi; $d): .[$k] as $x
+      | (if ($x | type) == "number" then $x
+         elif ($x | type) == "string" then ($x | gsub("^\\s+|\\s+$"; "") | try tonumber catch null)
+         else null end) as $n
+      | if $n == null or ($n | isinfinite) or ($n | isnan) then $d else [$hi, ([$lo, ($n | round)] | max)] | min end;
+    def sw($k): if has($k) then .[$k] == true else true end;
+    (if length == 1 then .[0] else error end).pluginConfigs
+    | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
+    | "enabled=\(sw("orch_enabled"))", "rounds=\(num("orch_rounds"; 1; 10; 3))", "ui_review=\(sw("orch_ui_review"))",
+      "implementer_ctx_k=\(num("orch_implementer_ctx_k"; 50; 1000; 400))", "inject_rules=\(sw("orch_inject_rules"))"
+  ' "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/settings.json" 2>/dev/null) ||
+    out=$'enabled=true\nrounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'
+  echo "$out"
+}
+
+# _root: the checkout we run in (git's toplevel, else the cwd). A task worktree (<project>/.worktrees/<id>) has no
+# .orch/ of its own (it is untracked): then the nearest enclosing checkout above a /.worktrees/ segment that has
+# one, so <main>/.worktrees/orch/.worktrees/T1 resolves to <main>/.worktrees/orch, never past it to <main>. A root
+# that has .orch/, or none above it does, stays as it is.
+_root() {
+  local r up
+  r=$(git rev-parse --show-toplevel 2>/dev/null) || r=$(pwd)
+  up="$r"
+  while [ ! -e "$up/.orch" ] && [[ "$up" == */.worktrees/* ]]; do up="${up%/.worktrees/*}"; done
+  [ -e "$up/.orch" ] && echo "$up" || echo "$r"
+}
+
+# id, root, settings and help need no config.
+case "${1:-}" in
+  id) _id "${2:-}"; exit 0 ;;
+  root) _root; exit 0 ;;
+  settings) _settings; exit 0 ;;
+  ""|-h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 0 ;;
+esac
+
+root=$(_root)
+config="$root/.orch/config.md"
+[ -f "$config" ] || config="$root/.claude/orch.config.md"
+[ -f "$config" ] || { echo "orch: no config ($root/.orch/config.md) - run orch-init" >&2; exit 2; }
+
+# _fm_get <file> <key> -> value of a top-level (column 0) key of the first --- block. CRLF tolerated;
+# one pair of quotes stripped; a ` # comment` stripped outside quotes; a block list (`key:` then
+# `  - a`) printed as [a, b].
+_fm_get() {
+  awk -v key="$2" -v sq="'" '
+    function unq(v,  c, e) {
+      gsub(/^[ \t]+|[ \t]+$/, "", v); c = substr(v, 1, 1)
+      if (c == "\"" || c == sq) { v = substr(v, 2); e = index(v, c); return e ? substr(v, 1, e - 1) : v }
+      sub(/[ \t]+#.*$/, "", v); return v
+    }
+    { sub(/\r$/, "") }
+    NR == 1 && /^---[ \t]*$/ { i = 1; next }
+    !i || /^---[ \t]*$/ { exit }
+    list { if ($0 ~ /^[ \t]+-[ \t]/) { v = $0; sub(/^[ \t]+-/, "", v); out = out (n++ ? ", " : "") unq(v); next } exit }
+    /^[^ \t#]/ {
+      p = index($0, ":"); if (!p || substr($0, 1, p - 1) != key) next
+      v = unq(substr($0, p + 1))
+      if (v == "") { list = 1; next }
+      print v; exit
+    }
+    END { if (n) print "[" out "]" }
+  ' "$1"
+}
+
+# _fm_ok <file>: line 1 is --- and a closing --- follows (CRLF tolerated).
+_fm_ok() {
+  awk '{ sub(/\r$/, "") } NR == 1 { if (!/^---[ \t]*$/) exit 1; next } /^---[ \t]*$/ { ok = 1; exit } END { exit !ok }' "$1"
+}
+
+# _tasks_dir <value>: the config's tasks_dir as an absolute path, or a stop. The config steers where these scripts
+# write, so it must stay in the project's store: relative, no `..` segment, and its real path (symlinks resolved from
+# its nearest existing folder) a folder below the project's .orch/ (never .orch/ itself, where config.md sits).
+_tasks_dir() {
+  local td="$1" up rest real top
+  case "$td" in ""|/*) echo "orch: tasks_dir '$td' must be a relative path inside the project" >&2; exit 2 ;; esac
+  case "/$td/" in */../*) echo "orch: tasks_dir '$td' has a .. segment" >&2; exit 2 ;; esac
+  up="$root/$td"; rest=""
+  while [ ! -d "$up" ]; do rest="/$(basename "$up")$rest"; up=$(dirname "$up"); done
+  real=$(cd -P "$up" && pwd)$rest; top=$(cd -P "$root" && pwd)
+  case "$real/" in "$top/.orch/"?*) ;; *) echo "orch: tasks_dir '$td' must be a folder under .orch/ (it lands at $real)" >&2; exit 2 ;; esac
+  echo "$root/$td"
+}
+tasks_dir=$(_fm_get "$config" tasks_dir)
+tasks_dir=$(_tasks_dir "${tasks_dir:-.orch/tasks}")
+file_for(){ echo "$tasks_dir/$1.md"; }
+
+# _task_files -> the task files of tasks_dir: *.md minus the `_`-prefixed ones (_lessons.md).
+_task_files() {
+  shopt -s nullglob
+  local f
+  for f in "$tasks_dir"/*.md; do
+    case "$(basename "$f")" in _*) continue ;; esac
+    echo "$f"
+  done
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  cfg)
+    _fm_get "$config" "${1:?usage: orch-state cfg <key>}"
+    ;;
+  tasks-dir) echo "$tasks_dir" ;;
+  list)
+    printf '%-18s %-13s %s\n' ID STATUS DEPS
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      if _fm_ok "$f"; then st=$(_fm_get "$f" status); st=${st:-todo}; else st=invalid; fi
+      printf '%-18s %-13s %s\n' "$(basename "$f" .md)" "$st" "$(_fm_get "$f" deps)"
+    done < <(_task_files)
+    ;;
+  set)
+    id=$(_id "${1:?usage: orch-state set <id> <status>}"); st="${2:?status required}"
+    case "$st" in todo|in_progress|done|blocked) ;; *) echo "orch: bad status '$st'" >&2; exit 1;; esac
+    f=$(file_for "$id"); [ -f "$f" ] || { echo "orch: no task '$id' ($f)" >&2; exit 1; }
+    _fm_ok "$f" || { echo "orch: $f has no frontmatter block (--- ... ---); status not set" >&2; exit 1; }
+    tmp=$(mktemp)
+    awk -v st="$st" '
+      { sub(/\r$/, "") }
+      NR == 1 { i = 1; print; next }
+      i && /^---[ \t]*$/ { if (!seen) print "status: " st; i = 0; print; next }
+      i && /^status:/ { print "status: " st; seen = 1; next }
+      { print }
+    ' "$f" > "$tmp"
+    mv "$tmp" "$f"
+    echo "$id -> $st"
+    ;;
+  reset-stale)
+    blocked=""
+    for a in "$@"; do
+      case "$a" in --blocked) blocked=1 ;; *) echo "orch: reset-stale: unknown flag '$a'" >&2; exit 1 ;; esac
+    done
+    n=0
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      st=$(_fm_get "$f" status)
+      if [ "$st" = in_progress ] || { [ "$st" = blocked ] && [ -n "$blocked" ]; }; then
+        id=$(basename "$f" .md)
+        "$0" set "$id" todo >/dev/null; echo "reset $id ($st -> todo)"; n=$((n+1))
+      fi
+    done < <(_task_files)
+    [ "$n" -gt 0 ] || echo "no stale tasks"
+    ;;
+  new)
+    id=$(_id "${1:?usage: orch-state new <id> [title...]}"); shift || true
+    title="${*:-$id}"
+    mkdir -p "$tasks_dir"
+    f=$(file_for "$id")
+    [ -e "$f" ] && { echo "orch: task '$id' already exists ($f)" >&2; exit 1; }
+    cat > "$f" <<EOF
+---
+id: $id
+title: $title
+status: todo
+deps: []
+source: adhoc
+source_updated_at:
+criteria_source: derived
+---
+## Description
+<what the task is — describe the desired behaviour>
+
+## Acceptance criteria
+- [ ] AC1: <tool-checkable sentence> (modality: ui|api|test|data)
+EOF
+    echo "created $f"
+    ;;
+  *) echo "orch-state: unknown command '$cmd'" >&2; exit 1;;
+esac

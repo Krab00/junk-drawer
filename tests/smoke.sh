@@ -12,6 +12,17 @@ for file in $(rg --files -uu "$root/.agents" "$root/plugins" | rg '\.json$'); do
     jq empty "$file"
 done
 
+# Every plugin a host's marketplace lists has that host's manifest, or its installer fails on the entry: Kimi
+# reads `.kimi-plugin/plugin.json` or `kimi.plugin.json`, Codex `.codex-plugin/plugin.json`.
+for src in $(jq -r '.plugins[].source' "$root/kimi-marketplace.json"); do
+    [ -f "$root/$src/.kimi-plugin/plugin.json" ] || [ -f "$root/$src/kimi.plugin.json" ] ||
+        { echo "kimi-marketplace.json lists $src, which has no .kimi-plugin/plugin.json or kimi.plugin.json"; exit 1; }
+done
+for src in $(jq -r '.plugins[].source.path' "$root/.agents/plugins/marketplace.json"); do
+    [ -f "$root/$src/.codex-plugin/plugin.json" ] ||
+        { echo ".agents/plugins/marketplace.json lists $src, which has no .codex-plugin/plugin.json"; exit 1; }
+done
+
 # A dangling link would make hooks and slash commands fail at runtime, and it hides from every
 # check below that resolves a path (`test -e` on a broken link is false).
 dangling=$(find "$root/plugins" -type l ! -exec test -e {} \; -print)
@@ -37,14 +48,14 @@ done < <(find "$root/plugins" -type l)
 # inside the subtree that gets hashed.
 for plugin in "$root"/plugins/*/; do
     plugin_phys=$(cd -P "$plugin" && pwd)
-    for entry in "$plugin"bin "$plugin"agents "$plugin"commands "$plugin"*.sh; do
+    for entry in "$plugin"bin "$plugin"agents "$plugin"commands "$plugin"scripts "$plugin"*.sh; do
         [ -e "$entry" ] || continue
         # A plugin-root commands/ that no skill reads is Claude-only slash-command surface, not
         # a helper a SKILL.md runs, so it may stay a real directory. orch is the exception: its
         # skills read ./commands/*.md as their canonical specification, so it must move too.
         case "$entry" in
             */commands)
-                if ! rg -q -e '\./commands/' "$plugin"skills/*/SKILL.md; then continue; fi
+                if ! rg -q -e '\./commands/' "$plugin"skills/*/SKILL.md 2>/dev/null; then continue; fi
                 ;;
         esac
         [ -L "$entry" ] || { echo "plugin-root helper is not a symlink into skills/: $entry"; exit 1; }
@@ -56,6 +67,11 @@ for plugin in "$root"/plugins/*/; do
         esac
     done
 done
+
+# The same for a shell script at any depth: a real *.sh outside skills/ (say plugins/<p>/hooks/x.sh) is a helper
+# the skill hash never sees. hooks/*.tsx, the mods' modules, are no helpers and stay where they are.
+stray=$(find "$root"/plugins -type f -name '*.sh' ! -path '*/skills/*')
+[ -z "$stray" ] || { echo "real *.sh outside skills/ (move it under skills/<name>/, link it from the plugin root):"; printf '%s\n' "$stray"; exit 1; }
 
 cat > "$tmp/codex.jsonl" <<'JSONL'
 {"type":"session_meta","payload":{"cwd":"/tmp/example"}}
@@ -97,14 +113,160 @@ set -e
 [ "$claude_status" -eq 2 ]
 rg -q 'ctx-limit reached' <<<"$claude_block"
 
-CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$root/plugins/tldr/bin/tldr-flag" on >/dev/null
-tldr_hook=$(CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/tldr" "$root/plugins/tldr/bin/tldr-hook")
+# A control command passes the guard over the limit; a lookalike of it does not.
+for passing in '/junkd:handoff' '/junkd:handon abc' '/junkd:ahandoff off' '/handoff' '/skill:handon'; do
+    passed=$(printf '{"prompt":"%s","transcript_path":"%s"}' "$passing" "$tmp/codex.jsonl" |
+        CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
+    [ -z "$passed" ] || { echo "ctx-limit blocked the control command $passing"; exit 1; }
+done
+for lookalike in '/junkd:handoffs' '/junkd:orch' '/handoff:handoff' '/ahandoff'; do
+    blocked=$(printf '{"prompt":"%s","transcript_path":"%s"}' "$lookalike" "$tmp/codex.jsonl" |
+        CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
+    printf '%s\n' "$blocked" | jq -e '.continue == false' >/dev/null || { echo "ctx-limit let $lookalike through"; exit 1; }
+done
+
+junkd="$root/plugins/junkd"
+CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$junkd/bin/tldr-flag" on >/dev/null
+# As a Codex hook runs it: PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT name the installed plugin under $CODEX_HOME, and no
+# Claude Code signal of the shell that runs these tests leaks in.
+codex_plugin="$runtime/plugins/cache/junk-drawer/junkd/0.4.0"
+tldr_hook=$(env -u CLAUDECODE -u CLAUDE_CONFIG_DIR -u JUNK_DRAWER_RUNTIME CODEX_HOME="$runtime" PLUGIN_ROOT="$codex_plugin" \
+    CLAUDE_PLUGIN_ROOT="$codex_plugin" "$junkd/skills/tldr/bin/tldr-hook")
 rg -q 'TL;DR MODE ON' <<<"$tldr_hook"
-CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$root/plugins/tldr/bin/tldr-flag" off >/dev/null
+CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$junkd/bin/tldr-flag" off >/dev/null
 
 handoff_result=$(CODEX_THREAD_ID=codex-id CLAUDE_CODE_SESSION_ID=claude-id CLAUDE_CONFIG_DIR="$claude_runtime" \
-    JUNK_DRAWER_RUNTIME=claude "$root/plugins/handoff/bin/handoff-path")
+    JUNK_DRAWER_RUNTIME=claude "$junkd/bin/handoff-path")
 [ "$(printf '%s\n' "$handoff_result" | tail -1)" = claude-i ]
+
+# One plugin: plugins/ holds junkd, ctx-limit, ctx-tokens, statusline and junk-drawer; no host's marketplace lists the
+# plugins that moved into junkd (handoff, orch, tldr), and junkd depends on nothing.
+[ "$(ls -1 "$root/plugins" | sort | tr '\n' ' ')" = "ctx-limit ctx-tokens junk-drawer junkd statusline " ] ||
+    { echo "plugins/ holds $(ls -1 "$root/plugins" | tr '\n' ' '), expected ctx-limit ctx-tokens junk-drawer junkd statusline"; exit 1; }
+for gone in handoff orch tldr; do
+    jq -e --arg n "$gone" '[.plugins[] | select(.name == $n)] | length == 0' "$root/.claude-plugin/marketplace.json" >/dev/null &&
+        jq -e --arg n "$gone" '[.plugins[] | select(.id == $n)] | length == 0' "$root/kimi-marketplace.json" >/dev/null &&
+        jq -e --arg n "$gone" '[.plugins[] | select(.name == $n)] | length == 0' "$root/.agents/plugins/marketplace.json" >/dev/null ||
+        { echo "a marketplace still lists $gone"; exit 1; }
+done
+junkd_manifest="$junkd/.claude-plugin/plugin.json"
+jq -e 'has("dependencies") | not' "$junkd_manifest" >/dev/null || { echo "junkd: the manifest has dependencies"; exit 1; }
+jq -e '.plugins[] | select(.name == "junkd" and .source == "./plugins/junkd")' "$root/.claude-plugin/marketplace.json" >/dev/null ||
+    { echo "marketplace.json does not list junkd at ./plugins/junkd"; exit 1; }
+for f in .kimi-plugin/plugin.json .codex-plugin/plugin.json; do
+    [ "$(jq -r .version "$junkd/$f")" = "$(jq -r .version "$junkd_manifest")" ] || { echo "junkd: $f version differs from the Claude manifest's"; exit 1; }
+done
+
+# Every command is a skill of junkd's (/junkd:<name>); no plugin-root commands/ (it would add /junkd:init and a
+# second /junkd:orch from skills/orch/commands).
+for skill in junkd tldr handoff handon ahandoff orch orch-init; do
+    [ "$(awk -F': *' '$1 == "name" { print $2; exit }' "$junkd/skills/$skill/SKILL.md")" = "$skill" ] ||
+        { echo "junkd: skills/$skill/SKILL.md is missing or not named $skill"; exit 1; }
+done
+[ ! -e "$junkd/commands" ] || { echo "junkd: a plugin-root commands/ is back"; exit 1; }
+
+# $.junkd.schema() is a mirror of the manifest's userConfig (a hooks module cannot import JSON): every row's key,
+# type, title and default appear together on one SCHEMA line of settings.ts, a choice row's options too, the group
+# and field are the key split at its first `_`, and the mirror holds the manifest's rows in the manifest's order.
+# In every group but core, `enabled` is the group's first row.
+settings_ts="$junkd/hooks/settings.ts"
+for key in $(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest"); do
+    type=$(jq -r ".userConfig[\"$key\"].type" "$junkd_manifest")
+    title=$(jq -r ".userConfig[\"$key\"].title" "$junkd_manifest")
+    default=$(jq -c ".userConfig[\"$key\"].default" "$junkd_manifest" | tr '"' "'")
+    group=${key%%_*}
+    field=${key#*_}
+    rg -F "key: '$key'," "$settings_ts" | rg -F "group: '$group'," | rg -F "field: '$field'," | rg -F "type: '$type'," |
+        rg -F "title: '$title'," | rg -qF "default: $default," ||
+        { echo "settings.ts SCHEMA entry for $key does not match the manifest"; exit 1; }
+    options=$(jq -c ".userConfig[\"$key\"].options // empty" "$junkd_manifest" | tr '"' "'" | sed "s/,/, /g")
+    [ -z "$options" ] || rg -F "key: '$key'," "$settings_ts" | rg -qF "options: $options" ||
+        { echo "settings.ts SCHEMA options for $key do not match the manifest"; exit 1; }
+done
+schema_keys=$(rg -o "^  \{ key: '[A-Za-z_]+'" "$settings_ts" | rg -o "'[A-Za-z_]+'" | tr -d "'")
+[ "$schema_keys" = "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest")" ] ||
+    { echo "settings.ts SCHEMA keys differ from the manifest's userConfig (or their order does)"; exit 1; }
+for group in handoff orch tldr; do
+    first=$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | rg "^${group}_" | head -1)
+    [ "$first" = "${group}_enabled" ] || { echo "junkd: the $group group's first row is $first, not ${group}_enabled"; exit 1; }
+done
+[ "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | sed 's/_.*//' | uniq | tr '\n' ' ')" = "core handoff orch tldr " ] ||
+    { echo "junkd: the rows are not grouped core, handoff, orch, tldr in that order"; exit 1; }
+
+# The flag files are the shell-side truth of a row a shell hook reads before the module runs: the module and the
+# script spell each alike under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/.
+flag_pair() { # <flag name> <module file> <script>
+    rg -qF "'$1'" "$junkd/hooks/$2" || rg -qF "/junkd/$1\`" "$junkd/hooks/$2" ||
+        { echo "junkd: hooks/$2 does not spell the flag $1"; exit 1; }
+    rg -qF "\$cfg/junkd/$1" "$3" || { echo "junkd: $3 does not spell \$cfg/junkd/$1"; exit 1; }
+}
+flag_pair output-style-off core.ts "$junkd/skills/junkd/scripts/setup.sh"
+flag_pair orch-off orch.tsx "$junkd/skills/orch/scripts/orch-context.sh"
+flag_pair orch-rules-off orch.tsx "$junkd/skills/orch/scripts/orch-context.sh"
+flag_pair tldr-on tldr.tsx "$junkd/skills/tldr/bin/tldr-hook"
+flag_pair tldr-off tldr.tsx "$junkd/skills/tldr/bin/tldr-hook"
+# The SubagentStop records: the script writes them where the module reads them, and the guard's deny list holds them.
+rg -qF '$cfg/junkd/orch/_agents/$sid"' "$junkd/skills/orch/scripts/orch-agent-stop.sh" ||
+    { echo "junkd: orch-agent-stop.sh does not write under \$cfg/junkd/orch/_agents/<session>"; exit 1; }
+rg -qF '${await configDir($)}/junkd/orch/_agents/${sid}/${key}.json' "$junkd/hooks/orch.tsx" ||
+    { echo "junkd: hooks/orch.tsx does not read <config dir>/junkd/orch/_agents/<session>/<key>.json"; exit 1; }
+rg -qF '\/junkd\/orch\/_agents(\/|$)' "$junkd/hooks/orch-lib.ts" ||
+    { echo "junkd: hooks/orch-lib.ts NEVER_WRITE does not hold junkd/orch/_agents/"; exit 1; }
+rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/core.ts" && rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/orch.tsx" && rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/tldr.tsx" ||
+    { echo "junkd: a module file that writes a flag does not follow CLAUDE_CONFIG_DIR"; exit 1; }
+tldr_cfg="$tmp/tldr-cfg"
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$junkd/bin/tldr-flag" on >/dev/null
+[ -f "$tldr_cfg/junkd/tldr-on" ] || { echo "tldr-flag on did not create \$CLAUDE_CONFIG_DIR/junkd/tldr-on"; exit 1; }
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$junkd/bin/tldr-hook" | rg -q 'TL;DR MODE ON'
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$junkd/bin/tldr-flag" off >/dev/null
+[ ! -e "$tldr_cfg/junkd/tldr-on" ] || { echo "tldr-flag off left the flag file"; exit 1; }
+[ -z "$(CLAUDE_CONFIG_DIR="$tldr_cfg" "$junkd/bin/tldr-hook")" ]
+
+# The pane reads the two files Claude Code lays out: the user settings.json and the marketplace's manifest.
+panel="$junkd/hooks/panel.tsx"
+rg -qF 'CLAUDE_CONFIG_DIR' "$panel" && rg -qF '/settings.json`' "$panel" &&
+    rg -qF '/plugins/marketplaces/${MARKETPLACE}`' "$panel" && rg -qF '/.claude-plugin/marketplace.json`' "$panel" ||
+    { echo "junkd: settings.json or marketplace.json is not spelled as Claude Code lays it"; exit 1; }
+rg -q '^name: STE$' "$junkd/output-styles/STE.md" && rg -qF '"junkd:STE"' "$junkd/skills/junkd/scripts/setup.sh" ||
+    { echo "junkd: output-styles/STE.md is not named STE, or setup.sh does not set junkd:STE"; exit 1; }
+
+# Host detection and handoff ids: every helper lands in the detected host's data root, no signal exits 2.
+bash "$root/tests/hosts.sh" >/dev/null 2>&1 || { echo "tests/hosts.sh failed; run it alone for the reason"; exit 1; }
+# The OpenCode command wrappers: one per skill, descriptions cut on a word boundary.
+bash "$root/tests/opencode-commands.sh" >/dev/null 2>&1 || { echo "tests/opencode-commands.sh failed; run it alone for the reason"; exit 1; }
+
+# host-lib has one real copy per skill that ships its helpers (an installer that drops symlinks keeps each skill
+# whole), and handon ships a real copy of handoff-load: the copies stay byte-identical to handoff's.
+for copy in tldr/bin/host-lib handon/bin/host-lib handon/bin/handoff-load; do
+    [ -f "$junkd/skills/$copy" ] && [ ! -L "$junkd/skills/$copy" ] || { echo "junkd: skills/$copy is not a real file"; exit 1; }
+    cmp -s "$junkd/skills/handoff/bin/${copy##*/}" "$junkd/skills/$copy" ||
+        { echo "junkd: skills/$copy differs from skills/handoff/bin/${copy##*/}"; exit 1; }
+done
+[ -x "$junkd/skills/handon/bin/handoff-load" ] || { echo "junkd: skills/handon/bin/handoff-load is not executable"; exit 1; }
+
+# Codex refuses a hooks file with any top-level key but description and hooks, and hooks/hooks.json carries Claude
+# Code's modules: Codex reads its own file, named by its manifest, whose command reaches a real script (Codex drops
+# the plugin-root symlinks). Kimi's manifest names no agents (it would load agents/ as agent definitions) and its
+# hook command resolves inside the plugin.
+codex_hooks=$(jq -r '.hooks // empty' "$junkd/.codex-plugin/plugin.json")
+[ "$codex_hooks" = ./.codex-plugin/hooks.json ] && [ -f "$junkd/$codex_hooks" ] ||
+    { echo "junkd: .codex-plugin/plugin.json does not name ./.codex-plugin/hooks.json"; exit 1; }
+jq -e 'keys - ["description", "hooks"] == []' "$junkd/$codex_hooks" >/dev/null ||
+    { echo "junkd: $codex_hooks has a top-level key Codex refuses"; exit 1; }
+for cmd in $(jq -r '.hooks[][].hooks[].command' "$junkd/$codex_hooks" | rg -o '\$PLUGIN_ROOT/[^"]+'); do
+    script="$junkd/${cmd#\$PLUGIN_ROOT/}"
+    [ -f "$script" ] && [ ! -L "$script" ] || { echo "junkd: Codex hook command $cmd is not a real file in the plugin"; exit 1; }
+done
+jq -e '.agents == []' "$junkd/.kimi-plugin/plugin.json" >/dev/null || { echo "junkd: .kimi-plugin/plugin.json has no \"agents\": []"; exit 1; }
+for cmd in $(jq -r '.hooks[].command' "$junkd/.kimi-plugin/plugin.json" | rg -o '\./[^ ]+'); do
+    [ -f "$junkd/$cmd" ] && [ ! -L "$junkd/$cmd" ] || { echo "junkd: Kimi hook command $cmd is not a real file in the plugin"; exit 1; }
+done
+
+# The shell-side tests of tldr-flag and tldr-hook.
+bash "$root/tests/tldr.sh" >/dev/null 2>&1 || { echo "tests/tldr.sh failed; run it alone for the reason"; exit 1; }
+
+# The junkd plugin's own tests: the STE style and the SessionStart setup step over a temp config dir.
+bash "$root/tests/junkd.sh" >/dev/null 2>&1 || { echo "tests/junkd.sh failed; run it alone for the reason"; exit 1; }
 
 project="$tmp/project"
 mkdir -p "$project/.orch" "$project/.orch/tasks"
@@ -120,11 +282,14 @@ capabilities:
 CONFIG
 (
     cd "$project"
-    "$root/plugins/orch/bin/orch-state" new TEST-1 "Smoke test" >/dev/null
-    "$root/plugins/orch/bin/orch-state" set TEST-1 in_progress >/dev/null
-    state_list=$("$root/plugins/orch/bin/orch-state" list)
+    "$root/plugins/junkd/bin/orch-state" new TEST-1 "Smoke test" >/dev/null
+    "$root/plugins/junkd/bin/orch-state" set TEST-1 in_progress >/dev/null
+    state_list=$("$root/plugins/junkd/bin/orch-state" list)
     rg -q 'TEST-1[[:space:]]+in_progress' <<<"$state_list"
 )
+
+# The orch plugin's own tests: the SessionStart rule-sheet hook, the agent roster, the bin scripts.
+bash "$root/tests/orch.sh" >/dev/null 2>&1 || { echo "tests/orch.sh failed; run it alone for the reason"; exit 1; }
 
 catalog=$(JUNK_DRAWER_RUNTIME=codex "$root/plugins/junk-drawer/bin/junk-drawer")
 rg -q '\$orch' <<<"$catalog"
@@ -150,7 +315,10 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 9 ]
+# Eleven skills: one each for ctx-limit, ctx-tokens, junk-drawer and statusline, and junkd's seven (junkd, tldr,
+# handoff, handon, ahandoff, orch, orch-init). skills/junkd also holds the real home of the plugin-root bin/ and
+# scripts/ links, as the layout invariant above asks.
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 11 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
@@ -159,10 +327,9 @@ for skill_md in "$installed"/*/SKILL.md; do
     if rg -q '\.\./' "$skill_md"; then
         echo "escapes skill dir with ../ : $skill_md"; exit 1
     fi
-    # `handon` ships no helpers and references no skill-local path at all -- it only delegates
-    # to the `handoff` skill -- so the extraction below would correctly find nothing and the
-    # fail-on-zero-refs rule does not apply to it. Its own contract is checked further down.
-    case "$(basename "$skill_dir")" in handon) continue ;; esac
+    # junkd and ahandoff reference no skill-local path at all: their text is only the fallback for a host or session
+    # where the hooks module did not answer the command, and it runs nothing.
+    case "$(basename "$skill_dir")" in junkd | ahandoff) continue ;; esac
     # Every skill-local path it does reference must exist after the copy. No look-around
     # here -- ripgrep's default engine rejects it and would exit 2, silently checking
     # nothing. A `../../bin/x` would also match this pattern, but the ../ check above
@@ -189,20 +356,49 @@ cmp -s "$installed/orch-init/bin/orch-state" "$installed/orch/bin/orch-state" ||
 [ -e "$installed/orch/commands/init.md" ] ||
     { echo "orch skill is missing commands/init.md"; exit 1; }
 
-# `handon` gives skills-only installs the resume half of the handoff plugin. It must stay a
-# pure delegator: SKILL.md plus its Codex metadata, no helpers and no symlinks of its own.
+# `handon` gives skills-only installs the resume half of junkd's handoff, self-contained: SKILL.md, its Codex
+# metadata, and real copies of handoff-load and host-lib (Codex drops symlinks, Kimi rewrites them to absolute
+# checkout paths), so no symlinks of its own. Its SKILL.md puts the non-Claude line (./bin/handoff-load) first.
 [ -f "$installed/handon/SKILL.md" ] || { echo "handon: no SKILL.md"; exit 1; }
 [ -f "$installed/handon/agents/openai.yaml" ] || { echo "handon: no agents/openai.yaml"; exit 1; }
-handon_files=$(find "$installed/handon" -mindepth 1 ! -type d | wc -l | tr -d ' ')
-[ "$handon_files" = 2 ] || { echo "handon ships $handon_files files, expected 2"; exit 1; }
-[ -z "$(find "$root/plugins/handoff/skills/handon" -type l)" ] ||
+handon_files=$(cd "$installed/handon" && find . -mindepth 1 ! -type d | LC_ALL=C sort | tr '\n' ' ')
+[ "$handon_files" = "./SKILL.md ./agents/openai.yaml ./bin/handoff-load ./bin/host-lib " ] ||
+    { echo "handon ships $handon_files, expected SKILL.md, agents/openai.yaml, bin/handoff-load, bin/host-lib"; exit 1; }
+[ -z "$(find "$root/plugins/junkd/skills/handon" -type l)" ] ||
     { echo "handon must not contain symlinks"; exit 1; }
-rg -qF '`handoff` skill' "$installed/handon/SKILL.md" ||
-    { echo "handon/SKILL.md does not delegate to the handoff skill"; exit 1; }
+cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load" ||
+    { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
+
+# Every host map names all four hosts; handoff tells the resume command of each; tldr says OpenCode has no hook.
+for skill in handoff tldr orch orch-init; do
+    for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do
+        rg -qF "$host" "$root/plugins/junkd/skills/$skill/SKILL.md" || { echo "junkd: skills/$skill/SKILL.md does not name $host"; exit 1; }
+    done
+done
+for resume in '`/junkd:handon <id>`' '`$handon <id>`' '`/skill:handon <id>`' '`/handon <id>`'; do
+    rg -qF -- "$resume" "$root/plugins/junkd/skills/handoff/SKILL.md" || { echo "junkd: handoff/SKILL.md does not list $resume"; exit 1; }
+done
+rg -qF 'OpenCode has no hook' "$root/plugins/junkd/skills/tldr/SKILL.md" || { echo "junkd: tldr/SKILL.md does not say OpenCode has no hook"; exit 1; }
+
+# The Kimi model followed whichever host line came first: handon, junkd and ahandoff put the non-Claude line before
+# the Claude Code one.
+for skill in handon junkd ahandoff; do
+    md="$root/plugins/junkd/skills/$skill/SKILL.md"
+    other=$(rg -n -m1 '^- Codex, Kimi Code, OpenCode or any other host' "$md" | cut -d: -f1)
+    claude_line=$(rg -n -m1 '^- Claude Code' "$md" | cut -d: -f1)
+    [ -n "$other" ] && [ -n "$claude_line" ] && [ "$other" -lt "$claude_line" ] ||
+        { echo "junkd: skills/$skill/SKILL.md does not put the non-Claude line before the Claude Code one"; exit 1; }
+done
 
 # The catalog degrades to listing sibling skills instead of claiming the marketplace is empty.
 standalone_catalog=$(cd "$installed/junk-drawer" && HOME=$home ./bin/junk-drawer)
 rg -q 'standalone skills' <<<"$standalone_catalog"
 rg -q '\$orch' <<<"$standalone_catalog"
+
+# The orch_claude_md switch: scripts/orch-claude-md.sh on|off and its session-start run, over a temp config dir.
+bash "$root/tests/claude-md.sh" >/dev/null 2>&1 || { echo "tests/claude-md.sh failed; run it alone for the reason"; exit 1; }
+
+# The prompt-cache check: scripts/cache-check.sh over fixture transcripts in a temp project folder.
+bash "$root/tests/cache-check.sh" >/dev/null 2>&1 || { echo "tests/cache-check.sh failed; run it alone for the reason"; exit 1; }
 
 echo "smoke tests passed"

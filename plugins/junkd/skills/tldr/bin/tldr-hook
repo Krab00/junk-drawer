@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook: while global TL;DR mode is on, inject a be-terse instruction into context every turn
+# (stdout of a UserPromptSubmit hook is added to the model's context). Exits 0, or 2 when host-lib cannot tell the
+# host (JUNK_DRAWER_RUNTIME, else auto-detected: Claude Code, Codex and Kimi Code hooks always carry a signal).
+# Codex and Kimi Code: the flag <home>/junk-drawer/tldr-on alone decides (OpenCode runs no hook).
+# Claude Code (CFG = ${CLAUDE_CONFIG_DIR:-$HOME/.claude}): silent while the tldr_enabled setting is off, else terse
+# while $CFG/junkd/tldr-on exists. enabled is read from settings.json itself (a shell hook reads no plugin setting):
+# pluginConfigs, the first entry whose key starts with `junkd@`, .options.tldr_enabled; true, "true" or "on" is on,
+# any other value off. Only where that names no value (or jq is missing, or the file does not parse) the flag file
+# $CFG/junkd/tldr-off decides, which the hooks module writes while the row is off.
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac # no dirname: a hook may run with a bare PATH
+. "$here/host-lib" || exit 2
+jd_host || exit 2
+flag="$JD_FLAGS/tldr-on"
+if [ "$JD_HOST" = claude ]; then
+    cfg=$JD_CFG
+    flag="$cfg/junkd/tldr-on" # the same file as $JD_FLAGS/tldr-on, spelled as the junkd hooks module spells it
+    # Hooks get no login-shell PATH when Claude Code is launched from the app: the usual dirs are added where PATH
+    # lacks them. JUNKD_TLDR_PATH_DIRS replaces that list (tests/tldr.sh sets it empty to run without jq).
+    IFS=: read -ra dirs <<<"${JUNKD_TLDR_PATH_DIRS-/opt/homebrew/bin:/usr/local/bin:${HOME:-}/.local/bin}"
+    for dir in ${dirs[@]+"${dirs[@]}"}; do # an empty list is unbound under set -u in bash 3.2
+        case ":${PATH:-}:" in *":$dir:"*) ;; *) PATH="${PATH:-}${PATH:+:}$dir" ;; esac
+    done
+    enabled=""
+    if command -v jq >/dev/null 2>&1; then
+        enabled=$(jq -r '[.pluginConfigs? // {} | to_entries[] | select(.key | startswith("junkd@"))][0].value.options?.tldr_enabled
+            | if . == null then "" elif . == true or . == "true" or . == "on" then "on" else "off" end' \
+            "$cfg/settings.json" 2>/dev/null) || enabled=""
+    fi
+    case "$enabled" in
+        on) ;;
+        off) exit 0 ;;
+        *) [ ! -f "$cfg/junkd/tldr-off" ] || exit 0 ;;
+    esac
+fi
+[ -f "$flag" ] && echo "TL;DR MODE ON: answer as tersely as possible — result first, a few sentences max, no preamble or filler. Drop tables and multi-section formatting unless explicitly asked."
+exit 0
