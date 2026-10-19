@@ -91,8 +91,10 @@ After installing or updating: `/plugin marketplace update junk-drawer`, then `/r
 ## junkd
 
 One plugin for handoff, orch and tldr, and the frame over the marketplace. Its skills (`handoff`, `handon`,
-`ahandoff`, `orch`, `orch-init`, `tldr`, `junkd`) run on every host; on Claude Code each is `/junkd:<name>`, and the
-hooks module adds the automatic handoff loop, the orch main-loop guard, the panes and `$.junkd` for other mods.
+`ahandoff`, `orch`, `orch-init`, `tldr`, `junkd`, `tools`) run on every host; on Claude Code each is
+`/junkd:<name>`, and the hooks module adds the automatic handoff loop, the orch main-loop guard, the panes (the
+tools pane among them: this session's agents over the repo's worktrees, and the tools, MCP servers and skills it
+used) and `$.junkd` for other mods.
 
 - Claude Code: `/plugin install junkd@junk-drawer`, then `/reload-plugins`.
 - Codex: `codex plugin add junkd@junk-drawer`; the skills answer as `$handoff`, `$orch-init`, `$orch`, `$tldr`.

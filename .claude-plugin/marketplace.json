@@ -27,7 +27,7 @@
     {
       "name": "junkd",
       "source": "./plugins/junkd",
-      "description": "Handoff, orch and tldr in one plugin, every command /junkd:<name>: /junkd:handoff and /junkd:handon save and resume a session, /junkd:ahandoff hands off at a context threshold; /junkd:orch runs the orchestration loop (/junkd:orch-init first) with a main-loop guard on Fable; /junkd:tldr summarizes or keeps replies terse. /junkd opens the junkd, handoff and orch tabs: the marketplace's plugins, every setting group and the commands. The hooks module exports $.junkd for other mods."
+      "description": "Handoff, orch and tldr in one plugin, every command /junkd:<name>: /junkd:handoff and /junkd:handon save and resume a session, /junkd:ahandoff hands off at a context threshold; /junkd:orch runs the orchestration loop (/junkd:orch-init first) with a main-loop guard on Fable; /junkd:tldr summarizes or keeps replies terse; /junkd:tools shows this session's agents over the repo's worktrees and the tools, MCP servers and skills it used. /junkd opens the junkd, handoff, orch and tools tabs: the marketplace's plugins, every setting group and the commands. The hooks module exports $.junkd for other mods."
     }
   ]
 }
