@@ -110,6 +110,9 @@ run 10; expect_none "both fine"
 # N=0, a non-number N, a missing folder: nothing, exit 0
 reset; main s1 0 600
 for n in 0 x '' -1; do run "$n"; expect_none "N='$n'"; done
+# N is checked as digits before any arithmetic: bash's -gt would run a command in an array subscript
+run 'x[$(touch "'"$tmp"'/pwned")]'; expect_none "N with a subscript"
+[ ! -e "$tmp/pwned" ] || fail "N with a subscript ran a command"
 run 10 "$tmp/nowhere"; expect_none "missing folder"
 reset; run 10; expect_none "empty folder"
 reset; printf '{"type":"user"}\n' >"$proj/s1.jsonl"; run 10; expect_none "no request yet"
