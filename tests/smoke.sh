@@ -113,119 +113,114 @@ set -e
 [ "$claude_status" -eq 2 ]
 rg -q 'ctx-limit reached' <<<"$claude_block"
 
-CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$root/plugins/tldr/bin/tldr-flag" on >/dev/null
-tldr_hook=$(CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/tldr" "$root/plugins/tldr/bin/tldr-hook")
+# A control command passes the guard over the limit; a lookalike of it does not.
+for passing in '/junkd:handoff' '/junkd:handon abc' '/junkd:ahandoff off' '/handoff' '/skill:handon'; do
+    passed=$(printf '{"prompt":"%s","transcript_path":"%s"}' "$passing" "$tmp/codex.jsonl" |
+        CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
+    [ -z "$passed" ] || { echo "ctx-limit blocked the control command $passing"; exit 1; }
+done
+for lookalike in '/junkd:handoffs' '/junkd:orch' '/handoff:handoff' '/ahandoff'; do
+    blocked=$(printf '{"prompt":"%s","transcript_path":"%s"}' "$lookalike" "$tmp/codex.jsonl" |
+        CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
+    printf '%s\n' "$blocked" | jq -e '.continue == false' >/dev/null || { echo "ctx-limit let $lookalike through"; exit 1; }
+done
+
+junkd="$root/plugins/junkd"
+CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$junkd/bin/tldr-flag" on >/dev/null
+tldr_hook=$(CODEX_HOME="$runtime" PLUGIN_ROOT="$junkd" "$junkd/bin/tldr-hook")
 rg -q 'TL;DR MODE ON' <<<"$tldr_hook"
-CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$root/plugins/tldr/bin/tldr-flag" off >/dev/null
+CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$junkd/bin/tldr-flag" off >/dev/null
 
 handoff_result=$(CODEX_THREAD_ID=codex-id CLAUDE_CODE_SESSION_ID=claude-id CLAUDE_CONFIG_DIR="$claude_runtime" \
-    JUNK_DRAWER_RUNTIME=claude "$root/plugins/handoff/bin/handoff-path")
+    JUNK_DRAWER_RUNTIME=claude "$junkd/bin/handoff-path")
 [ "$(printf '%s\n' "$handoff_result" | tail -1)" = claude-i ]
 
-# $.orch.schema() is a mirror of the orch manifest's userConfig (a hooks module cannot import JSON): every
-# field's key, type, title and default must appear together on one SCHEMA line of orch-lib.ts, the choice row's
-# options too, and the mirror must hold no field the manifest lacks. A string default is spelled 'x' there.
-orch_manifest="$root/plugins/orch/.claude-plugin/plugin.json"
-orch_lib="$root/plugins/orch/hooks/orch-lib.ts"
-for key in $(jq -r '.userConfig | keys[]' "$orch_manifest"); do
-    type=$(jq -r ".userConfig[\"$key\"].type" "$orch_manifest")
-    title=$(jq -r ".userConfig[\"$key\"].title" "$orch_manifest")
-    default=$(jq -c ".userConfig[\"$key\"].default" "$orch_manifest" | tr '"' "'")
-    rg -F "key: '$key'" "$orch_lib" | rg -F "type: '$type'" | rg -F "title: '$title'" | rg -qF "default: $default," ||
-        { echo "orch SCHEMA entry for $key does not match the manifest"; exit 1; }
-    options=$(jq -c ".userConfig[\"$key\"].options // empty" "$orch_manifest" | tr '"' "'" | sed "s/,/, /g")
-    [ -z "$options" ] || rg -F "key: '$key'" "$orch_lib" | rg -qF "options: $options" ||
-        { echo "orch SCHEMA options for $key do not match the manifest"; exit 1; }
+# One plugin: plugins/ holds junkd, ctx-limit, ctx-tokens, statusline and junk-drawer; no host's marketplace lists the
+# plugins that moved into junkd (handoff, orch, tldr), and junkd depends on nothing.
+[ "$(ls -1 "$root/plugins" | sort | tr '\n' ' ')" = "ctx-limit ctx-tokens junk-drawer junkd statusline " ] ||
+    { echo "plugins/ holds $(ls -1 "$root/plugins" | tr '\n' ' '), expected ctx-limit ctx-tokens junk-drawer junkd statusline"; exit 1; }
+for gone in handoff orch tldr; do
+    jq -e --arg n "$gone" '[.plugins[] | select(.name == $n)] | length == 0' "$root/.claude-plugin/marketplace.json" >/dev/null &&
+        jq -e --arg n "$gone" '[.plugins[] | select(.id == $n)] | length == 0' "$root/kimi-marketplace.json" >/dev/null &&
+        jq -e --arg n "$gone" '[.plugins[] | select(.name == $n)] | length == 0' "$root/.agents/plugins/marketplace.json" >/dev/null ||
+        { echo "a marketplace still lists $gone"; exit 1; }
 done
-schema_keys=$(rg -o "^  \{ key: '[A-Za-z_]+'" "$orch_lib" | rg -o "'[A-Za-z_]+'" | tr -d "'" | sort)
-[ "$schema_keys" = "$(jq -r '.userConfig | keys[]' "$orch_manifest" | sort)" ] ||
-    { echo "orch SCHEMA keys differ from the manifest's userConfig"; exit 1; }
-# The flag file is the shell-side truth of inject_rules off: the hooks module and scripts/orch-context.sh must
-# both spell it ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/orch/rules-off.
-rg -qF "/orch/rules-off" "$root/plugins/orch/hooks/index.tsx" && rg -qF "CLAUDE_CONFIG_DIR" "$root/plugins/orch/hooks/index.tsx" &&
-    rg -qF '/orch/rules-off' "$root/plugins/orch/skills/orch/scripts/orch-context.sh" ||
-    { echo "orch: the inject_rules flag file is not spelled alike in the hooks module and orch-context.sh"; exit 1; }
-
-# $.handoff.schema() is a mirror of the handoff manifest's userConfig (a hooks module cannot import JSON):
-# every field's key, type, title and default must appear together on one SCHEMA line of lib.ts, and the
-# mirror must hold no field the manifest lacks.
-handoff_manifest="$root/plugins/handoff/.claude-plugin/plugin.json"
-handoff_lib="$root/plugins/handoff/hooks/lib.ts"
-for key in $(jq -r '.userConfig | keys[]' "$handoff_manifest"); do
-    type=$(jq -r ".userConfig[\"$key\"].type" "$handoff_manifest")
-    title=$(jq -r ".userConfig[\"$key\"].title" "$handoff_manifest")
-    default=$(jq -c ".userConfig[\"$key\"].default" "$handoff_manifest")
-    rg -F "key: '$key'" "$handoff_lib" | rg -F "type: '$type'" | rg -F "title: '$title'" | rg -qF "default: $default," ||
-        { echo "handoff SCHEMA entry for $key does not match the manifest"; exit 1; }
-done
-schema_keys=$(rg -o "^  \{ key: '[A-Za-z]+'" "$handoff_lib" | rg -o "'[A-Za-z]+'" | tr -d "'" | sort)
-[ "$schema_keys" = "$(jq -r '.userConfig | keys[]' "$handoff_manifest" | sort)" ] ||
-    { echo "handoff SCHEMA keys differ from the manifest's userConfig"; exit 1; }
-
-# junkd's test fakes handoff's noun; its schema() must stay the real SCHEMA, entry for entry, or the pane's tests
-# draw a Settings section the real handoff never answers.
-junkd_test="$root/plugins/junkd/hooks/junkd.test.tsx"
-fake_schema=$(awk '/^const FAKE_HANDOFF: Plugin/ {f=1} f && /schema: async/ {s=1; next} s && /^ *\],?$/ {exit} s' "$junkd_test" | sed 's/^ *//')
-real_schema=$(awk '/^export const SCHEMA/ {s=1; next} s && /^\]/ {exit} s' "$handoff_lib" | sed 's/^ *//')
-[ -n "$real_schema" ] && [ "$fake_schema" = "$real_schema" ] ||
-    { echo "junkd.test.tsx: FAKE_HANDOFF's schema differs from handoff's SCHEMA (lib.ts)"; diff <(echo "$real_schema") <(echo "$fake_schema"); exit 1; }
-
-# The same for $.tldr.schema() and the tldr manifest (hooks/index.tsx).
-tldr_manifest="$root/plugins/tldr/.claude-plugin/plugin.json"
-tldr_mod="$root/plugins/tldr/hooks/index.tsx"
-for key in $(jq -r '.userConfig | keys[]' "$tldr_manifest"); do
-    type=$(jq -r ".userConfig[\"$key\"].type" "$tldr_manifest")
-    title=$(jq -r ".userConfig[\"$key\"].title" "$tldr_manifest")
-    default=$(jq -c ".userConfig[\"$key\"].default" "$tldr_manifest")
-    rg -F "key: '$key'" "$tldr_mod" | rg -F "type: '$type'" | rg -F "title: '$title'" | rg -qF "default: $default," ||
-        { echo "tldr SCHEMA entry for $key does not match the manifest"; exit 1; }
-done
-schema_keys=$(rg -o "^  \{ key: '[A-Za-z]+'" "$tldr_mod" | rg -o "'[A-Za-z]+'" | tr -d "'" | sort)
-[ "$schema_keys" = "$(jq -r '.userConfig | keys[]' "$tldr_manifest" | sort)" ] ||
-    { echo "tldr SCHEMA keys differ from the manifest's userConfig"; exit 1; }
-
-# The flag file is the shell-side truth of terse mode: on Claude Code, tldr-flag (what /tldr on runs),
-# tldr-hook and the mod ($.tldr.get/set, checked by its plugin test) must all spell it
-# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/tldr-on.
-tldr_cfg="$tmp/tldr-cfg"
-CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-flag" on >/dev/null
-[ -f "$tldr_cfg/tldr-on" ] || { echo "tldr-flag on did not create \$CLAUDE_CONFIG_DIR/tldr-on"; exit 1; }
-CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-hook" | rg -q 'TL;DR MODE ON'
-CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-flag" off >/dev/null
-[ ! -e "$tldr_cfg/tldr-on" ] || { echo "tldr-flag off left the flag file"; exit 1; }
-[ -z "$(CLAUDE_CONFIG_DIR="$tldr_cfg" "$root/plugins/tldr/bin/tldr-hook")" ]
-rg -qF "/tldr-on" "$tldr_mod" && rg -qF "CLAUDE_CONFIG_DIR" "$tldr_mod" ||
-    { echo "tldr hooks module does not spell the flag file as tldr-flag does"; exit 1; }
-
-# junkd reads three nouns, one per manifest dependency, and nothing else: every `<p>@junk-drawer` under
-# `dependencies` has its `$.<p>.schema(` call in the hooks module, every `$.<p>.schema(` there names a dependency
-# (schema() is what every noun read starts with) and the pane's own `NOUNS` list is that same set. The
-# marketplace lists junkd, so `/plugin install junkd@junk-drawer` works; the two files the pane reads are
-# spelled as Claude Code lays them.
-junkd_manifest="$root/plugins/junkd/.claude-plugin/plugin.json"
-junkd_mod="$root/plugins/junkd/hooks/index.tsx"
-junkd_deps=$(jq -r '.dependencies[]' "$junkd_manifest" | sed 's/@junk-drawer$//' | sort)
-[ -n "$junkd_deps" ] || { echo "junkd: no dependencies in the manifest"; exit 1; }
-for dep in $junkd_deps; do
-    jq -e --arg d "$dep@junk-drawer" '.dependencies | index($d) != null' "$junkd_manifest" >/dev/null ||
-        { echo "junkd: dependency $dep is not spelled $dep@junk-drawer"; exit 1; }
-    rg -qF "\$.$dep.schema(" "$junkd_mod" || { echo "junkd: dependency $dep has no \$.$dep.schema() call in index.tsx"; exit 1; }
-done
-junkd_nouns=$(rg -o '\$\.[a-z]+\.schema\(' "$junkd_mod" | rg -o '\$\.[a-z]+' | tr -d '$.' | sort -u)
-[ "$junkd_nouns" = "$junkd_deps" ] || { echo "junkd: the nouns index.tsx calls ($(echo $junkd_nouns)) differ from the manifest's dependencies ($(echo $junkd_deps))"; exit 1; }
-junkd_list=$(rg -o "^const NOUNS = \[[^]]*\]" "$junkd_mod" | rg -o "'[a-z]+'" | tr -d "'" | sort)
-[ "$junkd_list" = "$junkd_deps" ] || { echo "junkd: NOUNS in index.tsx differs from the manifest's dependencies"; exit 1; }
+junkd_manifest="$junkd/.claude-plugin/plugin.json"
+jq -e 'has("dependencies") | not' "$junkd_manifest" >/dev/null || { echo "junkd: the manifest has dependencies"; exit 1; }
 jq -e '.plugins[] | select(.name == "junkd" and .source == "./plugins/junkd")' "$root/.claude-plugin/marketplace.json" >/dev/null ||
     { echo "marketplace.json does not list junkd at ./plugins/junkd"; exit 1; }
-rg -qF 'CLAUDE_CONFIG_DIR' "$junkd_mod" && rg -qF '/settings.json`' "$junkd_mod" &&
-    rg -qF '/plugins/marketplaces/${MARKETPLACE}`' "$junkd_mod" && rg -qF '/.claude-plugin/marketplace.json`' "$junkd_mod" ||
+for f in .kimi-plugin/plugin.json .codex-plugin/plugin.json; do
+    [ "$(jq -r .version "$junkd/$f")" = "$(jq -r .version "$junkd_manifest")" ] || { echo "junkd: $f version differs from the Claude manifest's"; exit 1; }
+done
+
+# Every command is a skill of junkd's (/junkd:<name>); no plugin-root commands/ (it would add /junkd:init and a
+# second /junkd:orch from skills/orch/commands).
+for skill in junkd tldr handoff handon ahandoff orch orch-init; do
+    [ "$(awk -F': *' '$1 == "name" { print $2; exit }' "$junkd/skills/$skill/SKILL.md")" = "$skill" ] ||
+        { echo "junkd: skills/$skill/SKILL.md is missing or not named $skill"; exit 1; }
+done
+[ ! -e "$junkd/commands" ] || { echo "junkd: a plugin-root commands/ is back"; exit 1; }
+
+# $.junkd.schema() is a mirror of the manifest's userConfig (a hooks module cannot import JSON): every row's key,
+# type, title and default appear together on one SCHEMA line of settings.ts, a choice row's options too, the group
+# and field are the key split at its first `_`, and the mirror holds the manifest's rows in the manifest's order.
+# In every group but core, `enabled` is the group's first row.
+settings_ts="$junkd/hooks/settings.ts"
+for key in $(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest"); do
+    type=$(jq -r ".userConfig[\"$key\"].type" "$junkd_manifest")
+    title=$(jq -r ".userConfig[\"$key\"].title" "$junkd_manifest")
+    default=$(jq -c ".userConfig[\"$key\"].default" "$junkd_manifest" | tr '"' "'")
+    group=${key%%_*}
+    field=${key#*_}
+    rg -F "key: '$key'," "$settings_ts" | rg -F "group: '$group'," | rg -F "field: '$field'," | rg -F "type: '$type'," |
+        rg -F "title: '$title'," | rg -qF "default: $default," ||
+        { echo "settings.ts SCHEMA entry for $key does not match the manifest"; exit 1; }
+    options=$(jq -c ".userConfig[\"$key\"].options // empty" "$junkd_manifest" | tr '"' "'" | sed "s/,/, /g")
+    [ -z "$options" ] || rg -F "key: '$key'," "$settings_ts" | rg -qF "options: $options" ||
+        { echo "settings.ts SCHEMA options for $key do not match the manifest"; exit 1; }
+done
+schema_keys=$(rg -o "^  \{ key: '[A-Za-z_]+'" "$settings_ts" | rg -o "'[A-Za-z_]+'" | tr -d "'")
+[ "$schema_keys" = "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest")" ] ||
+    { echo "settings.ts SCHEMA keys differ from the manifest's userConfig (or their order does)"; exit 1; }
+for group in handoff orch tldr; do
+    first=$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | rg "^${group}_" | head -1)
+    [ "$first" = "${group}_enabled" ] || { echo "junkd: the $group group's first row is $first, not ${group}_enabled"; exit 1; }
+done
+[ "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | sed 's/_.*//' | uniq | tr '\n' ' ')" = "core handoff orch tldr " ] ||
+    { echo "junkd: the rows are not grouped core, handoff, orch, tldr in that order"; exit 1; }
+
+# The flag files are the shell-side truth of a row a shell hook reads before the module runs: the module and the
+# script spell each alike under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/.
+flag_pair() { # <flag name> <module file> <script>
+    rg -qF "'$1'" "$junkd/hooks/$2" || rg -qF "/junkd/$1\`" "$junkd/hooks/$2" ||
+        { echo "junkd: hooks/$2 does not spell the flag $1"; exit 1; }
+    rg -qF "\$cfg/junkd/$1" "$3" || { echo "junkd: $3 does not spell \$cfg/junkd/$1"; exit 1; }
+}
+flag_pair output-style-off core.ts "$junkd/skills/junkd/scripts/setup.sh"
+flag_pair orch-off orch.tsx "$junkd/skills/orch/scripts/orch-context.sh"
+flag_pair orch-rules-off orch.tsx "$junkd/skills/orch/scripts/orch-context.sh"
+flag_pair tldr-on tldr.tsx "$junkd/skills/tldr/bin/tldr-hook"
+flag_pair tldr-off tldr.tsx "$junkd/skills/tldr/bin/tldr-hook"
+rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/core.ts" && rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/orch.tsx" && rg -qF 'CLAUDE_CONFIG_DIR' "$junkd/hooks/tldr.tsx" ||
+    { echo "junkd: a module file that writes a flag does not follow CLAUDE_CONFIG_DIR"; exit 1; }
+tldr_cfg="$tmp/tldr-cfg"
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$junkd/bin/tldr-flag" on >/dev/null
+[ -f "$tldr_cfg/junkd/tldr-on" ] || { echo "tldr-flag on did not create \$CLAUDE_CONFIG_DIR/junkd/tldr-on"; exit 1; }
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$junkd/bin/tldr-hook" | rg -q 'TL;DR MODE ON'
+CLAUDE_CONFIG_DIR="$tldr_cfg" "$junkd/bin/tldr-flag" off >/dev/null
+[ ! -e "$tldr_cfg/junkd/tldr-on" ] || { echo "tldr-flag off left the flag file"; exit 1; }
+[ -z "$(CLAUDE_CONFIG_DIR="$tldr_cfg" "$junkd/bin/tldr-hook")" ]
+
+# The pane reads the two files Claude Code lays out: the user settings.json and the marketplace's manifest.
+panel="$junkd/hooks/panel.tsx"
+rg -qF 'CLAUDE_CONFIG_DIR' "$panel" && rg -qF '/settings.json`' "$panel" &&
+    rg -qF '/plugins/marketplaces/${MARKETPLACE}`' "$panel" && rg -qF '/.claude-plugin/marketplace.json`' "$panel" ||
     { echo "junkd: settings.json or marketplace.json is not spelled as Claude Code lays it"; exit 1; }
-# The flag file is the shell-side truth of output_style off: the hooks module and scripts/setup.sh must both spell it
-# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/output-style-off. The style is named junkd:STE in both the file and the script.
-rg -qF "/junkd/output-style-off" "$junkd_mod" && rg -qF '/junkd/output-style-off' "$root/plugins/junkd/skills/junkd/scripts/setup.sh" ||
-    { echo "junkd: the output_style flag file is not spelled alike in the hooks module and setup.sh"; exit 1; }
-rg -q '^name: STE$' "$root/plugins/junkd/output-styles/STE.md" && rg -qF '"junkd:STE"' "$root/plugins/junkd/skills/junkd/scripts/setup.sh" ||
+rg -q '^name: STE$' "$junkd/output-styles/STE.md" && rg -qF '"junkd:STE"' "$junkd/skills/junkd/scripts/setup.sh" ||
     { echo "junkd: output-styles/STE.md is not named STE, or setup.sh does not set junkd:STE"; exit 1; }
+
+# The shell-side tests of tldr-flag and tldr-hook.
+bash "$root/tests/tldr.sh" >/dev/null 2>&1 || { echo "tests/tldr.sh failed; run it alone for the reason"; exit 1; }
 
 # The junkd plugin's own tests: the STE style and the SessionStart setup step over a temp config dir.
 bash "$root/tests/junkd.sh" >/dev/null 2>&1 || { echo "tests/junkd.sh failed; run it alone for the reason"; exit 1; }
@@ -244,9 +239,9 @@ capabilities:
 CONFIG
 (
     cd "$project"
-    "$root/plugins/orch/bin/orch-state" new TEST-1 "Smoke test" >/dev/null
-    "$root/plugins/orch/bin/orch-state" set TEST-1 in_progress >/dev/null
-    state_list=$("$root/plugins/orch/bin/orch-state" list)
+    "$root/plugins/junkd/bin/orch-state" new TEST-1 "Smoke test" >/dev/null
+    "$root/plugins/junkd/bin/orch-state" set TEST-1 in_progress >/dev/null
+    state_list=$("$root/plugins/junkd/bin/orch-state" list)
     rg -q 'TEST-1[[:space:]]+in_progress' <<<"$state_list"
 )
 
@@ -277,10 +272,10 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-# Nine skills, plus junkd's skills/junkd: no SKILL.md (junkd is a mod, not a skill), only the real home of the
-# plugin-root helper symlinks, as the layout invariant above asks.
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 10 ]
-[ ! -e "$installed/junkd/SKILL.md" ] || { echo "junkd grew a SKILL.md: count it as a skill above"; exit 1; }
+# Eleven skills: one each for ctx-limit, ctx-tokens, junk-drawer and statusline, and junkd's seven (junkd, tldr,
+# handoff, handon, ahandoff, orch, orch-init). skills/junkd also holds the real home of the plugin-root bin/ and
+# scripts/ links, as the layout invariant above asks.
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 11 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
@@ -292,7 +287,9 @@ for skill_md in "$installed"/*/SKILL.md; do
     # `handon` ships no helpers and references no skill-local path at all -- it only delegates
     # to the `handoff` skill -- so the extraction below would correctly find nothing and the
     # fail-on-zero-refs rule does not apply to it. Its own contract is checked further down.
-    case "$(basename "$skill_dir")" in handon) continue ;; esac
+    # junkd and ahandoff are the same kind: their text is only the fallback for a host or session where the hooks
+    # module did not answer the command, and it runs nothing.
+    case "$(basename "$skill_dir")" in handon | junkd | ahandoff) continue ;; esac
     # Every skill-local path it does reference must exist after the copy. No look-around
     # here -- ripgrep's default engine rejects it and would exit 2, silently checking
     # nothing. A `../../bin/x` would also match this pattern, but the ../ check above
@@ -319,13 +316,13 @@ cmp -s "$installed/orch-init/bin/orch-state" "$installed/orch/bin/orch-state" ||
 [ -e "$installed/orch/commands/init.md" ] ||
     { echo "orch skill is missing commands/init.md"; exit 1; }
 
-# `handon` gives skills-only installs the resume half of the handoff plugin. It must stay a
+# `handon` gives skills-only installs the resume half of junkd's handoff. It must stay a
 # pure delegator: SKILL.md plus its Codex metadata, no helpers and no symlinks of its own.
 [ -f "$installed/handon/SKILL.md" ] || { echo "handon: no SKILL.md"; exit 1; }
 [ -f "$installed/handon/agents/openai.yaml" ] || { echo "handon: no agents/openai.yaml"; exit 1; }
 handon_files=$(find "$installed/handon" -mindepth 1 ! -type d | wc -l | tr -d ' ')
 [ "$handon_files" = 2 ] || { echo "handon ships $handon_files files, expected 2"; exit 1; }
-[ -z "$(find "$root/plugins/handoff/skills/handon" -type l)" ] ||
+[ -z "$(find "$root/plugins/junkd/skills/handon" -type l)" ] ||
     { echo "handon must not contain symlinks"; exit 1; }
 rg -qF '`handoff` skill' "$installed/handon/SKILL.md" ||
     { echo "handon/SKILL.md does not delegate to the handoff skill"; exit 1; }
