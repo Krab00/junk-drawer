@@ -35,8 +35,8 @@ jq -e '.hooks.SessionStart[0].hooks[] | select(.type == "command" and (.command 
     "$plugin/hooks/hooks.json" >/dev/null || fail "hooks.json has no SessionStart hook for scripts/setup.sh"
 [ -L "$plugin/scripts" ] || fail "plugins/junkd/scripts must be a symlink into skills/"
 [ -x "$plugin/skills/junkd/scripts/setup.sh" ] || fail "setup.sh is not executable"
-jq -e '.userConfig.output_style | .type == "string" and .options == ["ste", "off"] and .default == "ste"' \
-    "$plugin/.claude-plugin/plugin.json" >/dev/null || fail "plugin.json: userConfig.output_style is not string ste|off, default ste"
+jq -e '.userConfig.core_output_style | .type == "string" and .options == ["ste", "off"] and .default == "ste"' \
+    "$plugin/.claude-plugin/plugin.json" >/dev/null || fail "plugin.json: userConfig.core_output_style is not string ste|off, default ste"
 
 # ---------------------------------------------------------------- no key -> set, one line, stamped (AC2, AC4)
 reset
@@ -126,19 +126,28 @@ out=$(main) || fail "on again: hook exited non-zero"
 rg -q '^junkd: ' <<<"$out" || fail "on again: expected the junkd: line, got: $out"
 [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "on again: outputStyle not set"
 # the setting itself in settings.json (the hooks module runs after this hook at a session start, so the flag
-# file is not yet there on a first session): off under any marketplace's junkd entry skips, no stamp
-for key in 'junkd@junk-drawer' 'junkd@other'; do
+# file is not yet there on a first session): core_output_style off under any marketplace's junkd entry skips, no
+# stamp; the first junkd@ entry decides, past another plugin's entry and before a later junkd@ one
+for cfgjson in '{"junkd@junk-drawer": {"options": {"core_output_style": "off"}}}' '{"junkd@other": {"options": {"core_output_style": "off"}}}' \
+    '{"tldr@junk-drawer": {"options": {"core_output_style": "ste"}}, "junkd@a": {"options": {"core_output_style": "off"}}, "junkd@b": {"options": {"core_output_style": "ste"}}}'; do
     reset
-    printf '{"theme": "dark", "pluginConfigs": {"%s": {"options": {"output_style": "off"}}}}\n' "$key" > "$settings"
+    printf '{"theme": "dark", "pluginConfigs": %s}\n' "$cfgjson" > "$settings"
     before=$(cat "$settings")
-    out=$(main) || fail "setting off ($key): hook exited non-zero"
-    [ -z "$out" ] || fail "setting off ($key): hook printed output: $out"
-    [ "$(cat "$settings")" = "$before" ] || fail "setting off ($key): settings.json changed"
-    [ ! -e "$stamp" ] || fail "setting off ($key): stamped although skipped"
+    out=$(main) || fail "setting off ($cfgjson): hook exited non-zero"
+    [ -z "$out" ] || fail "setting off ($cfgjson): hook printed output: $out"
+    [ "$(cat "$settings")" = "$before" ] || fail "setting off ($cfgjson): settings.json changed"
+    [ ! -e "$stamp" ] || fail "setting off ($cfgjson): stamped although skipped"
 done
-# ste there, another plugin's off, or no options: the step applies
-for cfgjson in '{"junkd@junk-drawer": {"options": {"output_style": "ste"}}}' '{"tldr@junk-drawer": {"options": {"output_style": "off"}}}' \
-    '{"junkd@junk-drawer": {}}' '{}'; do
+# ste there, a value the options do not name (the module reads it as ste), another plugin's off (alone, or ahead of
+# junkd's ste), a later junkd@ entry's off behind the first one's ste, the pre-T11 key output_style (no row any
+# more), or no options: the step applies
+for cfgjson in '{"junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' '{"junkd@junk-drawer": {"options": {"core_output_style": "blue"}}}' \
+    '{"tldr@junk-drawer": {"options": {"core_output_style": "off"}}}' \
+    '{"other@x": {"options": {"core_output_style": "off"}}, "junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' \
+    '{"my-junkd@x": {"options": {"core_output_style": "off"}}, "junkd-x@y": {"options": {"core_output_style": "off"}}, "junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' \
+    '{"junkd@a": {"options": {"core_output_style": "ste"}}, "junkd@b": {"options": {"core_output_style": "off"}}}' \
+    '{"junkd@a": {"options": {}}, "junkd@b": {"options": {"core_output_style": "off"}}}' \
+    '{"junkd@junk-drawer": {"options": {"output_style": "off"}}}' '{"junkd@junk-drawer": {}}' '{}'; do
     reset
     printf '{"theme": "dark", "pluginConfigs": %s}\n' "$cfgjson" > "$settings"
     out=$(main) || fail "pluginConfigs $cfgjson: hook exited non-zero"
@@ -148,22 +157,26 @@ for cfgjson in '{"junkd@junk-drawer": {"options": {"output_style": "ste"}}}' '{"
 done
 # the setting in settings.json wins over the flag file, which only stands in where settings.json names none: a
 # hand edit off -> ste applies at once, though the flag the last session left is still there; an entry with no
-# output_style leaves the flag in charge
+# core_output_style (the first junkd@ entry's: a later one's ste, another plugin's, or the old output_style key do
+# not count) leaves the flag in charge
 reset
 mkdir -p "$(dirname "$flag")" && : > "$flag"
-printf '{"theme": "dark", "pluginConfigs": {"junkd@junk-drawer": {"options": {"output_style": "ste"}}}}\n' > "$settings"
+printf '{"theme": "dark", "pluginConfigs": {"junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}}\n' > "$settings"
 out=$(main) || fail "flag + setting ste: hook exited non-zero"
 rg -q '^junkd: ' <<<"$out" || fail "flag + setting ste: expected the junkd: line, got: $out"
 [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "flag + setting ste: outputStyle not set"
 [ -e "$stamp" ] || fail "flag + setting ste: not stamped"
-reset
-mkdir -p "$(dirname "$flag")" && : > "$flag"
-printf '{"theme": "dark", "pluginConfigs": {"junkd@junk-drawer": {"options": {}}}}\n' > "$settings"
-before=$(cat "$settings")
-out=$(main) || fail "flag + no setting: hook exited non-zero"
-[ -z "$out" ] || fail "flag + no setting: hook printed output: $out"
-[ "$(cat "$settings")" = "$before" ] || fail "flag + no setting: settings.json changed"
-[ ! -e "$stamp" ] || fail "flag + no setting: stamped although skipped"
+for cfgjson in '{"junkd@junk-drawer": {"options": {}}}' '{"junkd@a": {"options": {}}, "junkd@b": {"options": {"core_output_style": "ste"}}}' \
+    '{"tldr@junk-drawer": {"options": {"core_output_style": "ste"}}}' '{"junkd@junk-drawer": {"options": {"output_style": "ste"}}}'; do
+    reset
+    mkdir -p "$(dirname "$flag")" && : > "$flag"
+    printf '{"theme": "dark", "pluginConfigs": %s}\n' "$cfgjson" > "$settings"
+    before=$(cat "$settings")
+    out=$(main) || fail "flag + no setting ($cfgjson): hook exited non-zero"
+    [ -z "$out" ] || fail "flag + no setting ($cfgjson): hook printed output: $out"
+    [ "$(cat "$settings")" = "$before" ] || fail "flag + no setting ($cfgjson): settings.json changed"
+    [ ! -e "$stamp" ] || fail "flag + no setting ($cfgjson): stamped although skipped"
+done
 # neither CLAUDE_CONFIG_DIR nor HOME: nothing to do, exit 0, silent
 out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR -u HOME "$hook" 2>&1) || fail "no HOME: hook exited non-zero"
 [ -z "$out" ] || fail "no HOME: hook printed output: $out"
@@ -184,6 +197,13 @@ rm "$tmp/home/.claude/junkd/output-style-off"
 out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR HOME="$tmp/home" "$hook") || fail "HOME: hook exited non-zero"
 [ "$(jq -r .outputStyle "$tmp/home/.claude/settings.json")" = "junkd:STE" ] || fail "HOME: outputStyle not set under \$HOME/.claude"
 [ -e "$tmp/home/.claude/junkd/setup-$ver.stamp" ] || fail "HOME: not stamped under \$HOME/.claude/junkd"
+
+# the script's real path (skills/junkd/scripts/setup.sh, not through the plugin-root link) finds the same manifest
+reset
+printf '{"theme": "dark"}\n' > "$settings"
+out=$(printf '{}' | env -u CLAUDE_AGENT_ID "$plugin/skills/junkd/scripts/setup.sh") || fail "real path: hook exited non-zero"
+rg -q '^junkd: ' <<<"$out" || fail "real path: expected the junkd: line, got: $out"
+[ -e "$stamp" ] || fail "real path: not stamped under the manifest's version"
 
 # ---------------------------------------------------------------- not the main session -> silent, nothing written (AC2)
 reset

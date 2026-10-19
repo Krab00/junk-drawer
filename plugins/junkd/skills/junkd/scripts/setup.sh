@@ -6,10 +6,11 @@
 # one that does not parse, or is not a JSON object, is never written.
 # The run is stamped under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/ (one file per plugin version) once the key
 # is there, set or found, so each version looks once. No stamp while the step is off or while settings.json is
-# refused: the step applies once that changes. Off is the `output_style` setting at `off`, read from settings.json
-# itself (pluginConfigs["junkd@<marketplace>"].options.output_style: a shell hook reads no plugin setting, and this
-# hook runs before the hooks module does at a session start), which wins whenever it names a value; only where it
-# names none, the flag file .../junkd/output-style-off the hooks module mirrors the setting into.
+# refused: the step applies once that changes. Off is the `core_output_style` setting at `off`, read from
+# settings.json itself (the first pluginConfigs entry whose key starts with `junkd@`, its
+# options.core_output_style: a shell hook reads no plugin setting, and this hook runs before the hooks module does
+# at a session start), which wins whenever it names a value; only where it names none, the flag file
+# .../junkd/output-style-off the hooks module mirrors the setting into.
 # Never into a subagent: skipped when CLAUDE_AGENT_ID is set or the hook input carries an agent_id. Skipped on a
 # /clear or compaction too: that session runs with the plugin version it started with and would stamp an old one.
 # Output: one `junkd: ...` line when the key was set, nothing otherwise. Always exits 0: a failing SessionStart
@@ -48,10 +49,12 @@ stamp="$cfg/junkd/setup-$ver.stamp"
 [ ! -e "$stamp" ] || exit 0
 
 s="$cfg/settings.json"
-# The setting itself, as Claude Code stores it, is the truth: off under any marketplace's junkd entry skips (no
-# stamp), any other value applies. The flag file stands in only where settings.json names no output_style.
-style=$(jq -r '[.pluginConfigs? // {} | to_entries[] | select(.key | startswith("junkd@")) | .value.options?.output_style
-    | select(. != null)] | if index("off") != null then "off" elif length > 0 then "ste" else "" end' "$s" 2>/dev/null) || style=""
+# The setting itself, as Claude Code stores it, is the truth: the first junkd@<marketplace> entry decides (another
+# plugin's entry, or a later junkd@ one, never does); off there skips (no stamp), any other value applies (the
+# module reads a value the options do not name as the default, ste). The flag file stands in only where that entry
+# names no core_output_style.
+style=$(jq -r '[.pluginConfigs? // {} | to_entries[] | select(.key | startswith("junkd@"))][0].value.options?.core_output_style
+    // empty | if . == "off" then "off" else "ste" end' "$s" 2>/dev/null) || style=""
 case "$style" in
     off) exit 0 ;;
     "") [ ! -e "$cfg/junkd/output-style-off" ] || exit 0 ;;
