@@ -7,5 +7,5 @@ description: Toggle the junkd pane, a Claude Code mod with the marketplace's plu
 
 In Claude Code the junkd hooks module opens or closes the pane on this command before this text is reached. If you read this, the module did not answer:
 
-- In Claude Code, the hooks module is not loaded (a mod needs function hooks). Tell the user in one line to run `/reload-plugins` after enabling `junkd@junk-drawer`, and do nothing else.
-- On any other host (Codex, Kimi, OpenCode), tell the user in one line that the junkd pane is a Claude Code mod and this host has none, and do nothing else.
+- Codex, Kimi Code, OpenCode or any other host that is not Claude Code: tell the user in one line that the junkd pane is a Claude Code mod and this host has none, and do nothing else.
+- Claude Code: the hooks module is not loaded (a mod needs function hooks). Tell the user in one line to run `/reload-plugins` after enabling `junkd@junk-drawer`, and do nothing else.

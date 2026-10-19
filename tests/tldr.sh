@@ -18,8 +18,13 @@ off="$cfg/junkd/tldr-off"
 TERSE='TL;DR MODE ON'
 
 fail() { echo "tldr tests: $*" >&2; exit 1; }
-# Claude Code: no other host's marker in the environment; stderr is stdout here, so any noise fails a check.
-claude() { env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME CLAUDE_CONFIG_DIR="$cfg" "$@" 2>&1; }
+# No host signal at all (the helpers detect the host from these, see skills/handoff/bin/host-lib); each call adds the
+# ones the host it plays sets.
+noh=(env -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT -u CLAUDE_CONFIG_DIR -u CODEX_THREAD_ID -u CODEX_HOME -u PLUGIN_ROOT
+    -u KIMI_PLUGIN_ROOT -u KIMI_CODE_HOME -u KIMI_SESSION_ID -u OPENCODE -u OPENCODE_PID -u JUNK_DRAWER_RUNTIME)
+# Claude Code: CLAUDECODE=1 as the real host sets it, no other host's marker; stderr is stdout here, so any noise fails
+# a check.
+claude() { "${noh[@]}" CLAUDECODE=1 CLAUDE_CONFIG_DIR="$cfg" "$@" 2>&1; }
 hook() { claude "$hookbin"; }
 reset() { rm -rf "$cfg"; mkdir -p "$cfg"; }
 # settings.json with one pluginConfigs object (raw JSON); none when empty.
@@ -67,33 +72,35 @@ reset
 : > "$cfg/tldr-on"
 [ "$(claude "$flagbin" status)" = "TL;DR mode: OFF" ] || fail "the old path \$CFG/tldr-on still reads as ON"
 # no CLAUDE_CONFIG_DIR: $HOME/.claude/junkd/tldr-on
-out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME -u CLAUDE_CONFIG_DIR HOME="$tmp/home" "$flagbin" on) || fail "HOME on: exited non-zero"
+out=$("${noh[@]}" CLAUDECODE=1 HOME="$tmp/home" "$flagbin" on) || fail "HOME on: exited non-zero"
 [ -f "$tmp/home/.claude/junkd/tldr-on" ] || fail "HOME on: no flag at \$HOME/.claude/junkd/tldr-on"
-out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME -u CLAUDE_CONFIG_DIR HOME="$tmp/home" "$hookbin") || fail "HOME hook: exited non-zero"
+out=$("${noh[@]}" CLAUDECODE=1 HOME="$tmp/home" "$hookbin") || fail "HOME hook: exited non-zero"
 rg -qF "$TERSE" <<<"$out" || fail "HOME hook: the flag under \$HOME/.claude/junkd is not read, got: $out"
 
 # ---------------------------------------------------------------- tldr-flag and tldr-hook on Codex and Kimi: their own homes, unchanged
+# A Codex hook gets PLUGIN_ROOT (the installed plugin, under $CODEX_HOME) and CLAUDE_PLUGIN_ROOT (the same path).
+codex_root="$tmp/codex/plugins/cache/junk-drawer/junkd/0.4.0"
 reset
-out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT CODEX_HOME="$tmp/codex" CLAUDE_CONFIG_DIR="$cfg" JUNK_DRAWER_RUNTIME=codex "$flagbin" on) || fail "codex on: exited non-zero"
+out=$("${noh[@]}" CODEX_HOME="$tmp/codex" CLAUDE_CONFIG_DIR="$cfg" JUNK_DRAWER_RUNTIME=codex "$flagbin" on) || fail "codex on: exited non-zero"
 [ -f "$tmp/codex/junk-drawer/tldr-on" ] || fail "codex on: no flag at \$CODEX_HOME/junk-drawer/tldr-on"
 [ ! -e "$on" ] || fail "codex on: the Claude Code flag was written"
-out=$(env -u KIMI_PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME CODEX_HOME="$tmp/codex" PLUGIN_ROOT="$plugin" "$flagbin" status) || fail "codex status: exited non-zero"
+out=$("${noh[@]}" CODEX_HOME="$tmp/codex" PLUGIN_ROOT="$codex_root" CLAUDE_PLUGIN_ROOT="$codex_root" "$flagbin" status) || fail "codex status: exited non-zero"
 [ "$out" = "TL;DR mode: ON" ] || fail "codex status (PLUGIN_ROOT): got $out"
-out=$(env -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME KIMI_CODE_HOME="$tmp/kimi" KIMI_PLUGIN_ROOT="$plugin" "$flagbin" on) || fail "kimi on: exited non-zero"
+out=$("${noh[@]}" KIMI_CODE_HOME="$tmp/kimi" KIMI_PLUGIN_ROOT="$plugin" "$flagbin" on) || fail "kimi on: exited non-zero"
 [ -f "$tmp/kimi/junk-drawer/tldr-on" ] || fail "kimi on: no flag at \$KIMI_CODE_HOME/junk-drawer/tldr-on"
-out=$(env -u PLUGIN_ROOT -u KIMI_PLUGIN_ROOT KIMI_CODE_HOME="$tmp/kimi" JUNK_DRAWER_RUNTIME=kimi "$flagbin" status) || fail "kimi status: exited non-zero"
+out=$("${noh[@]}" KIMI_CODE_HOME="$tmp/kimi" JUNK_DRAWER_RUNTIME=kimi "$flagbin" status) || fail "kimi status: exited non-zero"
 [ "$out" = "TL;DR mode: ON" ] || fail "kimi status (JUNK_DRAWER_RUNTIME): got $out"
 # their hooks read only their flag: a Claude Code tldr_enabled off or tldr-off flag does not silence them
 cfgjson "$(enabled_is false)"
 mkdir -p "$cfg/junkd" && : > "$off"
-out=$(env -u KIMI_PLUGIN_ROOT CODEX_HOME="$tmp/codex" PLUGIN_ROOT="$plugin" CLAUDE_CONFIG_DIR="$cfg" "$hookbin") || fail "codex hook: exited non-zero"
+out=$("${noh[@]}" CODEX_HOME="$tmp/codex" PLUGIN_ROOT="$codex_root" CLAUDE_PLUGIN_ROOT="$codex_root" CLAUDE_CONFIG_DIR="$cfg" "$hookbin") || fail "codex hook: exited non-zero"
 rg -qF "$TERSE" <<<"$out" || fail "codex hook: expected the terse line, got: $out"
-out=$(env -u PLUGIN_ROOT KIMI_CODE_HOME="$tmp/kimi" KIMI_PLUGIN_ROOT="$plugin" CLAUDE_CONFIG_DIR="$cfg" "$hookbin") || fail "kimi hook: exited non-zero"
+out=$("${noh[@]}" KIMI_CODE_HOME="$tmp/kimi" KIMI_PLUGIN_ROOT="$plugin" CLAUDE_CONFIG_DIR="$cfg" "$hookbin") || fail "kimi hook: exited non-zero"
 rg -qF "$TERSE" <<<"$out" || fail "kimi hook: expected the terse line, got: $out"
-out=$(env -u PLUGIN_ROOT JUNK_DRAWER_RUNTIME=kimi KIMI_CODE_HOME="$tmp/kimi" CLAUDE_CONFIG_DIR="$cfg" "$flagbin" off) || fail "kimi off: exited non-zero"
-out=$(env -u PLUGIN_ROOT KIMI_CODE_HOME="$tmp/kimi" KIMI_PLUGIN_ROOT="$plugin" CLAUDE_CONFIG_DIR="$cfg" "$hookbin") || fail "kimi hook off: exited non-zero"
+out=$("${noh[@]}" JUNK_DRAWER_RUNTIME=kimi KIMI_CODE_HOME="$tmp/kimi" CLAUDE_CONFIG_DIR="$cfg" "$flagbin" off) || fail "kimi off: exited non-zero"
+out=$("${noh[@]}" KIMI_CODE_HOME="$tmp/kimi" KIMI_PLUGIN_ROOT="$plugin" CLAUDE_CONFIG_DIR="$cfg" "$hookbin") || fail "kimi hook off: exited non-zero"
 [ -z "$out" ] || fail "kimi hook after off: expected silence, got: $out"
-out=$(env -u KIMI_PLUGIN_ROOT JUNK_DRAWER_RUNTIME=codex CODEX_HOME="$tmp/codex" CLAUDE_CONFIG_DIR="$cfg" "$flagbin" off) || fail "codex off: exited non-zero"
+out=$("${noh[@]}" JUNK_DRAWER_RUNTIME=codex CODEX_HOME="$tmp/codex" CLAUDE_CONFIG_DIR="$cfg" "$flagbin" off) || fail "codex off: exited non-zero"
 [ ! -e "$tmp/codex/junk-drawer/tldr-on" ] || fail "codex off: the flag is still there"
 
 # ---------------------------------------------------------------- tldr-hook on Claude Code: the gate matrix
@@ -182,7 +189,7 @@ expect silent "a directory named tldr-on"
 # ---------------------------------------------------------------- tldr-hook without jq: the flag decides
 mkdir -p "$tmp/bin"
 ln -s "$(command -v bash)" "$tmp/bin/bash"
-nojq() { env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME PATH="$tmp/bin" JUNKD_TLDR_PATH_DIRS= HOME="$tmp/nohome" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1; }
+nojq() { "${noh[@]}" CLAUDECODE=1 PATH="$tmp/bin" JUNKD_TLDR_PATH_DIRS= HOME="$tmp/nohome" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1; }
 reset; mkdir -p "$cfg/junkd"; : > "$on"
 cfgjson "$(enabled_is false)"
 out=$(nojq) || fail "no jq: hook exited non-zero"
@@ -195,17 +202,17 @@ out=$(nojq) || fail "no jq, tldr-off: hook exited non-zero"
 mkdir -p "$tmp/stubhome/.local/bin"
 printf '#!/bin/sh\necho off\n' > "$tmp/stubhome/.local/bin/jq" && chmod +x "$tmp/stubhome/.local/bin/jq"
 rm "$off"
-out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME PATH="$tmp/bin" JUNKD_TLDR_PATH_DIRS= HOME="$tmp/stubhome" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
+out=$("${noh[@]}" CLAUDECODE=1 PATH="$tmp/bin" JUNKD_TLDR_PATH_DIRS= HOME="$tmp/stubhome" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
     fail "empty override: hook exited non-zero"
 rg -qF "$TERSE" <<<"$out" || fail "empty override: a jq under \$HOME/.local/bin was used, got: $out"
 # with no override, $HOME/.local/bin is one of the dirs added: the jq there answers (this stub says off)
-out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME -u JUNKD_TLDR_PATH_DIRS PATH="$tmp/bin" HOME="$tmp/stubhome" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
+out=$("${noh[@]}" -u JUNKD_TLDR_PATH_DIRS CLAUDECODE=1 PATH="$tmp/bin" HOME="$tmp/stubhome" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
     fail "default dirs: hook exited non-zero"
 [ -z "$out" ] || fail "default dirs: the jq under \$HOME/.local/bin was not found, got: $out"
 : > "$off"
 # a jq only in one of the tool dirs the hook adds to PATH (named through the override) is found and used
 mkdir -p "$tmp/jqdir" && ln -s "$(command -v jq)" "$tmp/jqdir/jq"
-out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME PATH="$tmp/bin" JUNKD_TLDR_PATH_DIRS="$tmp/jqdir" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
+out=$("${noh[@]}" CLAUDECODE=1 PATH="$tmp/bin" JUNKD_TLDR_PATH_DIRS="$tmp/jqdir" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
     fail "jq in a tool dir: hook exited non-zero"
 rg -qF "$TERSE" <<<"$out" || fail "jq in a tool dir: setting true over a tldr-off flag, expected the terse line, got: $out"
 

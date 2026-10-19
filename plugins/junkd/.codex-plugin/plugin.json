@@ -1,7 +1,7 @@
 {
-  "name": "junkd", "version": "0.3.3",
+  "name": "junkd", "version": "0.4.0",
   "description": "Handoff, orch and tldr in one plugin: save and resume durable task context, drain a backlog with implementation and independent verification subagents, summarize or keep replies terse. The /junkd pane, the automatic handoff loop and the main-loop guard are Claude Code mods and do nothing here.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
-  "keywords": ["handoff", "orchestration", "subagents", "summary", "concise"], "skills": "./skills/",
+  "keywords": ["handoff", "orchestration", "subagents", "summary", "concise"], "skills": "./skills/", "hooks": "./.codex-plugin/hooks.json",
   "interface": { "displayName": "junkd", "shortDescription": "Handoffs, the orch loop and TL;DR in one plugin", "longDescription": "Writes durable Markdown handoffs and restores them by short id, runs a resumable task loop with isolated worktrees and evidence gates, and summarizes or keeps replies terse. The /junkd pane and the automatic handoff loop are Claude Code only.", "developerName": "Krab00", "category": "Developer Tools", "capabilities": ["Read", "Write", "Interactive"], "defaultPrompt": ["Save a handoff for this task.", "Process the next eligible task with orch.", "Summarize my latest request in three sentences."] }
 }

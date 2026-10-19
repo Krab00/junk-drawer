@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook: while global TL;DR mode is on, inject a be-terse instruction into context every turn
-# (stdout of a UserPromptSubmit hook is added to the model's context). Always exits 0.
-# Kimi Code and Codex: the flag <home>/junk-drawer/tldr-on alone decides.
+# (stdout of a UserPromptSubmit hook is added to the model's context). Exits 0, or 2 when host-lib cannot tell the
+# host (JUNK_DRAWER_RUNTIME, else auto-detected: Claude Code, Codex and Kimi Code hooks always carry a signal).
+# Codex and Kimi Code: the flag <home>/junk-drawer/tldr-on alone decides (OpenCode runs no hook).
 # Claude Code (CFG = ${CLAUDE_CONFIG_DIR:-$HOME/.claude}): silent while the tldr_enabled setting is off, else terse
 # while $CFG/junkd/tldr-on exists. enabled is read from settings.json itself (a shell hook reads no plugin setting):
 # pluginConfigs, the first entry whose key starts with `junkd@`, .options.tldr_enabled; true, "true" or "on" is on,
 # any other value off. Only where that names no value (or jq is missing, or the file does not parse) the flag file
 # $CFG/junkd/tldr-off decides, which the hooks module writes while the row is off.
-if [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
-    flag="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/tldr-on"
-elif [ -n "${PLUGIN_ROOT:-}" ]; then
-    flag="${CODEX_HOME:-$HOME/.codex}/junk-drawer/tldr-on"
-else
-    cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-    flag="$cfg/junkd/tldr-on"
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac # no dirname: a hook may run with a bare PATH
+. "$here/host-lib" || exit 2
+jd_host || exit 2
+flag="$JD_FLAGS/tldr-on"
+if [ "$JD_HOST" = claude ]; then
+    cfg=$JD_CFG
+    flag="$cfg/junkd/tldr-on" # the same file as $JD_FLAGS/tldr-on, spelled as the junkd hooks module spells it
     # Hooks get no login-shell PATH when Claude Code is launched from the app: the usual dirs are added where PATH
     # lacks them. JUNKD_TLDR_PATH_DIRS replaces that list (tests/tldr.sh sets it empty to run without jq).
     IFS=: read -ra dirs <<<"${JUNKD_TLDR_PATH_DIRS-/opt/homebrew/bin:/usr/local/bin:${HOME:-}/.local/bin}"

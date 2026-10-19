@@ -17,9 +17,9 @@ You are the root orchestrator. You must delegate implementation and verification
 
 Read `./commands/orch.md` from this skill directory completely before acting. Treat it as the canonical workflow, with these host mappings:
 
-- The spec's `/junkd:orch` is this skill (`/junkd:orch` on Claude Code, `$orch` on Codex, `/skill:orch` on Kimi Code, "use the orch skill" on OpenCode), and its `/junkd:orch-init` the sibling `orch-init` skill.
+- The spec's `/junkd:orch` is this skill (`/junkd:orch` on Claude Code, `$orch` on Codex, `/skill:orch` on Kimi Code, `/orch` on OpenCode through the command wrapper `bin/opencode-commands.sh` generates, or "use the orch skill"), and its `/junkd:orch-init` the sibling `orch-init` skill (`/junkd:orch-init`, `$orch-init`, `/skill:orch-init`, `/orch-init`). When you tell the user a command, name the one of the host you run on.
 - `.orch/config.md` is primary; `.claude/orch.config.md` is a read-only compatibility fallback.
-- Resolve helpers as `./bin/orch-state`, `./bin/orch-worktree`, and `./bin/orch-sync` (on Claude Code, see below).
+- Resolve helpers as `./bin/orch-state`, `./bin/orch-worktree`, and `./bin/orch-sync` inside this skill directory (on Claude Code, see below). On Codex and Kimi Code the plugin root has no `bin/` (their installers drop or rewrite its symlinks), so a `${CLAUDE_PLUGIN_ROOT}/bin/` path from the spec is always this skill's `./bin` there; the same on OpenCode, which installs the skills alone.
 - Replace Claude's `Task` operation with your host's subagent mechanism (see below).
 - Read the matching role file under `./roles/` and include its full task-relevant instructions in each agent prompt (Claude Code has them as agent types, see below).
 

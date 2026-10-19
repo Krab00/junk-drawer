@@ -1,16 +1,34 @@
 #!/usr/bin/env bash
-# Print a saved handoff for a fresh session. With an id/fragment, match it; without, use the newest.
+# Print a saved handoff for a fresh session. With an id or a fragment of one, load the handoff it names; without, the
+# newest. The host's handoffs folder comes from host-lib (JUNK_DRAWER_RUNTIME, else auto-detected).
 #   handoff-load [id]
-if [ "${JUNK_DRAWER_RUNTIME:-}" = kimi ] || [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then
-    dir="${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/handoffs"
-elif [ "${JUNK_DRAWER_RUNTIME:-}" = codex ] || [ -n "${PLUGIN_ROOT:-}" ]; then
-    dir="${CODEX_HOME:-$HOME/.codex}/junk-drawer/handoffs"
-else
-    dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs"
-fi
+# A fragment that matches several handoffs lists them and exits 1. A whole id loads the newest handoff with exactly
+# that id (a session saved more than once), whatever else the text matches.
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac # no dirname: a hook may run with a bare PATH
+. "$here/host-lib" || exit 2
+jd_host || exit 2
+dir=$JD_HANDOFFS
 q="${1:-}"
-f=$(ls -t "$dir"/*"$q"*.md 2>/dev/null | head -1)
-[ -n "$f" ] && [ -f "$f" ] || { echo "no handoff found${q:+ matching '$q'} in $dir" >&2; exit 1; }
+id_of() { local b; b=$(basename "$1" .md); printf '%s' "${b##*_}"; }
+matches=$(ls -t "$dir"/*"$q"*.md 2>/dev/null)
+[ -n "$matches" ] || { echo "no handoff found${q:+ matching '$q'} in $dir" >&2; exit 1; }
+f=$(printf '%s\n' "$matches" | head -1)
+if [ -n "$q" ] && [ "$(printf '%s\n' "$matches" | wc -l | tr -d ' ')" -gt 1 ]; then
+    exact=""
+    while IFS= read -r m; do
+        [ "$(id_of "$m")" = "$q" ] && { exact=$m; break; }
+    done <<<"$matches"
+    if [ -n "$exact" ]; then
+        f=$exact
+    else
+        echo "several handoffs match '$q' in $dir; run again with one of these ids:" >&2
+        while IFS= read -r m; do
+            printf '  %s  %s\n' "$(id_of "$m")" "$(head -1 "$m" | sed 's/^# *//')" >&2
+        done <<<"$matches"
+        exit 1
+    fi
+fi
+[ -f "$f" ] || { echo "no handoff found${q:+ matching '$q'} in $dir" >&2; exit 1; }
 echo "# handoff: $(basename "$f")"
 echo
 cat "$f"
