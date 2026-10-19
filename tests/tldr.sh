@@ -191,6 +191,18 @@ rg -qF "$TERSE" <<<"$out" || fail "no jq, setting false, no tldr-off flag: expec
 cfgjson "$(enabled_is true)"
 out=$(nojq) || fail "no jq, tldr-off: hook exited non-zero"
 [ -z "$out" ] || fail "no jq, setting true, a tldr-off flag: expected silence (the flag decides), got: $out"
+# an empty override adds no dir at all: a jq in $HOME/.local/bin (one of the defaults) is not reached
+mkdir -p "$tmp/stubhome/.local/bin"
+printf '#!/bin/sh\necho off\n' > "$tmp/stubhome/.local/bin/jq" && chmod +x "$tmp/stubhome/.local/bin/jq"
+rm "$off"
+out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME PATH="$tmp/bin" JUNKD_TLDR_PATH_DIRS= HOME="$tmp/stubhome" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
+    fail "empty override: hook exited non-zero"
+rg -qF "$TERSE" <<<"$out" || fail "empty override: a jq under \$HOME/.local/bin was used, got: $out"
+# with no override, $HOME/.local/bin is one of the dirs added: the jq there answers (this stub says off)
+out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME -u JUNKD_TLDR_PATH_DIRS PATH="$tmp/bin" HOME="$tmp/stubhome" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
+    fail "default dirs: hook exited non-zero"
+[ -z "$out" ] || fail "default dirs: the jq under \$HOME/.local/bin was not found, got: $out"
+: > "$off"
 # a jq only in one of the tool dirs the hook adds to PATH (named through the override) is found and used
 mkdir -p "$tmp/jqdir" && ln -s "$(command -v jq)" "$tmp/jqdir/jq"
 out=$(env -u KIMI_PLUGIN_ROOT -u PLUGIN_ROOT -u JUNK_DRAWER_RUNTIME PATH="$tmp/bin" JUNKD_TLDR_PATH_DIRS="$tmp/jqdir" CLAUDE_CONFIG_DIR="$cfg" "$hookbin" 2>&1) ||
