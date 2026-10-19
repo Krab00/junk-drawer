@@ -6,8 +6,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { AgentInfo, Args, ContextMcpTool, On } from 'claude-code'
 import {
-  ago, buildTree, clampRefresh, coerce, countSkill, tallyTool, flatten, mcpRows, mcpSplitter, emptyCounters, readWorktrees, pickTranscript,
-  projectFolder, revealCommand, toolRows,
+  ago, approxTokens, buildTree, clampRefresh, coerce, countSkill, tallyTool, flatten, mcpRows, mcpSplitter, emptyCounters, readWorktrees, pickTranscript,
+  projectFolder, revealCommand, splitMcp, tokens, toolRows,
 } from './tools'
 
 const CFG = '/fake/cfg'
@@ -190,11 +190,17 @@ type Opts = {
   sessionId?: string
   transcripts?: { name: string; kind: 'file' | 'dir' | 'other'; mtimeMs: number }[]
   commands?: { name: string; source: string }[]
+  env?: Record<string, string> // in place of CLAUDE_CONFIG_DIR and HOME
+  shellHome?: string // what `sh -c 'echo $HOME'` prints
+  cfgDir?: string // where the transcripts live, when env moves it from CFG
+  revealStderr?: string // what a failing open prints
 }
+// A world call that is refused (the reason a fixed text, or for `open` the switch's) while its switch is on.
+type Fail = { agents?: boolean; usage?: boolean; cwd?: boolean; git?: boolean; panes?: boolean; uname?: boolean; reveal?: boolean; open?: string }
 type Rec = ReturnType<typeof world>
 function world(on: On, o: Opts = {}) {
   mock.store(on)
-  mock.env(on, { CLAUDE_CONFIG_DIR: CFG, HOME })
+  mock.env(on, o.env ?? { CLAUDE_CONFIG_DIR: CFG, HOME })
   const clock = mock.clock(on, { now: T0 })
   const rec = {
     clock,
@@ -214,36 +220,56 @@ function world(on: On, o: Opts = {}) {
     hold: undefined as Promise<void> | undefined, // agent.list waits on it while set
     files: {} as Record<string, string>,
     asked: 0, // ui.panes queries: a poll tick asks before it loads
+    fail: {} as Fail,
+    log: [] as string[], // ui.open and ui.close in call order, `ui.open <id>[ focus]`
+    commands: o.commands ?? [],
+    gates: [] as Promise<void>[], // each agent.list in turn waits on the next, answering the agents of its call's time
   }
   const done = (stdout = '', exitCode = 0, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
   on('ui.open', (_$, e) => {
+    if (rec.fail.open !== undefined) return { deny: rec.fail.open } as never
+    rec.log.push(`ui.open ${e.id}${e.focus ? ' focus' : ''}`)
     rec.opened.push({ id: e.id, focus: e.focus })
     if (!rec.panes.includes(e.id)) rec.panes.push(e.id)
     return { value: { isPlaced: true as const } }
   })
-  on('ui.close', (_$, e) => { rec.closed.push(e.id); rec.panes = rec.panes.filter(p => p !== e.id); return { value: undefined } })
-  on('ui.panes', () => { rec.asked++; return { value: rec.panes.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) as never } })
+  on('ui.close', (_$, e) => { rec.log.push(`ui.close ${e.id}`); rec.closed.push(e.id); rec.panes = rec.panes.filter(p => p !== e.id); return { value: undefined } })
+  on('ui.panes', () => {
+    rec.asked++
+    if (rec.fail.panes) return { deny: 'panes unreadable' } as never
+    return { value: rec.panes.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) as never }
+  })
   on('ui.focus', () => ({}))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  on('command.list', () => ({ value: (o.commands ?? []).map(c => ({ description: '', ...c })) as never }))
+  on('command.list', () => ({ value: rec.commands.map(c => ({ description: '', ...c })) as never }))
   on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', (_$, ev) => ({ sessionId: ev.sessionId }))
-  on('session.cwd', () => ({ value: rec.cwd }))
+  on('session.cwd', () => {
+    if (rec.fail.cwd) return { deny: 'no cwd' } as never
+    return { value: rec.cwd }
+  })
   on('session.id', () => ({ value: o.sessionId ?? 's1' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: { breakdown: { mcpTools: rec.mcp } } } as never }))
+  on('session.usage', () => {
+    if (rec.fail.usage) return { deny: 'no usage' } as never
+    return { value: { startedAt: 0, context: { breakdown: { mcpTools: rec.mcp } } } as never }
+  })
   on('turn.complete', (_$, e) => ({ text: e.answer }) as never)
   on('agent.list', async () => {
-    await rec.hold
-    return { value: rec.agents }
+    const gate = rec.gates.shift()
+    const then = rec.agents
+    if (gate) await gate
+    else await rec.hold
+    if (rec.fail.agents) return { deny: 'agents unreadable' } as never
+    return { value: gate ? then : rec.agents }
   })
   on('agent.spawn', (_$, e) => ({ model: e.model ?? rec.spawnModel, agentId: rec.nextAgent }))
-  on('tool.call', (_$, e) => ({ result: 'ok', text: (e as { answer?: string }).answer ?? 'twelve chars' }))
+  on('tool.call', (_$, e) => ((e as { noText?: boolean }).noText ? { result: 'ok' } : { result: 'ok', text: (e as { answer?: string }).answer ?? 'twelve chars' }))
   on('command.run', (_$, e) => ({ text: `ran ${e.command}` }))
   on('fs.list', (_$, e) => {
-    if (e.path !== `${CFG}/projects/${projectFolder(rec.cwd)}`) throw new Error(`ENOENT ${e.path}`)
+    if (e.path !== `${o.cfgDir ?? CFG}/projects/${projectFolder(rec.cwd)}`) throw new Error(`ENOENT ${e.path}`)
     return { value: (o.transcripts ?? []).map(t => ({ size: 1, isLink: false, ...t })) }
   })
   on('fs.exists', (_$, e) => ({ value: e.path in rec.files }))
@@ -256,10 +282,18 @@ function world(on: On, o: Opts = {}) {
   on('process.run', (_$, e) => {
     const argv = [...e.argv]
     rec.runs.push(argv)
-    if (argv[0] === 'git' && argv.includes('worktree')) return done(rec.porcelain, rec.gitExit)
+    if (argv[0] === 'git' && argv.includes('worktree')) {
+      if (rec.fail.git) return { deny: 'git: no such file' } as never
+      return done(rec.porcelain, rec.gitExit)
+    }
     if (argv[0] === 'git') return done('', 128)
-    if (argv[0] === 'uname') return done(`${o.os ?? 'Darwin'}\n`)
-    if (argv[0] === 'open' || argv[0] === 'xdg-open') return done('', o.revealExit ?? 0, o.revealExit ? 'no such app' : '')
+    if (argv[0] === 'uname') {
+      if (rec.fail.uname) return { deny: 'uname: not found' } as never
+      return done(`${o.os ?? 'Darwin'}\n`)
+    }
+    if (argv[0] === 'sh') return done(`${o.shellHome ?? ''}\n`)
+    if ((argv[0] === 'open' || argv[0] === 'xdg-open') && rec.fail.reveal) return { deny: 'spawn failed' } as never
+    if (argv[0] === 'open' || argv[0] === 'xdg-open') return done('', o.revealExit ?? 0, o.revealExit ? (o.revealStderr ?? 'no such app') : '')
     if (argv[0] === 'rm') delete rec.files[argv.at(-1)!]
     return done()
   })
@@ -994,6 +1028,14 @@ test('the pane: tabs 1-4, r, t and q; every row within the pane\'s width, long n
   await $.tool.call(mainCall('Skill', { skill: long }))
   await tools($)
   await rec.clock.settle()
+  // Each tab's rows, whatever the width: the tree's four nodes; a head and the long tool, Skill and the folded MCP row;
+  // a head and the one server; a head and the one skill.
+  const ROWS: Record<string, string[]> = {
+    agents: ['row-root', `row-wt:${WT}`, 'row-agent:a1', `row-wt:${OTHER}`],
+    tools: ['head', 'tool-row-mcp (1 server)', 'tool-row-Skill', `tool-row-Tool${long}`],
+    mcp: ['head', `mcp-${long}`],
+    skills: ['head', `skill-${long}`],
+  }
   for (const cols of [30, 40, 80])
     await onPane($, async ui => {
       const hotkeys = (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey).map(b => `${b.props.hotkey}:${b.key}`)
@@ -1003,11 +1045,369 @@ test('the pane: tabs 1-4, r, t and q; every row within the pane\'s width, long n
         await ui.press({ key: `tab-${route}` })
         expect(await activeTab(ui)).toMatch(new RegExp(`^ ${digit} `))
         const rows = (await ui.findAll({ type: 'Box' })).filter(b => b.props.height === 1 && /^(row-|tool-row-|mcp-|skill-|head)/.test(b.key ?? ''))
-        expect(rows.length, route).toBeGreaterThan(1)
+        expect(rows.map(r => r.key), `${route} at ${cols}`).toEqual(ROWS[route])
         for (const r of rows) expect([...r.text].length, `${route} ${r.key} at ${cols}: ${JSON.stringify(r.text)}`).toBeLessThanOrEqual(cols - 2)
         expect(rows.some(r => r.text.includes('…')), `${route}: the long name is cut`).toBe(true)
       }
     }, 'terminal', cols)
   const mobile = await $.ui.mount({ plugin: 'junkd', surface: 'mobile', ...paneOf() } as never)
   expect(await (mobile as Mounted).find({ type: 'Box', key: 'engine' })).toBeDefined()
+})
+
+// fix round 1: the failure paths, the stale load, a refused open, a reload, and the matrix rows below ---------------
+
+test('splitMcp: a name with no server part or no tool part is no MCP tool; it keeps its own Tools row', () => {
+  for (const name of ['mcp__x', 'mcp__x__', 'mcp____t', 'mcpx__s__t']) expect(splitMcp(name), name).toBeNull()
+  expect(splitMcp('mcp__s__t__u')).toEqual({ server: 's', tool: 't__u' })
+  const c = emptyCounters()
+  tallyTool(c, 'mcp__x', false, 0)
+  tallyTool(c, 'mcp__s__t', false, 0)
+  expect(toolRows(c.tools, []).map(r => r.name).sort()).toEqual(['mcp (1 server)', 'mcp__x'])
+})
+
+test('≈tokens: below a thousand whole, from a thousand in k; chars are divided by 4; none is a dash', () => {
+  expect(tokens(999)).toBe('999')
+  expect(tokens(999.4)).toBe('999')
+  expect(tokens(1000)).toBe('1.0k')
+  expect(tokens(1250)).toBe('1.3k')
+  expect(approxTokens(3996)).toBe('999')
+  expect(approxTokens(4000)).toBe('1.0k')
+  expect(approxTokens(0)).toBe('-')
+})
+
+test('the porcelain parser: a block that says both bare and detached is bare', () => {
+  expect(readWorktrees(['worktree /r', 'bare', 'detached', ''].join('\n'))).toEqual([{ path: '/r', branch: 'bare' }])
+  expect(readWorktrees(['worktree /r', 'detached', 'bare', ''].join('\n'))).toEqual([{ path: '/r', branch: 'bare' }])
+})
+
+test('the tree: a worktree is a whole folder, not a name prefix; a trailing slash on either side still matches', () => {
+  const trees = [{ path: '/w/main', branch: 'main' }, { path: '/w/a', branch: 'a' }, { path: '/w/b/', branch: 'b' }]
+  const agents = [agent('x', 'running'), agent('y', 'running'), agent('z', 'running'), agent('v', 'running')]
+  const spawned = {
+    x: { model: 'm', cwd: '/w/ab' }, // a sibling whose name starts like /w/a: not under it
+    y: { model: 'm', cwd: '/w/a/' }, // the worktree itself, with a slash
+    z: { model: 'm', cwd: '/w/b/src' }, // under a worktree git listed with a slash
+    v: { model: 'm', cwd: '/w/b' },
+  }
+  const root = buildTree(trees, agents, spawned, false)
+  expect(root.children.map(n => n.id)).toEqual(['agent:x', 'wt:/w/a', 'wt:/w/b/'])
+  expect(root.children[1]!.children.map(n => n.id)).toEqual(['agent:y'])
+  expect(root.children[2]!.label).toBe('b')
+  expect(root.children[2]!.children.map(n => n.id)).toEqual(['agent:z', 'agent:v'])
+})
+
+test('a result with no text is a call with no ≈tokens', W, async ($, on) => {
+  world(on)
+  await start($)
+  await $.tool.call(mainCall('Bash', { noText: true }))
+  await tools($, 'tools')
+  await onPane($, async ui => expect(await rowOf(ui, 'Bash')).toMatch(/^ {2}Bash\s+1\s+0\s+-$/))
+})
+
+test('agents that failed or were killed are done; pending runs', W, async ($, on) => {
+  const rec = world(on, { agents: [agent('f', 'failed', { name: 'eff' }), agent('k', 'killed', { name: 'kay' }), agent('p', 'pending', { name: 'pea' })] })
+  await start($)
+  await tools($)
+  await rec.clock.settle()
+  await onPane($, async ui => {
+    expect(await nodeText(ui, 'agent:f')).toBe('├─   ○ eff  general-purpose  done')
+    expect(await nodeText(ui, 'agent:k')).toBe('├─   ○ kay  general-purpose  done')
+    expect(await nodeText(ui, 'agent:p')).toBe('├─   ● pea  general-purpose')
+  })
+})
+
+test('an agents list that fails keeps the last tree as it was, running agents running', W, async ($, on) => {
+  const rec = world(on, { agents: [agent('a1', 'running', { name: 'one' })] })
+  await start($)
+  await tools($)
+  await rec.clock.settle()
+  await onPane($, async ui => expect(await nodeText(ui, 'agent:a1')).toBe('├─   ● one  general-purpose'))
+  rec.fail.agents = true
+  await onPane($, ui => ui.press({ key: 'refresh' }))
+  await rec.clock.settle()
+  expect(gitRuns(rec)).toBe(2) // the load ran
+  await onPane($, async ui => expect(await nodeText(ui, 'agent:a1')).toBe('├─   ● one  general-purpose'))
+})
+
+test('a usage read that fails keeps the last MCP schemas', W, async ($, on) => {
+  const rec = world(on, { mcp: [mcpTool('mcp__linear__get', 'linear', 1200), mcpTool('mcp__linear__save', 'linear', 800, false)] })
+  await start($)
+  await tools($, 'mcp')
+  await rec.clock.settle()
+  await onPane($, async ui => expect(await rowOf(ui, 'linear')).toMatch(/linear\s+0\s+1\/2\s+1\.2k\s+-$/))
+  rec.fail.usage = true
+  await onPane($, ui => ui.press({ key: 'refresh' }))
+  await rec.clock.settle()
+  expect(gitRuns(rec)).toBe(2)
+  await onPane($, async ui => expect(await rowOf(ui, 'linear')).toMatch(/linear\s+0\s+1\/2\s+1\.2k\s+-$/))
+})
+
+test('of two loads side by side, only the newest draws: an older one that ends last is dropped', W, async ($, on) => {
+  const rec = world(on, { agents: [agent('a1', 'running', { name: 'one' })] })
+  await start($)
+  let first = () => {}
+  let second = () => {}
+  rec.gates.push(new Promise<void>(r => { first = r }), new Promise<void>(r => { second = r }))
+  await tools($) // the first load asks for the agents while a1 runs ...
+  rec.agents = [agent('a1', 'completed', { name: 'one' })]
+  await onPane($, ui => ui.press({ key: 'refresh' })) // ... the second once it is done
+  second()
+  await rec.clock.settle()
+  first()
+  await rec.clock.settle()
+  await onPane($, async ui => expect(await nodeText(ui, 'agent:a1')).toBe('├─   ○ one  general-purpose  done'))
+})
+
+test('a refused open: the reason is said, the pane is not open, nothing polls, and the next toggle opens it', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  rec.fail.open = 'no room for a pane'
+  expect((await tools($)).text).toContain('no room for a pane')
+  await rec.clock.settle()
+  const runs = gitRuns(rec)
+  const asked = rec.asked
+  await rec.clock.advance(600_000)
+  expect(gitRuns(rec)).toBe(runs)
+  expect(rec.asked).toBe(asked)
+  rec.fail.open = undefined
+  await tools($)
+  expect(rec.panes).toEqual([PANE_ID])
+  expect(rec.closed).toEqual([])
+})
+
+test('a pane left open across a reload polls again; with tools off it closes at the start', W, async ($, on) => {
+  const rec = world(on)
+  rec.panes = [PANE_ID]
+  await start($)
+  await rec.clock.settle()
+  expect(gitRuns(rec)).toBe(1)
+  await rec.clock.advance(MINUTE)
+  expect(gitRuns(rec)).toBe(2)
+  expect(rec.closed).toEqual([])
+})
+
+test('a pane left open across a reload with tools off closes at the start and is never read', { ...W, options: { tools_enabled: false } }, async ($, on) => {
+  const rec = world(on)
+  rec.panes = [PANE_ID]
+  await start($)
+  await rec.clock.advance(600_000)
+  expect(rec.closed).toEqual([PANE_ID])
+  expect(gitRuns(rec)).toBe(0)
+})
+
+test('a session directory that cannot be read: no git, the agents under an unnamed root', W, async ($, on) => {
+  const rec = world(on, { agents: [agent('a1', 'running', { name: 'one' })] })
+  await start($)
+  rec.fail.cwd = true
+  await tools($)
+  await rec.clock.settle()
+  expect(gitRuns(rec)).toBe(0)
+  await onPane($, async ui => {
+    expect(await nodeKeys(ui)).toEqual(['node:root', 'node:agent:a1'])
+    expect(await nodeText(ui, 'root')).toBe('▾ ?')
+  })
+})
+
+test('git worktree list that throws: the session\'s folder is the root, the agents under it', W, async ($, on) => {
+  const rec = world(on, { agents: [agent('a1', 'running', { name: 'one' })] })
+  await start($)
+  rec.fail.git = true
+  await tools($)
+  await rec.clock.settle()
+  expect(gitRuns(rec)).toBe(1)
+  await onPane($, async ui => {
+    expect(await nodeKeys(ui)).toEqual(['node:root', 'node:agent:a1'])
+    expect(await nodeText(ui, 'root')).toBe('▾ T17')
+  })
+})
+
+test('a poll tick that cannot read the panes loads all the same', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await tools($)
+  await rec.clock.settle()
+  rec.fail.panes = true
+  await rec.clock.advance(MINUTE)
+  expect(gitRuns(rec)).toBe(2)
+  await rec.clock.advance(MINUTE)
+  expect(gitRuns(rec)).toBe(3)
+})
+
+test('a subagent\'s turn end reads the tree again too; a closed pane reads nothing', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await turnEnd($)
+  expect(gitRuns(rec)).toBe(0)
+  await tools($)
+  await rec.clock.settle()
+  await $.turn.complete({ answer: 'a', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer', agentId: 'a1' } as never)
+  await rec.clock.settle()
+  expect(gitRuns(rec)).toBe(2)
+})
+
+test('a /clear drops the agents seen before it, done ones too', W, async ($, on) => {
+  const rec = world(on, { agents: [agent('a1', 'running', { name: 'one' })] })
+  await start($)
+  await tools($)
+  await rec.clock.settle()
+  rec.agents = [] // the engine dropped it: drawn as done
+  await onPane($, ui => ui.press({ key: 'refresh' }))
+  await rec.clock.settle()
+  await onPane($, async ui => expect(await nodeText(ui, 'agent:a1')).toBe('├─   ○ one  general-purpose  done'))
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: {} as never })
+  await rec.clock.settle()
+  await onPane($, async ui => expect(await nodeKeys(ui)).toEqual(['node:root', `node:wt:${WT}`, `node:wt:${OTHER}`]))
+})
+
+test('a spawn while tools is off is not recorded: the agent has no model and sits under the root', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await frame($, 'set', { key: 'tools_enabled', value: false })
+  await spawn($, { cwd: WT })
+  await frame($, 'set', { key: 'tools_enabled', value: true })
+  rec.agents = [agent('a1', 'running', { name: 'one' })]
+  await tools($)
+  await rec.clock.settle()
+  await onPane($, async ui => {
+    expect(await nodeKeys(ui)).toEqual(['node:root', 'node:agent:a1', `node:wt:${WT}`, `node:wt:${OTHER}`])
+    expect(await nodeText(ui, 'agent:a1')).toBe('├─   ● one  general-purpose')
+  })
+})
+
+test('a slash run of a command the list lacks reads the list again (a /reload-plugins added it)', W, async ($, on) => {
+  const rec = world(on, { commands: [{ name: 'mine', source: 'user' }] })
+  await start($)
+  await run($, 'mine')
+  rec.commands = [...rec.commands, { name: 'theirs', source: 'plugin' }]
+  await run($, 'theirs')
+  await tools($, 'skills')
+  await onPane($, async ui => {
+    expect(await rowOf(ui, 'mine')).toMatch(/mine\s+slash\s+1\s/)
+    expect(await rowOf(ui, 'theirs')).toMatch(/theirs\s+slash\s+1\s/)
+  })
+})
+
+test('the /config menu: refresh at 9 and 10 is 10, at 600 and 601 is 600', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  for (const [raw, want] of [[9, 10], [10, 10], [11, 11], [599, 599], [600, 600], [601, 600], [9.6, 10]] as const) {
+    await frame($, 'config', { key: 'junkd.tools_refresh', value: raw })
+    expect(rec.config.at(-1), String(raw)).toEqual({ key: 'junkd.tools_refresh', value: want })
+  }
+})
+
+test('the set closes only a tools pane that is still its own: one reopened by hand stays', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await run($, 'junkd')
+  await tools($) // the person closes the set's tools tab ...
+  await tools($) // ... and opens it on their own
+  await run($, 'junkd')
+  expect(rec.panes).toEqual([PANE_ID])
+})
+
+test('settings ▸ on tools: the pane opens unfocused, junkd and the set\'s other panes close, then it asks for the keys', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await run($, 'junkd')
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID])
+  const junkd = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', component: 'Pane', requestId: 'junkd', props: { ...paneOf().props, title: 'junkd' } })
+  const at = rec.log.length
+  await junkd.press({ key: 'pane:tools' })
+  await junkd.unmount()
+  expect(rec.log.slice(at)).toEqual([`ui.open ${PANE_ID}`, 'ui.close junkd', 'ui.close ahandoff', 'ui.close orch', 'ui.close statusline', `ui.open ${PANE_ID} focus`])
+  expect(rec.toasts).toEqual([])
+  await run($, 'junkd') // the tools pane is the person's now: the set opens behind junkd ...
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID])
+  await run($, 'junkd') // ... and, reopened in the set, closes with it
+  expect(rec.panes).toEqual([])
+})
+
+test('settings ▸ on tools while it is off: junkd closes, nothing opens, the reason is a toast', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await frame($, 'set', { key: 'tools_enabled', value: false })
+  await run($, 'junkd')
+  const junkd = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', component: 'Pane', requestId: 'junkd', props: { ...paneOf().props, title: 'junkd' } })
+  await junkd.press({ key: 'pane:tools' })
+  await junkd.unmount()
+  expect(rec.panes).toEqual([])
+  expect(rec.opened.filter(o => o.id === PANE_ID)).toEqual([])
+  expect(rec.toasts).toEqual(['✗ junkd: the tools pane is off: /junkd → tools → Tools pane: enabled'])
+})
+
+test('t: a failed open with nothing on stderr says the exit code', W, async ($, on) => {
+  const rec = world(on, { transcripts: [{ name: 's1.jsonl', kind: 'file', mtimeMs: 1 }], revealExit: 4, revealStderr: '' })
+  await start($)
+  await tools($)
+  await onPane($, ui => ui.press({ key: 'transcript' }))
+  expect(rec.toasts).toEqual(['✗ open exited 4'])
+})
+
+test('t: uname that throws is no macOS (the folder opens); an open that throws is the toast', W, async ($, on) => {
+  const dir = `${CFG}/projects/${projectFolder(WT)}`
+  const rec = world(on, { transcripts: [{ name: 's1.jsonl', kind: 'file', mtimeMs: 1 }] })
+  await start($)
+  await tools($)
+  rec.fail.uname = true
+  await onPane($, ui => ui.press({ key: 'transcript' }))
+  expect(rec.runs.filter(r => r[0] === 'xdg-open')).toEqual([['xdg-open', dir]])
+  expect(rec.toasts).toEqual([`✓ xdg-open ${dir}`])
+  rec.fail.reveal = true
+  await onPane($, ui => ui.press({ key: 'transcript' }))
+  expect(rec.toasts.at(-1)).toBe('✗ junkd: $.process.run: spawn failed')
+})
+
+test('t: a session directory that cannot be read is the toast, nothing run', W, async ($, on) => {
+  const rec = world(on, { transcripts: [{ name: 's1.jsonl', kind: 'file', mtimeMs: 1 }] })
+  await start($)
+  await tools($)
+  rec.fail.cwd = true
+  await onPane($, ui => ui.press({ key: 'transcript' }))
+  expect(rec.runs.filter(r => r[0] === 'open' || r[0] === 'xdg-open')).toEqual([])
+  expect(rec.toasts).toEqual(['✗ junkd: $.session.cwd: no cwd'])
+})
+
+test('t: with no CLAUDE_CONFIG_DIR the transcripts are under HOME, and with no HOME under the shell\'s', W, async ($, on) => {
+  const rec = world(on, { env: {}, shellHome: '/home/sh', cfgDir: '/home/sh/.claude', transcripts: [{ name: 's1.jsonl', kind: 'file', mtimeMs: 1 }] })
+  await start($)
+  await tools($)
+  await onPane($, ui => ui.press({ key: 'transcript' }))
+  expect(rec.runs).toContainEqual(['sh', '-c', 'echo $HOME'])
+  expect(rec.toasts).toEqual([`✓ open -R /home/sh/.claude/projects/${projectFolder(WT)}/s1.jsonl`])
+})
+
+test('t: with HOME and no CLAUDE_CONFIG_DIR the transcripts are under HOME/.claude', W, async ($, on) => {
+  const rec = world(on, { env: { HOME }, cfgDir: `${HOME}/.claude`, transcripts: [{ name: 's1.jsonl', kind: 'file', mtimeMs: 1 }] })
+  await start($)
+  await tools($)
+  await onPane($, ui => ui.press({ key: 'transcript' }))
+  expect(rec.runs.filter(r => r[0] === 'sh')).toEqual([])
+  expect(rec.toasts).toEqual([`✓ open -R ${HOME}/.claude/projects/${projectFolder(WT)}/s1.jsonl`])
+})
+
+test('a narrow pane (under 22 columns) draws every row within it; control characters in a name are blanks', W, async ($, on) => {
+  const rec = world(on, { mcp: [mcpTool('mcp__s\x1b[31m__t', 's\x1b[31m', 5)] })
+  await start($)
+  rec.nextAgent = 'a1'
+  await spawn($, { cwd: WT })
+  rec.agents = [agent('a1', 'running', { name: 'evil\n\tname\x1b[2J' })]
+  await $.tool.call(mainCall('Bad\x07Tool'))
+  await $.tool.call(mainCall('Skill', { skill: 'sk\rill' }))
+  await tools($)
+  await rec.clock.settle()
+  for (const cols of [12, 21])
+    await onPane($, async ui => {
+      for (const route of ['agents', 'tools', 'mcp', 'skills'] as const) {
+        await ui.press({ key: `tab-${route}` })
+        const rows = (await ui.findAll({ type: 'Box' })).filter(b => b.props.height === 1 && /^(row-|tool-row-|mcp-|skill-|head)/.test(b.key ?? ''))
+        expect(rows.length, route).toBeGreaterThan(0)
+        for (const r of rows) expect([...r.text].length, `${route} ${r.key} at ${cols}: ${JSON.stringify(r.text)}`).toBeLessThanOrEqual(cols - 2)
+        for (const t of await lines(ui)) expect(/[\u0000-\u001f\u007f-\u009f]/.test(t), `${route}: ${JSON.stringify(t)}`).toBe(false)
+      }
+    }, 'terminal', cols)
+  await onPane($, async ui => {
+    await ui.press({ key: 'tab-agents' })
+    expect(await nodeText(ui, 'agent:a1')).toBe('│  └─   ● evil  name [2J  general-purpose  haiku')
+  }, 'terminal', 100)
 })
