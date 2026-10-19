@@ -135,7 +135,7 @@ test('T12 AC3: Write: never the SubagentStop records under junkd/orch/_agents/, 
     `${CFG}/junkd//orch/./_agents/s1/a1.json`, `${CFG}/junkd/orch/_agents/s1/impl.md`])
     expect(write(p), p).toMatch(/may Write only/)
   // where only the deny list stands: a root (the scratchpad, the config dir's orch state) or a new .md anywhere
-  for (const p of [`${SCRATCH}/junkd/orch/_agents/s1/a1.json`, `${SCRATCH}/JUNKD/orch/_Agents/x.md`, `${CFG}/orch/junkd/orch/_agents/a.json`,
+  for (const p of [`${SCRATCH}/junkd/orch/_agents`, `${SCRATCH}/junkd/orch/_agents/s1/a1.json`, `${SCRATCH}/JUNKD/orch/_Agents/x.md`, `${CFG}/orch/junkd/orch/_agents/a.json`,
     '/repo/junkd/orch/_agents/s1/notes.md', '/repo/junkd/orch/_agents', '/repo/junkd/orch/_agents/a/b/c.md'])
     expect(write(p), p).toMatch(/may Write only/)
   // a link that lands there
