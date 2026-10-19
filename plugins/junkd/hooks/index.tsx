@@ -1,5 +1,5 @@
-// Plugin junkd's one hooks module: handoff, orch and tldr, the core setting and the /junkd frame, each in its own
-// files, composed here. A feature file exports `register<Feature>(on, options)` for the hooks only it has, and plain
+// Plugin junkd's one hooks module: handoff, orch, tldr, ctx and statusline, the core setting and the /junkd frame,
+// each in its own files, composed here. A feature file exports `register<Feature>(on, options)` for the hooks only it has, and plain
 // named functions for the rest (see feature.ts); this file holds what is shared:
 // - `$.junkd`, the noun other mods call (types/index.d.ts): schema answers here; get, set, config, open and
 //   orchGuardState need `$`, which a noun may not capture, so the hooks on junkd.<method> below answer them.
@@ -8,20 +8,24 @@
 // - handoff.tsx: /junkd:handoff, /junkd:handon, /junkd:ahandoff, the auto handoff loop, the 🪃 segment, its pane.
 // - orch.tsx: the main-loop guard (tool.call, agent.spawn), /junkd:orch panel and its pane.
 // - tldr.tsx: /junkd:tldr's sentences and the terse flag file bin/tldr-hook reads.
+// - ctx.ts: the ctx rows and /junkd:ctx-limit, mirrored into the files bin/ctx-limit-hook reads.
+// - statusline.tsx: the statusline rows, /junkd:statusline, its pane, and bin/statusline-setup on|off.
 // - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
 // - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
-// - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch).
+// - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline).
 // Settings: one userConfig row per `<group>_<field>` (settings.ts), the /config row `junkd.<group>_<field>`.
 // Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; the flag files live under its junkd/ folder.
 import type { Register } from 'claude-code'
 import type { JunkdHandoffRoute } from '../types'
 import { registerCache } from './cache'
 import { coreStart, registerCore } from './core'
+import { ctxStart, registerCtx } from './ctx'
 import { allSettings, getSetting, openPane, setSetting } from './dispatch'
 import { handoffSegment, handoffStart, handoffStatus, handoffToolCall, registerHandoff } from './handoff'
 import { orchCatchDeny, orchGuardState, orchStart, orchToolDeny, registerOrch } from './orch'
 import { panelButton, panelStart, panelToggle, registerPanel } from './panel'
 import { SCHEMA, isKey } from './settings'
+import { registerStatusline, statuslineStart } from './statusline'
 import { registerTldr, tldrStart } from './tldr'
 
 const NO_HOOK = 'junkd: the hooks module did not answer'
@@ -77,7 +81,7 @@ export const register: Register = (on, options) => {
       if (pane === 'junkd') {
         if (route !== undefined) return { deny: `junkd: the junkd pane has no tab ${String(route)}` }
         await panelToggle($)
-      } else if (pane === 'handoff' || pane === 'orch') await openPane($, pane, route === undefined ? {} : { route })
+      } else if (pane === 'handoff' || pane === 'orch' || pane === 'statusline') await openPane($, pane, route === undefined ? {} : { route })
       else return { deny: `junkd: no pane ${String(pane)}` }
     } catch (err) {
       return { deny: reason(err) }
@@ -88,7 +92,7 @@ export const register: Register = (on, options) => {
 
   // Every feature's start, side by side; one that fails leaves the others started, and its error is raised after.
   on('session.start', async ($, e, next) => {
-    const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), panelStart($)])).find(
+    const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), ctxStart($), statuslineStart($), panelStart($)])).find(
       r => r.status === 'rejected',
     )
     if (failed) throw failed.reason
@@ -125,5 +129,7 @@ export const register: Register = (on, options) => {
   registerHandoff(on, options)
   registerOrch(on, options)
   registerTldr(on, options)
+  registerCtx(on, options)
+  registerStatusline(on, options)
   registerPanel(on, options)
 }

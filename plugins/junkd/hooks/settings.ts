@@ -6,7 +6,7 @@
 import type { JunkdGroup, JunkdKey, JunkdSchemaEntry, JunkdValue } from '../types'
 
 export const PLUGIN = 'junkd'
-export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr']
+export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline']
 
 export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'core_output_style', group: 'core', field: 'output_style', type: 'string', title: 'Output style', default: 'ste', main: true, options: ['ste', 'off'] },
@@ -29,6 +29,17 @@ export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'tldr_enabled', group: 'tldr', field: 'enabled', type: 'boolean', title: 'TL;DR: enabled', default: true, main: true },
   { key: 'tldr_terse', group: 'tldr', field: 'terse', type: 'boolean', title: 'Terse mode', default: false, main: true },
   { key: 'tldr_sentences', group: 'tldr', field: 'sentences', type: 'number', title: 'Sentences in a summary', default: 3, main: true },
+  { key: 'ctx_enabled', group: 'ctx', field: 'enabled', type: 'boolean', title: 'Context limit: enabled', default: false, main: true },
+  { key: 'ctx_threshold', group: 'ctx', field: 'threshold', type: 'number', title: 'Context limit: threshold (tokens)', default: 300000, main: true },
+  { key: 'ctx_action', group: 'ctx', field: 'action', type: 'string', title: 'Context limit: action past it', default: 'block', main: true, options: ['block', 'warn', 'cmd'] },
+  { key: 'ctx_cmd', group: 'ctx', field: 'cmd', type: 'string', title: 'Context limit: command of action cmd', default: '', main: false },
+  { key: 'statusline_enabled', group: 'statusline', field: 'enabled', type: 'boolean', title: 'Status line: wired into settings.json', default: true, main: true },
+  { key: 'statusline_ctx', group: 'statusline', field: 'ctx', type: 'boolean', title: 'Segment: context free/used', default: true, main: false },
+  { key: 'statusline_branch', group: 'statusline', field: 'branch', type: 'boolean', title: 'Segment: git branch', default: true, main: false },
+  { key: 'statusline_worktree', group: 'statusline', field: 'worktree', type: 'boolean', title: 'Segment: linked worktree', default: true, main: false },
+  { key: 'statusline_model', group: 'statusline', field: 'model', type: 'boolean', title: 'Segment: model', default: true, main: false },
+  { key: 'statusline_effort', group: 'statusline', field: 'effort', type: 'boolean', title: 'Segment: effort', default: true, main: false },
+  { key: 'statusline_limits', group: 'statusline', field: 'limits', type: 'boolean', title: 'Segment: 5h/week rate limits', default: true, main: false },
 ]
 
 export const isKey = (key: unknown): key is JunkdKey => SCHEMA.some(f => f.key === key)
