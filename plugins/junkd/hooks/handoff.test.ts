@@ -1,6 +1,8 @@
-// The /handoff mod: the auto loop (deny gate, clear → handon → continue chain), the
-// `panel | auto | off` arguments, the 🪃 prompt-line segment and the pane's three tabs.
-// Everything beneath the plugin is answered from memory by `world`; nothing touches a real home.
+// handoff inside junkd: the auto loop (deny gate, clear → handon → continue chain), /junkd:handoff's
+// `panel | auto | off` arguments, /junkd:ahandoff, the 🪃 prompt-line segment, the pane's three tabs, and the
+// handoff rows of `$.junkd` (keys `handoff_<field>`, /config rows `junkd.handoff_<field>`).
+// The whole junkd module loads (core, orch, tldr and the /junkd frame beside handoff), so `world` answers what every
+// session start touches; everything beneath the plugin is answered from memory, nothing touches a real home.
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Mounted, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
@@ -9,7 +11,10 @@ const HOME = '/home/u'
 const DIR = `${HOME}/.claude/handoffs`
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
-const OPTIONS = { options: { threshold: 80, checkEvery: 1 } }
+const OPTIONS = { options: { handoff_threshold: 80, handoff_checkEvery: 1 } }
+// A handoff field's setting key and its /config row.
+const KEY = (field: string) => `handoff_${field}`
+const ROW = (field: string) => `junkd.handoff_${field}`
 
 const PANE = {
   component: 'Pane',
@@ -27,7 +32,14 @@ const usage = (percent: number) => ({
   startedAt: 0, context: { window: 200000, tokens: percent * 2000, percent }, rateLimits: [],
 })
 
-function world(on: On) {
+// The slash commands the host lists (findCommand picks /junkd:handon from these).
+const COMMANDS = [
+  { name: 'junkd:handoff', description: '', source: 'plugin' as const },
+  { name: 'junkd:handon', description: '', source: 'plugin' as const },
+  { name: 'clear', description: '', source: 'builtin' as const },
+]
+
+function world(on: On, o: { commands?: { name: string; description: string; source: 'plugin' | 'builtin' }[] } = {}) {
   mock.store(on)
   mock.env(on, { HOME })
   const rec = {
@@ -37,39 +49,44 @@ function world(on: On) {
     opened: [] as string[],
     focus: [] as (true | undefined)[], // each open's `focus`, beside `opened`
     closed: [] as string[],
+    events: [] as string[], // `open <id>` / `close <id>` in order, for "is it up"
     config: [] as { key: string; value: unknown }[],
     runs: [] as string[],
+    toasts: [] as string[],
   }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.usage', () => ({ value: usage(rec.percent) }))
+  // A model that is no Fable: orch's main-loop guard (same module) holds nothing in these tests.
+  on('session.model', () => ({ value: 'claude-opus-4-1' }))
   on('tool.call', () => ({ result: 'ok', text: 'ok' }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  on('command.list', () => ({
-    value: [
-      { name: 'handoff:handoff', description: '', source: 'plugin' },
-      { name: 'handoff:handon', description: '', source: 'plugin' },
-      { name: 'clear', description: '', source: 'builtin' },
-    ],
-  }))
+  on('command.list', () => ({ value: o.commands ?? COMMANDS }))
   on('command.run', (_$, e) => {
     rec.commands.push(`${e.command} ${e.args ?? ''}`.trim())
     return { text: `downstream ${e.command}` }
   })
   on('prompt.submit', (_$, e) => { rec.prompts.push(e.text); return { text: e.text } })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
-  on('ui.open', (_$, e) => { rec.opened.push(e.id); rec.focus.push(e.focus); return { value: { isPlaced: true as const } } })
-  on('ui.close', (_$, e) => { rec.closed.push(e.id); return { value: undefined } })
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.open', (_$, e) => {
+    rec.opened.push(e.id); rec.focus.push(e.focus); rec.events.push(`open ${e.id}`)
+    return { value: { isPlaced: true as const } }
+  })
+  on('ui.close', (_$, e) => { rec.closed.push(e.id); rec.events.push(`close ${e.id}`); return { value: undefined } })
   on('ui.focus', () => ({}))
   on('ui.status', () => ({ value: undefined }))
-  on('ui.toast', () => ({ value: undefined }))
+  on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('ui.copy', () => ({ value: { isCopied: true as const } }))
   on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
+  on('settings.read', () => ({ value: {} }))
   on('process.run', (_$, e) => {
     rec.runs.push(e.argv.join(' '))
     const stdout = e.argv.join(' ').includes('$HOME') ? `${HOME}\n` : ''
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('fs.exists', () => ({ value: true }))
+  on('fs.write', () => ({ value: undefined }))
+  on('fs.stat', () => ({ deny: 'ENOENT' })) // no file: the stat rejects
   on('fs.list', (_$, e) => ({
     value: e.path.replace(/\/$/, '') === DIR
       ? Object.entries(FILES).map(([name, f]) => ({ name, kind: 'file' as const, size: f.text.length, mtimeMs: f.mtimeMs, isLink: false }))
@@ -85,9 +102,14 @@ function world(on: On) {
   return rec
 }
 
+// Whether a pane is up: its last open or close.
+const isUp = (rec: { events: string[] }, id: string) => rec.events.filter(x => x.endsWith(` ${id}`)).at(-1) === `open ${id}`
+
 const start = ($: Engine) => $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
-const handoff = ($: Engine, args: string) =>
-  $.command.run({ command: 'handoff:handoff', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+const run = ($: Engine, command: string, args: string) =>
+  $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+const handoff = ($: Engine, args: string) => run($, 'junkd:handoff', args)
+const ahandoff = ($: Engine, args: string) => run($, 'junkd:ahandoff', args)
 
 // What a denied call carries: `deny` for a plugin's call, the errored `text` for the engine's.
 const denial = (r: unknown) => {
@@ -104,40 +126,23 @@ async function hotkey(ui: Mounted<Surface, 'Pane'>, key: string) {
 
 const texts = async (ui: Mounted<Surface, 'Pane'>) => (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
 
-// A frame plugin beside handoff, as T5 will be: `/frame <method> [json]` calls `$.handoff.<method>` and answers
-// what came back (an inline plugin closes over nothing, so the command carries the result out as text).
-const FRAME: Plugin = {
-  name: 'frame',
+// Another mod beside junkd: `/caller <method> [json]` calls `$.junkd.<method>` and answers what came back (an inline
+// plugin closes over nothing, so the command carries the result out as text).
+const CALLER: Plugin = {
+  name: 'caller',
   register(on) {
-    on('command.run', { command: 'frame' }, async ($, e) => {
+    on('command.run', { command: 'caller' }, async ($, e) => {
       const [method = '', ...rest] = e.args.trim().split(/\s+/)
       const input = rest.length ? JSON.parse(rest.join(' ')) : undefined
       try {
-        // The host lets a noun's method be called, never read, so "exists" means "answers a call".
-        if (method === 'members') {
-          const answered: string[] = []
-          if (Array.isArray(await $.handoff.schema())) answered.push('schema')
-          if (typeof (await $.handoff.get('threshold')) === 'number') answered.push('get')
-          if (typeof (await $.handoff.set({ key: 'threshold', value: await $.handoff.get('threshold') })) === 'number') answered.push('set')
-          await $.handoff.open()
-          await $.handoff.open()
-          answered.push('open')
-          await $.handoff.show()
-          answered.push('show')
-          await $.handoff.hide()
-          answered.push('hide')
-          if (typeof (await $.handoff.status()).armed === 'boolean') answered.push('status')
-          return { text: JSON.stringify({ ok: answered }) }
-        }
-        if (method === 'schema') return { text: JSON.stringify({ ok: await $.handoff.schema() }) }
-        if (method === 'status') return { text: JSON.stringify({ ok: await $.handoff.status() }) }
-        if (method === 'get') return { text: JSON.stringify({ ok: await $.handoff.get(input) }) }
-        if (method === 'set') return { text: JSON.stringify({ ok: await $.handoff.set(input) }) }
-        if (method === 'open') return { text: JSON.stringify({ ok: await $.handoff.open(input) }) }
-        if (method === 'show') return { text: JSON.stringify({ ok: await $.handoff.show(input) }) }
-        if (method === 'hide') return { text: JSON.stringify({ ok: await $.handoff.hide(input) }) }
-        // The /config menu's write, as another plugin makes it: it reaches handoff's config.set hooks.
-        if (method === 'config') return { text: JSON.stringify({ ok: await $.config.set(input) }) }
+        if (method === 'schema') return { text: JSON.stringify({ ok: await $.junkd.schema() }) }
+        if (method === 'config') return { text: JSON.stringify({ ok: await $.junkd.config() }) }
+        if (method === 'status') return { text: JSON.stringify({ ok: await $.junkd.handoffStatus() }) }
+        if (method === 'get') return { text: JSON.stringify({ ok: await $.junkd.get(input) }) }
+        if (method === 'set') return { text: JSON.stringify({ ok: await $.junkd.set(input) }) }
+        if (method === 'open') return { text: JSON.stringify({ ok: (await $.junkd.open(input)) ?? null }) }
+        // The /config menu's write, as another plugin makes it: it reaches junkd's config.set hooks.
+        if (method === 'menu') return { text: JSON.stringify({ ok: await $.config.set(input) }) }
         return { text: JSON.stringify({ error: `no method ${method}` }) }
       } catch (err) {
         return { text: JSON.stringify({ error: String((err as Error).message ?? err) }) }
@@ -145,15 +150,21 @@ const FRAME: Plugin = {
     })
   },
 }
-const WITH_FRAME = { plugins: [FRAME] }
-// `frame <method> [input]` through the engine; resolves to the method's answer, rejects with its refusal.
-async function frame($: Engine, method: string, input?: unknown): Promise<unknown> {
+const WITH_CALLER = { plugins: [CALLER] }
+// `caller <method> [input]` through the engine; resolves to the method's answer, rejects with its refusal.
+async function call($: Engine, method: string, input?: unknown): Promise<unknown> {
   const args = input === undefined ? method : `${method} ${JSON.stringify(input)}`
-  const r = (await $.command.run({ command: 'frame', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })) as { text?: string }
+  const r = (await run($, 'caller', args)) as { text?: string }
   const out = JSON.parse(r.text ?? '{}') as { ok?: unknown; error?: string }
   if (out.error !== undefined) throw new Error(out.error)
   return out.ok
 }
+const get = ($: Engine, field: string) => call($, 'get', { key: KEY(field) })
+const set = ($: Engine, field: string, value: unknown, scope?: string) =>
+  call($, 'set', { key: KEY(field), value, ...(scope === undefined ? {} : { scope }) })
+const status = ($: Engine) => call($, 'status')
+// The /config menu's write of one handoff row.
+const menu = ($: Engine, field: string, value: unknown) => call($, 'menu', { key: ROW(field), value }) as Promise<{ value?: unknown; deny?: string }>
 
 test('auto arms, denies tools past the threshold, lets the handoff through', OPTIONS, async ($, on) => {
   const rec = world(on)
@@ -166,7 +177,10 @@ test('auto arms, denies tools past the threshold, lets the handoff through', OPT
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
 
   rec.percent = 90
-  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
+  const deny = denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))
+  expect(deny).toMatch(/handoff/i)
+  expect(deny).toContain('Call the Skill tool with skill "junkd:handoff"') // the skill as the host names it now
+  expect(denial(await $.tool.call({ tool: 'Skill', skill: 'junkd:handoff' } as never))).toBeUndefined()
   expect(denial(await $.tool.call({ tool: 'Bash', command: '/x/skills/handoff/bin/handoff-path' }))).toBeUndefined()
   expect(denial(await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' }))).toBeUndefined()
 })
@@ -185,7 +199,7 @@ test('off disarms: tools pass again past the threshold', OPTIONS, async ($, on) 
 
 // A handoff written mid-cycle, then the loop stopped before the turn ended: the next cycle must not resume that old id.
 for (const stop of ['off', 'enabled off'] as const) {
-  test(`${stop} after the handoff Write and before the turn ends: the next cycle queues a new handoff, not the old id`, { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+  test(`${stop} after the handoff Write and before the turn ends: the next cycle queues a new handoff, not the old id`, { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
     const rec = world(on)
     const clock = mock.clock(on)
     await start($)
@@ -195,8 +209,8 @@ for (const stop of ['off', 'enabled off'] as const) {
     await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_0dd0dd00.md`, content: '# old' })
     if (stop === 'off') await handoff($, 'off')
     else {
-      await frame($, 'set', { key: 'enabled', value: false })
-      await frame($, 'set', { key: 'enabled', value: true })
+      await set($, 'enabled', false)
+      await set($, 'enabled', true)
     }
     await $.turn.complete({ answer: 'stopped', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
     await clock.advance(1)
@@ -207,12 +221,12 @@ for (const stop of ['off', 'enabled off'] as const) {
     await $.turn.complete({ answer: 'no write', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
     await clock.advance(1)
     const ran = rec.commands.slice(before)
-    expect(ran, ran.join(' | ')).toContain('handoff:handoff') // the new handoff is asked for
-    expect(ran.some(c => c.startsWith('handoff:handon') || c === 'clear'), ran.join(' | ')).toBe(false)
+    expect(ran, ran.join(' | ')).toContain('junkd:handoff') // the new handoff is asked for
+    expect(ran.some(c => c.startsWith('junkd:handon') || c === 'clear'), ran.join(' | ')).toBe(false)
   })
 }
 
-test('off while the fresh window is unmeasured: re-armed, the loop checks usage again at once', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('off while the fresh window is unmeasured: re-armed, the loop checks usage again at once', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)
   await start($)
@@ -226,25 +240,32 @@ test('off while the fresh window is unmeasured: re-armed, the loop checks usage 
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
 })
 
-test('/ahandoff <prompt> | off is the short form', OPTIONS, async ($, on) => {
+test('/junkd:ahandoff <prompt> | off | panel is the short form', OPTIONS, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)
   await start($)
-  const run = (args: string) =>
-    $.command.run({ command: 'ahandoff', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
-  await run('/orch:orch all')
+  expect((await ahandoff($, '/junkd:orch all') as { text?: string }).text).toBe('handoff auto on — threshold 80% — running: /junkd:orch all')
   await clock.advance(1)
-  expect(rec.commands.at(-1)).toBe('orch:orch all') // a slash prompt runs as the command
-  await run('fix the flaky test')
+  expect(rec.commands.at(-1)).toBe('junkd:orch all') // a slash prompt runs as the command
+  expect(rec.opened).toEqual([]) // the short form opens no pane
+  await ahandoff($, 'fix the flaky test')
   await clock.advance(1)
   expect(rec.prompts.at(-1)).toBe('fix the flaky test')
   rec.percent = 90
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
-  await run('off')
+  expect((await ahandoff($, 'off') as { text?: string }).text).toBe('handoff auto off.')
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
+  // panel toggles the pane, and arms nothing
+  await ahandoff($, 'panel')
+  expect(rec.opened).toEqual(['ahandoff'])
+  await ahandoff($, 'panel')
+  expect(rec.closed).toEqual(['ahandoff'])
+  expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
+  // nothing reached the skill's own text: the module answered every form
+  expect(rec.commands.filter(c => c.startsWith('junkd:ahandoff'))).toEqual([])
 })
 
-test('the written handoff ends the turn into clear → handon <id> → continue', OPTIONS, async ($, on) => {
+test('the written handoff ends the turn into clear → junkd:handon <id> → continue', OPTIONS, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)
   await start($)
@@ -257,11 +278,34 @@ test('the written handoff ends the turn into clear → handon <id> → continue'
 
   const clear = rec.commands.indexOf('clear')
   expect(clear).toBeGreaterThanOrEqual(0)
-  expect(rec.commands.indexOf('handoff:handon abcdef12')).toBeGreaterThan(clear)
+  expect(rec.commands.indexOf('junkd:handon abcdef12')).toBeGreaterThan(clear)
   expect(rec.prompts.at(-1)).toBe('Continue after the handoff') // the task text is not the continuation
 })
 
-test('a fresh window over the threshold keeps the loop armed with a raised limit', { options: { threshold: 10, checkEvery: 1 } }, async ($, on) => {
+// findCommand: junkd's own /junkd:handon (and /junkd:handoff) first, even where another plugin lists one of the
+// same suffix ahead of it; any plugin's by suffix when junkd's is not listed; junkd's spelling when nothing is.
+for (const [listed, want] of [
+  [['handoff:handon', 'handoff:handoff', 'junkd:handon', 'junkd:handoff'], 'junkd'],
+  [['other:handon', 'other:handoff'], 'other'],
+  [[], 'junkd'],
+] as const) {
+  test(`the loop runs ${want}:handoff and ${want}:handon when the host lists ${listed.join(', ') || 'nothing'}`, OPTIONS, async ($, on) => {
+    const rec = world(on, { commands: [...listed.map(name => ({ name, description: '', source: 'plugin' as const })), { name: 'clear', description: '', source: 'builtin' as const }] })
+    const clock = mock.clock(on)
+    await start($)
+    await handoff($, 'auto')
+    rec.percent = 90
+    await $.turn.complete({ answer: 'no write', durationMs: 1, isAborted: false, turnId: 't0', reason: 'answer' })
+    await clock.advance(1)
+    expect(rec.commands, rec.commands.join(' | ')).toContain(`${want}:handoff`)
+    await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+    await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    await clock.advance(1)
+    expect(rec.commands, rec.commands.join(' | ')).toContain(`${want}:handon abcdef12`)
+  })
+}
+
+test('a fresh window over the threshold keeps the loop armed with a raised limit', { options: { handoff_threshold: 10, handoff_checkEvery: 1 } }, async ($, on) => {
   const rec = world(on)
   on('session.measure', (_$, e) => ({ changed: e.changed }))
   const clock = mock.clock(on)
@@ -273,7 +317,7 @@ test('a fresh window over the threshold keeps the loop armed with a raised limit
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
   await clock.advance(1)
-  expect(rec.commands.includes('handoff:handon abcdef12')).toBe(true)
+  expect(rec.commands.includes('junkd:handon abcdef12')).toBe(true)
 
   // the new window starts at 13% (system prompt + handon), over the 10% threshold
   rec.percent = 13
@@ -288,7 +332,7 @@ test('a slash task runs now; after clear → handon the default continuation is 
   const rec = world(on)
   const clock = mock.clock(on)
   await start($)
-  await handoff($, 'auto /orch:orch all')
+  await handoff($, 'auto /junkd:orch all')
   await clock.advance(1)
   rec.percent = 90
   const before = rec.commands.length
@@ -299,14 +343,14 @@ test('a slash task runs now; after clear → handon the default continuation is 
   await clock.advance(1)
 
   const chain = rec.commands.slice(before)
-  const handon = chain.indexOf('handoff:handon abcdef12')
+  const handon = chain.indexOf('junkd:handon abcdef12')
   expect(handon).toBeGreaterThan(chain.indexOf('clear'))
-  expect(chain.includes('orch:orch all')).toBe(false) // the task ran once, at arm time
+  expect(chain.includes('junkd:orch all')).toBe(false) // the task ran once, at arm time
   expect(rec.prompts.length).toBe(prompts + 1)
   expect(rec.prompts.at(-1)).toBe('Continue after the handoff')
 })
 
-test('panel toggles the pane; no argument goes on to /handoff', async ($, on) => {
+test('panel toggles the pane; no argument goes on to the junkd:handoff skill', async ($, on) => {
   const rec = world(on)
   await start($)
 
@@ -315,18 +359,21 @@ test('panel toggles the pane; no argument goes on to /handoff', async ($, on) =>
   await handoff($, 'panel')
   expect(rec.closed).toEqual(['ahandoff'])
 
-  const run = await handoff($, '')
-  expect(rec.commands).toEqual(['handoff:handoff'])
-  expect((run as { text?: string }).text).toBe('downstream handoff:handoff')
+  const r = await handoff($, '')
+  expect(rec.commands).toEqual(['junkd:handoff'])
+  expect((r as { text?: string }).text).toBe('downstream junkd:handoff')
 })
 
-test('the 🪃 segment shows usage or off, and a press opens the pane', OPTIONS, async ($, on) => {
+test('the 🪃 segment sits beside ✚ junkd in the prompt line, shows usage or off, and a press opens the pane', OPTIONS, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)
   await start($)
   for (const surface of SURFACES) {
-    const ui = await $.ui.mount({ plugin: 'handoff', surface, ...HINT })
+    const ui = await $.ui.mount({ plugin: 'junkd', surface, ...HINT })
     expect(await ui.find({ type: 'Button', text: '🪃 off' })).toBeDefined()
+    expect(await ui.find({ key: 'junkd-toggle' }), 'the frame button beside it').toBeDefined()
+    const order = (await ui.findAll({ type: 'Button' })).map(b => b.key)
+    expect(order.indexOf('handoff-segment')).toBeLessThan(order.indexOf('junkd-toggle')) // [below, 🪃, ✚ junkd]
     await ui.unmount()
   }
 
@@ -334,9 +381,9 @@ test('the 🪃 segment shows usage or off, and a press opens the pane', OPTIONS,
   await clock.advance(1)
   await handoff($, 'panel') // auto opened it; close it so the press below opens it again
   for (const surface of SURFACES) {
-    const ui = await $.ui.mount({ plugin: 'handoff', surface, ...HINT })
+    const ui = await $.ui.mount({ plugin: 'junkd', surface, ...HINT })
     const seg = await ui.find({ type: 'Button', text: /🪃 \d+%/ })
-    expect(seg?.key).toBeDefined()
+    expect(seg?.key).toBe('handoff-segment')
     const opened = rec.opened.length
     const closed = rec.closed.length
     await ui.press({ key: seg!.key! })
@@ -352,7 +399,7 @@ test('Handoffs tab lists the folder newest first; enter resumes one by id', asyn
   await start($)
   await handoff($, 'panel')
   for (const surface of SURFACES) {
-    const ui = await $.ui.mount({ plugin: 'handoff', surface, ...PANE })
+    const ui = await $.ui.mount({ plugin: 'junkd', surface, ...PANE })
     await hotkey(ui, '2')
     const t = await texts(ui)
     expect(t).toContain('Title A')
@@ -365,7 +412,7 @@ test('Handoffs tab lists the folder newest first; enter resumes one by id', asyn
     const before = rec.commands.length
     await ui.press({ key: 'handon' })
     const ran = rec.commands.slice(before)
-    expect(ran.some(c => /^handoff:handon (aaaaaaaa|bbbbbbbb)$/.test(c)), ran.join(' | ')).toBe(true)
+    expect(ran.some(c => /^junkd:handon (aaaaaaaa|bbbbbbbb)$/.test(c)), ran.join(' | ')).toBe(true)
     await ui.unmount()
   }
 })
@@ -381,7 +428,7 @@ for (const [config, dir] of [['/cfg', '/cfg/handoffs'], ['', DIR]] as const) {
     const rec = world(on)
     await start($)
     await handoff($, 'panel')
-    const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+    const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
     await hotkey(ui, '2')
     const t = await texts(ui)
     if (config) {
@@ -411,7 +458,7 @@ for (const [config, drawn] of [['/home/u2/.claude', '/home/u2/.claude/handoffs']
     world(on)
     await start($)
     await handoff($, 'panel')
-    const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+    const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
     await hotkey(ui, '2')
     const t = await texts(ui)
     expect(t).toContain(`1 in ${drawn}`)
@@ -420,17 +467,17 @@ for (const [config, drawn] of [['/home/u2/.claude', '/home/u2/.claude/handoffs']
   })
 }
 
-test('Settings tab: threshold field writes handoff.threshold', async ($, on) => {
+test('Settings tab: threshold field writes junkd.handoff_threshold', async ($, on) => {
   const rec = world(on)
   await start($)
   await handoff($, 'panel')
   for (const surface of SURFACES) {
-    const ui = await $.ui.mount({ plugin: 'handoff', surface, ...PANE })
+    const ui = await $.ui.mount({ plugin: 'junkd', surface, ...PANE })
     await hotkey(ui, '3')
     const field = (await ui.findAll({ type: 'Input' })).find(i => /^threshold/.test(i.key ?? ''))
     expect(field?.key, 'the threshold Input').toBeDefined()
     await ui.input({ key: field!.key!, text: '90' })
-    expect(rec.config.at(-1)).toEqual({ key: 'handoff.threshold', value: 90 })
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.handoff_threshold', value: 90 })
     await ui.unmount()
   }
 })
@@ -447,7 +494,7 @@ test('a turn that dies on the 5h limit resumes 2 min after the reset; the settin
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'error' })
 
   const surface = 'terminal' as Surface
-  const hint = await $.ui.mount({ plugin: 'handoff', surface, ...HINT })
+  const hint = await $.ui.mount({ plugin: 'junkd', surface, ...HINT })
   expect((await hint.findAll({ type: 'Text' })).map(t => t.text).join('')).toMatch(/limit → \d\d:\d\d/)
 
   await clock.advance(hour + 60_000)
@@ -457,87 +504,108 @@ test('a turn that dies on the 5h limit resumes 2 min after the reset; the settin
 
   // off in Settings: the next limit death schedules nothing
   await handoff($, 'panel')
-  const ui = await $.ui.mount({ plugin: 'handoff', surface, ...PANE })
+  const ui = await $.ui.mount({ plugin: 'junkd', surface, ...PANE })
   await hotkey(ui, '3')
   await hotkey(ui, 'l')
-  expect(rec.config).toContainEqual({ key: 'handoff.resumeAfterLimit', value: false })
+  expect(rec.config).toContainEqual({ key: 'junkd.handoff_resumeAfterLimit', value: false })
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'error' })
   await clock.advance(hour * 2)
   expect(rec.prompts.length).toBe(1)
 })
 
-// The manifest's userConfig keys. A test cannot import plugin.json (only code files load), so the keys stand
-// here and the defaults come from the engine: with no test options, get() answers the manifest's defaults.
+// The manifest's handoff rows. A test cannot import plugin.json (only code files load), so the keys stand here and
+// the defaults come from the engine: with no test options, get() answers the manifest's defaults.
 // tests/smoke.sh checks each entry's type, title and default against the manifest itself.
-const MANIFEST_KEYS = ['enabled', 'threshold', 'checkEvery', 'autoOn', 'resumeAfterLimit', 'staleDays', 'segment']
+const MANIFEST_FIELDS = ['enabled', 'threshold', 'checkEvery', 'autoOn', 'resumeAfterLimit', 'staleDays', 'segment']
 
-test('$.handoff: the seven calls exist; schema mirrors the manifest with main on the five frame fields, enabled first', WITH_FRAME, async ($, on) => {
+test('$.junkd: the handoff rows of schema mirror the manifest, enabled first, main on the five frame fields; get and config answer the defaults; handoffStatus answers', WITH_CALLER, async ($, on) => {
   world(on)
   await start($)
-  expect(await frame($, 'members')).toEqual(['schema', 'get', 'set', 'open', 'show', 'hide', 'status'])
-
-  const schema = (await frame($, 'schema')) as { key: string; type: string; title: string; default: unknown; main: boolean }[]
-  expect(schema.map(f => f.key).sort()).toEqual([...MANIFEST_KEYS].sort())
-  for (const f of schema) {
+  type Entry = { key: string; group: string; field: string; type: string; title: string; default: unknown; main: boolean }
+  const rows = ((await call($, 'schema')) as Entry[]).filter(f => f.group === 'handoff')
+  expect(rows.map(f => f.key)).toEqual(MANIFEST_FIELDS.map(KEY))
+  const config = (await call($, 'config')) as Record<string, unknown>
+  for (const f of rows) {
+    expect(f.key, f.field).toBe(KEY(f.field))
     expect(typeof f.default, f.key).toBe(f.type)
     expect(f.title, f.key).toMatch(/\S/)
-    expect(await frame($, 'get', f.key), `get(${f.key}) is the manifest default`).toBe(f.default)
+    expect(await call($, 'get', { key: f.key }), `get(${f.key}) is the manifest default`).toBe(f.default)
+    expect(config[f.key], `config()'s ${f.key}`).toBe(f.default)
   }
-  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['enabled', 'threshold', 'autoOn', 'resumeAfterLimit', 'segment'])
-  expect(schema[0]).toEqual({ key: 'enabled', type: 'boolean', title: 'Auto handoff: enabled', default: true, main: true })
+  expect(rows.filter(f => f.main).map(f => f.field)).toEqual(['enabled', 'threshold', 'autoOn', 'resumeAfterLimit', 'segment'])
+  expect(rows[0]).toEqual({ key: 'handoff_enabled', group: 'handoff', field: 'enabled', type: 'boolean', title: 'Auto handoff: enabled', default: true, main: true })
+  expect(await status($)).toEqual({ armed: false, percent: 0, phase: 'idle' })
 })
 
-test('$.handoff.set writes handoff.<key> through $.config and get reads it back; a bad value or scope is refused', WITH_FRAME, async ($, on) => {
-  on('config.set', { key: 'handoff.checkEvery' }, () => ({ deny: 'locked' })) // one row a hook refuses
+test('$.junkd.set writes junkd.handoff_<field> through $.config and get reads it back; a bad value or scope is refused', WITH_CALLER, async ($, on) => {
+  on('config.set', { key: 'junkd.handoff_checkEvery' }, () => ({ deny: 'locked' })) // one row a hook refuses
   const rec = world(on)
   await start($)
-  expect(await frame($, 'set', { key: 'threshold', value: 70 })).toBe(70)
-  expect(rec.config).toEqual([{ key: 'handoff.threshold', value: 70 }])
-  expect(await frame($, 'get', 'threshold')).toBe(70)
+  expect(await set($, 'threshold', 70)).toBe(70)
+  expect(rec.config).toEqual([{ key: 'junkd.handoff_threshold', value: 70 }])
+  expect(await get($, 'threshold')).toBe(70)
 
-  expect(await frame($, 'set', { key: 'segment', value: 'off', scope: 'user' })).toBe(false)
-  expect(rec.config.at(-1)).toEqual({ key: 'handoff.segment', value: false })
-  expect(await frame($, 'get', 'segment')).toBe(false)
+  expect(await set($, 'segment', 'off', 'user')).toBe(false)
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.handoff_segment', value: false })
+  expect(await get($, 'segment')).toBe(false)
 
   // exact bounds: 100 and 1 are in, -5 (and 0, 101 below) are out; 'on' is a true
-  expect(await frame($, 'set', { key: 'threshold', value: 100 })).toBe(100)
-  expect(await frame($, 'set', { key: 'staleDays', value: 1 })).toBe(1) // checkEvery is the row the deny hook below locks
-  expect(await frame($, 'set', { key: 'autoOn', value: 'on' })).toBe(true)
+  expect(await set($, 'threshold', 100)).toBe(100)
+  expect(await set($, 'staleDays', 1)).toBe(1) // checkEvery is the row the deny hook below locks
+  expect(await set($, 'autoOn', 'on')).toBe(true)
   expect(rec.config.slice(-3)).toEqual([
-    { key: 'handoff.threshold', value: 100 }, { key: 'handoff.staleDays', value: 1 }, { key: 'handoff.autoOn', value: true },
+    { key: 'junkd.handoff_threshold', value: 100 }, { key: 'junkd.handoff_staleDays', value: 1 }, { key: 'junkd.handoff_autoOn', value: true },
   ])
-  await expect(frame($, 'set', { key: 'threshold', value: -5 })).rejects.toThrow(/not a valid threshold/)
-  expect(await frame($, 'get', 'threshold')).toBe(100)
-  expect(await frame($, 'set', { key: 'threshold', value: 70 })).toBe(70)
+  await expect(set($, 'threshold', -5)).rejects.toThrow(/not a valid threshold/)
+  expect(await get($, 'threshold')).toBe(100)
+  expect(await set($, 'threshold', 70)).toBe(70)
 
   const writes = rec.config.length
-  await expect(frame($, 'set', { key: 'threshold', value: 'abc' })).rejects.toThrow(/not a valid threshold/)
-  await expect(frame($, 'set', { key: 'threshold', value: 101 })).rejects.toThrow(/not a valid threshold/)
-  await expect(frame($, 'set', { key: 'checkEvery', value: 0 })).rejects.toThrow(/not a valid checkEvery/)
-  await expect(frame($, 'set', { key: 'threshold', value: 70, scope: 'project' })).rejects.toThrow(/scope project/)
-  await expect(frame($, 'set', { key: 'nope', value: 1 })).rejects.toThrow(/no setting nope/)
-  await expect(frame($, 'get', 'nope')).rejects.toThrow(/no setting nope/)
+  await expect(set($, 'threshold', 'abc')).rejects.toThrow(/not a valid threshold/)
+  await expect(set($, 'threshold', 101)).rejects.toThrow(/not a valid threshold/)
+  await expect(set($, 'checkEvery', 0)).rejects.toThrow(/not a valid checkEvery/)
+  await expect(set($, 'threshold', 70, 'project')).rejects.toThrow(/scope project/)
+  await expect(set($, 'nope', 1)).rejects.toThrow(/no setting handoff_nope/)
+  await expect(get($, 'nope')).rejects.toThrow(/no setting handoff_nope/)
+  // the old keys are no settings any more
+  await expect(call($, 'set', { key: 'threshold', value: 60 })).rejects.toThrow(/: junkd: no setting threshold$/)
+  await expect(call($, 'get', { key: 'handoff.threshold' })).rejects.toThrow(/: junkd: no setting handoff\.threshold$/)
   expect(rec.config.length).toBe(writes) // none of the refusals reached $.config
-  expect(await frame($, 'get', 'threshold')).toBe(70)
+  expect(await get($, 'threshold')).toBe(70)
 
   // a config.set hook's deny comes back as the refusal and the value stays
-  await expect(frame($, 'set', { key: 'checkEvery', value: 9 })).rejects.toThrow(/locked/)
-  expect(await frame($, 'get', 'checkEvery')).toBe(5)
+  await expect(set($, 'checkEvery', 9)).rejects.toThrow(/locked/)
+  expect(await get($, 'checkEvery')).toBe(5)
 })
 
-test('$.handoff.set: checkEvery is a whole number 1 or more, threshold above 0 up to 100, staleDays above 0; what is stored is what get answers', WITH_FRAME, async ($, on) => {
+test('$.junkd.set and get reach every handoff row: the value lands in its own row and get answers it', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   await start($)
-  const refused = async (key: string, value: unknown, holds: unknown) => {
-    const writes = rec.config.length
-    await expect(frame($, 'set', { key, value }), `${key} ${String(value)}`).rejects.toThrow(new RegExp(`not a valid ${key}`))
-    expect(rec.config.length, `${key} ${String(value)} reached the row`).toBe(writes)
-    expect(await frame($, 'get', key), `${key} after ${String(value)}`).toBe(holds)
+  for (const [field, value] of [
+    ['enabled', false], ['threshold', 66], ['checkEvery', 4], ['autoOn', true], ['resumeAfterLimit', false], ['staleDays', 12], ['segment', false],
+  ] as const) {
+    const before = await get($, field)
+    expect(before, `${field} differs before`).not.toBe(value)
+    expect(await set($, field, value), field).toBe(value)
+    expect(rec.config.at(-1), field).toEqual({ key: ROW(field), value })
+    expect(await get($, field), field).toBe(value)
+    expect(((await call($, 'config')) as Record<string, unknown>)[KEY(field)], `config()'s ${field}`).toBe(value)
   }
-  const taken = async (key: string, value: unknown, want: number) => {
-    expect(await frame($, 'set', { key, value }), `${key} ${String(value)}`).toBe(want)
-    expect(rec.config.at(-1), `${key} ${String(value)}`).toEqual({ key: `handoff.${key}`, value: want })
-    expect(await frame($, 'get', key), `${key} ${String(value)}`).toBe(want)
+})
+
+test('$.junkd.set: checkEvery is a whole number 1 or more, threshold above 0 up to 100, staleDays above 0; what is stored is what get answers', WITH_CALLER, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const refused = async (field: string, value: unknown, holds: unknown) => {
+    const writes = rec.config.length
+    await expect(set($, field, value), `${field} ${String(value)}`).rejects.toThrow(new RegExp(`not a valid ${field}`))
+    expect(rec.config.length, `${field} ${String(value)} reached the row`).toBe(writes)
+    expect(await get($, field), `${field} after ${String(value)}`).toBe(holds)
+  }
+  const taken = async (field: string, value: unknown, want: number) => {
+    expect(await set($, field, value), `${field} ${String(value)}`).toBe(want)
+    expect(rec.config.at(-1), `${field} ${String(value)}`).toEqual({ key: ROW(field), value: want })
+    expect(await get($, field), `${field} ${String(value)}`).toBe(want)
   }
   // checkEvery: 2.6 is refused, not stored as 2.6 and answered as 3; 1 is the floor, 0 and 0.5 are out
   await refused('checkEvery', 2.6, 5)
@@ -562,42 +630,63 @@ test('$.handoff.set: checkEvery is a whole number 1 or more, threshold above 0 u
   await taken('staleDays', 0.5, 0.5)
 })
 
-test('options the engine hands at load that set would refuse fall back to the defaults', { ...WITH_FRAME, options: { checkEvery: 2.6, threshold: 101, staleDays: 0 } }, async ($, on) => {
+test('options the engine hands at load that set would refuse fall back to the defaults', { ...WITH_CALLER, options: { handoff_checkEvery: 2.6, handoff_threshold: 101, handoff_staleDays: 0 } }, async ($, on) => {
   world(on)
   await start($)
-  expect(await frame($, 'get', 'checkEvery')).toBe(5)
-  expect(await frame($, 'get', 'threshold')).toBe(85)
-  expect(await frame($, 'get', 'staleDays')).toBe(30)
+  expect(await get($, 'checkEvery')).toBe(5)
+  expect(await get($, 'threshold')).toBe(85)
+  expect(await get($, 'staleDays')).toBe(30)
 })
 
-test('options at load on the bounds are taken as given', { ...WITH_FRAME, options: { checkEvery: 1, threshold: 100, staleDays: 0.5 } }, async ($, on) => {
+test('options at load on the bounds are taken as given', { ...WITH_CALLER, options: { handoff_checkEvery: 1, handoff_threshold: 100, handoff_staleDays: 0.5 } }, async ($, on) => {
   world(on)
   await start($)
-  expect(await frame($, 'get', 'checkEvery')).toBe(1)
-  expect(await frame($, 'get', 'threshold')).toBe(100)
-  expect(await frame($, 'get', 'staleDays')).toBe(0.5)
+  expect(await get($, 'checkEvery')).toBe(1)
+  expect(await get($, 'threshold')).toBe(100)
+  expect(await get($, 'staleDays')).toBe(0.5)
 })
 
-test('$.handoff.open toggles the pane; a route opens it on that tab or switches the tab while it is up', WITH_FRAME, async ($, on) => {
+test('options at load are read from the handoff_<field> keys only: a bare field name is no option', { ...WITH_CALLER, options: { threshold: 50, autoOn: true, handoff_threshold: 70 } }, async ($, on) => {
+  world(on)
+  await start($)
+  expect(await get($, 'threshold')).toBe(70)
+  expect(await get($, 'autoOn')).toBe(false)
+  expect(await status($)).toMatchObject({ armed: false })
+})
+
+test('$.junkd.open toggles the handoff pane; a route opens it on that tab or switches the tab while it is up; an unknown route or pane is refused', WITH_CALLER, async ($, on) => {
   const rec = world(on)
   await start($)
-  await frame($, 'open')
+  await call($, 'open', { pane: 'handoff' })
   expect(rec.opened).toEqual(['ahandoff'])
-  await frame($, 'open')
+  expect(rec.focus).toEqual([true]) // open asks for the keys, as /junkd:handoff panel does
+  await call($, 'open', { pane: 'handoff' })
   expect(rec.closed).toEqual(['ahandoff'])
 
-  await frame($, 'open', { route: 'handoffs' })
+  await call($, 'open', { pane: 'handoff', route: 'handoffs' })
   expect(rec.opened).toEqual(['ahandoff', 'ahandoff'])
-  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
   expect(await ui.find({ key: 'row-aaaaaaaa' }), 'the Handoffs tab is up').toBeDefined()
   await ui.unmount()
 
-  await expect(frame($, 'open', { route: 'bogus' })).rejects.toThrow(/no tab bogus/) // unknown route: refused, pane untouched
-  await frame($, 'open', { route: 'settings' }) // up already: switch, do not close
+  // unknown route: refused, pane untouched
+  await expect(call($, 'open', { pane: 'handoff', route: 'bogus' })).rejects.toThrow(/: junkd: no tab bogus$/)
+  await expect(call($, 'open', { pane: 'hand', route: 'settings' })).rejects.toThrow(/: junkd: no pane hand$/)
+  expect(rec.opened).toHaveLength(2)
   expect(rec.closed).toEqual(['ahandoff'])
-  const settings = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+
+  await call($, 'open', { pane: 'handoff', route: 'settings' }) // up already: switch, do not close
+  expect(rec.closed).toEqual(['ahandoff'])
+  expect(rec.opened).toHaveLength(2)
+  const settings = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
   expect((await settings.findAll({ type: 'Input' })).some(i => /^threshold/.test(i.key ?? '')), 'the Settings tab is up').toBe(true)
   await settings.unmount()
+
+  // up, with every route: each switches the tab and closes nothing
+  for (const route of ['auto', 'handoffs', 'settings'] as const) {
+    await call($, 'open', { pane: 'handoff', route })
+    expect(rec.closed, route).toEqual(['ahandoff'])
+  }
 })
 
 // A close of the pane from outside the module, as the person's mark or ctrl+x x is to it: `/shut` closes it through
@@ -608,143 +697,119 @@ const SHUTTER: Plugin = {
     on('command.run', { command: 'shut' }, async $ => { await $.ui.close({ id: 'ahandoff' }); return {} })
   },
 }
-const shut = ($: Engine) => $.command.run({ command: 'shut', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+const shut = ($: Engine) => run($, 'shut', '')
 
-test('$.handoff.show opens and never closes; focus and route as asked', WITH_FRAME, async ($, on) => {
+test('the person\'s close (another plugin\'s $.ui.close) is seen: the next $.junkd.open or /junkd:handoff panel opens again', { plugins: [CALLER, SHUTTER] }, async ($, on) => {
   const rec = world(on)
   await start($)
-  await frame($, 'show', { owner: 'junkd' })
-  expect(rec.opened).toEqual(['ahandoff'])
-  expect(rec.focus).toEqual([undefined]) // no focus asked: the caller keeps the keys
-  await frame($, 'show', { owner: 'junkd' }) // up already: asked again, never closed
-  expect(rec.opened).toEqual(['ahandoff', 'ahandoff'])
-  expect(rec.closed).toEqual([])
-
-  await frame($, 'hide')
-  expect(rec.closed).toEqual(['ahandoff'])
-  await frame($, 'show')
-  expect(rec.opened).toHaveLength(3)
-
-  await frame($, 'show', { route: 'settings', focus: true })
-  expect(rec.focus.at(-1)).toBe(true)
-  expect(rec.closed).toHaveLength(1) // up already: switched to Settings, not closed
-  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
-  expect((await ui.findAll({ type: 'Input' })).some(i => /^threshold/.test(i.key ?? '')), 'the Settings tab is up').toBe(true)
-  await ui.unmount()
-  await expect(frame($, 'show', { route: 'bogus' })).rejects.toThrow(/no tab bogus/)
-  expect(rec.opened).toHaveLength(4) // the refused route opened nothing
-})
-
-test('$.handoff.hide with an owner closes only the pane that owner showed, while nothing reopened or closed it since', { plugins: [FRAME, SHUTTER] }, async ($, on) => {
-  const rec = world(on)
-  await start($)
-  await frame($, 'show', { owner: 'junkd' })
-  await frame($, 'hide', { owner: 'other' }) // another owner: left up
-  expect(rec.closed).toEqual([])
-  await frame($, 'hide', { owner: 'junkd' })
-  expect(rec.closed).toEqual(['ahandoff'])
-
-  // Closed by its own command: no longer the owner's, so hide leaves it alone; opened on its own: not the owner's.
-  await frame($, 'show', { owner: 'junkd' })
-  await handoff($, 'panel')
-  expect(rec.closed).toHaveLength(2)
-  await frame($, 'hide', { owner: 'junkd' })
-  expect(rec.closed).toHaveLength(2)
-  await handoff($, 'panel')
-  expect(rec.focus.at(-1)).toBe(true) // its own command still asks for the keys
-  await frame($, 'hide', { owner: 'junkd' })
-  expect(rec.closed).toHaveLength(2)
-  await frame($, 'hide') // no owner: closes whatever is up
-  expect(rec.closed).toHaveLength(3)
-
-  // The person's close clears the mark too.
-  await frame($, 'show', { owner: 'junkd' })
+  await call($, 'open', { pane: 'handoff' })
   await shut($)
-  expect(rec.closed).toHaveLength(4)
-  await frame($, 'hide', { owner: 'junkd' })
-  expect(rec.closed).toHaveLength(4)
-
-  // Opened again by /handoff auto while the owner's pane is up: the person's now.
-  await frame($, 'show', { owner: 'junkd' })
-  await handoff($, 'auto')
-  await frame($, 'hide', { owner: 'junkd' })
-  expect(rec.closed).toHaveLength(4)
-
-  // A show without an owner takes the mark away as well.
-  await frame($, 'show', { owner: 'junkd' })
-  await frame($, 'show', {})
-  await frame($, 'hide', { owner: 'junkd' })
-  expect(rec.closed).toHaveLength(4)
+  expect(rec.closed).toEqual(['ahandoff'])
+  await call($, 'open', { pane: 'handoff' })
+  expect(rec.opened).toEqual(['ahandoff', 'ahandoff']) // opened, not closed a second time
+  expect(rec.closed).toEqual(['ahandoff'])
+  await shut($)
+  await handoff($, 'panel')
+  expect(rec.opened).toHaveLength(3)
+  expect(rec.focus.at(-1)).toBe(true)
+  expect(rec.closed).toHaveLength(2)
 })
 
-test('$.handoff.hide on a pane never opened: no error, nothing closed, and /handoff panel still opens it', WITH_FRAME, async ($, on) => {
+// show and hide are no longer on the noun: the /junkd set calls them (with its owner mark) inside the module. Driven
+// here through /junkd, asserting only the handoff pane: the set shows it without the keys and hides it only while
+// it is still the set's; any other open or close since (the pane's own command, /junkd:handoff auto, the person's
+// close) takes the mark away.
+test('the /junkd set shows the handoff pane without the keys, and closes it only while it is still the set\'s', { plugins: [SHUTTER] }, async ($, on) => {
   const rec = world(on)
   await start($)
-  // No owner: the close goes out (a pane opened but not placed is open too); for an id not open the engine leaves
-  // it alone. With an owner the pane never had: nothing at all.
-  await frame($, 'hide')
-  expect(rec.closed).toEqual(['ahandoff'])
-  await frame($, 'hide', { owner: 'junkd' })
-  expect(rec.closed).toEqual(['ahandoff'])
-  expect(rec.opened).toEqual([])
+  const junkd = () => run($, 'junkd', '')
+
+  await junkd()
+  expect(isUp(rec, 'ahandoff')).toBe(true)
+  expect(rec.focus[rec.opened.lastIndexOf('ahandoff')]).toBeUndefined() // the set's show: the keys stay with junkd
+  await junkd()
+  expect(isUp(rec, 'ahandoff')).toBe(false) // still the set's: hidden with it
+
+  // Reopened by its own command while the set is up: the person's now, so closing the set leaves it.
+  await junkd()
+  await handoff($, 'panel') // closes it (it is up)
+  await handoff($, 'panel') // opens it again, asking for the keys
+  expect(rec.focus[rec.opened.lastIndexOf('ahandoff')]).toBe(true)
+  const closes = rec.closed.length
+  await junkd()
+  expect(rec.closed.slice(closes)).not.toContain('ahandoff')
+  expect(isUp(rec, 'ahandoff')).toBe(true)
   await handoff($, 'panel')
-  expect(rec.opened).toEqual(['ahandoff'])
+  expect(isUp(rec, 'ahandoff')).toBe(false)
+
+  // The person's close clears the mark: closing the set closes nothing of handoff's again.
+  await junkd()
+  await shut($)
+  const shutCloses = rec.closed.length
+  await junkd()
+  expect(rec.closed.slice(shutCloses)).not.toContain('ahandoff')
+
+  // Opened again by /junkd:handoff auto while the set's pane is up: the person's now.
+  await junkd()
+  await handoff($, 'auto')
+  const autoCloses = rec.closed.length
+  await junkd()
+  expect(rec.closed.slice(autoCloses)).not.toContain('ahandoff')
+  expect(isUp(rec, 'ahandoff')).toBe(true)
 })
 
-test('$.handoff.status mirrors armed, percent and phase', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('$.junkd.handoffStatus mirrors armed, percent and phase', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   const clock = mock.clock(on)
   await start($)
-  expect(await frame($, 'status')).toEqual({ armed: false, percent: 0, phase: 'idle' })
+  expect(await status($)).toEqual({ armed: false, percent: 0, phase: 'idle' })
 
   await handoff($, 'auto')
   await clock.advance(1)
   rec.percent = 42
   await $.tool.call({ tool: 'Read', file_path: '/tmp/a' })
-  expect(await frame($, 'status')).toEqual({ armed: true, percent: 42, phase: 'idle' })
+  expect(await status($)).toEqual({ armed: true, percent: 42, phase: 'idle' })
 
   rec.percent = 90
   await $.tool.call({ tool: 'Read', file_path: '/tmp/a' })
-  expect(await frame($, 'status')).toEqual({ armed: true, percent: 90, phase: 'handoff' })
+  expect(await status($)).toEqual({ armed: true, percent: 90, phase: 'handoff' })
 
   await handoff($, 'off')
-  expect((await frame($, 'status') as { armed: boolean; phase: string })).toMatchObject({ armed: false, phase: 'idle' })
+  expect((await status($) as { armed: boolean; phase: string })).toMatchObject({ armed: false, phase: 'idle' })
 })
 
 // ------------------------------------------------------------------ enabled
 
-const DISABLED = { options: { threshold: 80, checkEvery: 1, enabled: false, autoOn: true } }
-const ahandoff = ($: Engine, args: string) =>
-  $.command.run({ command: 'ahandoff', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+const DISABLED = { options: { handoff_threshold: 80, handoff_checkEvery: 1, handoff_enabled: false, handoff_autoOn: true } }
 const text = (r: unknown) => (r as { text?: string }).text ?? ''
 const hint = async ($: Engine) => {
-  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...HINT })
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...HINT })
   const t = await texts(ui as unknown as Mounted<Surface, 'Pane'>)
   await ui.unmount()
   return t
 }
 const DIED = (turnId: string) => ({ answer: '', durationMs: 1, isAborted: false, turnId, reason: 'error' as const })
 
-test('enabled false: autoOn arms nothing, auto refuses, no deny past the threshold, no 🪃 segment, no 5h resume', { ...WITH_FRAME, ...DISABLED }, async ($, on) => {
+test('enabled false: autoOn arms nothing, auto refuses, no deny past the threshold, no 🪃 segment, no 5h resume', { ...WITH_CALLER, ...DISABLED }, async ($, on) => {
   const rec = world(on)
   on('session.measure', (_$, e) => ({ changed: e.changed }))
   const clock = mock.clock(on)
   await start($)
-  expect(await frame($, 'get', 'enabled')).toBe(false)
-  expect(await frame($, 'status')).toMatchObject({ armed: false }) // autoOn: true does not arm a disabled loop
+  expect(await get($, 'enabled')).toBe(false)
+  expect(await status($)).toMatchObject({ armed: false }) // autoOn: true does not arm a disabled loop
 
   expect(text(await handoff($, 'auto do X'))).toMatch(/auto handoff is disabled/)
   expect(text(await ahandoff($, 'do Y'))).toMatch(/auto handoff is disabled/)
   await clock.advance(1)
   expect(rec.prompts).toEqual([]) // neither prompt ran
   expect(rec.opened).toEqual([]) // `auto` opens no pane while disabled
-  expect(await frame($, 'status')).toMatchObject({ armed: false })
+  expect(await status($)).toMatchObject({ armed: false })
 
   rec.percent = 95
   for (let i = 0; i < 3; i++) expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't0', reason: 'done' })
   await clock.advance(1)
-  expect(rec.commands.filter(c => c.startsWith('handoff:handoff'))).toEqual([]) // no handoff queued at the threshold
+  expect(rec.commands.filter(c => c.startsWith('junkd:handoff'))).toEqual([]) // no handoff queued at the threshold
 
   const hour = 3_600_000
   const fiveHour = { kind: 'five_hour', percentUsed: 100, resetsAt: new Date(hour).toISOString() }
@@ -753,21 +818,23 @@ test('enabled false: autoOn arms nothing, auto refuses, no deny past the thresho
   await clock.advance(hour * 2)
   expect(rec.prompts).toEqual([]) // no 5h-limit resume
 
-  expect(await hint($)).not.toMatch(/🪃/)
+  const line = await hint($)
+  expect(line).not.toMatch(/🪃/)
+  expect(line).toMatch(/✚/) // the rest of the prompt line (✚ junkd) is still drawn
 })
 
-test('enabled false: /handoff, /handon, the pane and a handoff write still work; the Auto tab offers no Arm', DISABLED, async ($, on) => {
+test('enabled false: /junkd:handoff, /junkd:handon, the pane and a handoff write still work; the Auto tab offers no Arm', DISABLED, async ($, on) => {
   const rec = world(on)
   await start($)
-  expect(text(await handoff($, ''))).toBe('downstream handoff:handoff') // the plain /handoff goes on
-  expect(rec.commands).toContain('handoff:handoff')
-  const r = await $.command.run({ command: 'handoff:handon', args: 'aaaaaaaa', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
-  expect(text(r)).toBe('downstream handoff:handon')
+  expect(text(await handoff($, ''))).toBe('downstream junkd:handoff') // the plain skill goes on
+  expect(rec.commands).toContain('junkd:handoff')
+  const r = await run($, 'junkd:handon', 'aaaaaaaa')
+  expect(text(r)).toBe('downstream junkd:handon')
   expect(denial(await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-03-03T00-00_cccccccc.md`, content: '# h' }))).toBeUndefined()
 
   await handoff($, 'panel')
   expect(rec.opened).toEqual(['ahandoff'])
-  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
   expect(await texts(ui)).toMatch(/disabled/)
   expect((await ui.findAll({ type: 'Button' })).some(b => b.props.hotkey === 'a'), 'no Arm button').toBe(false)
   expect(await texts(ui)).toMatch(/cccccccc/) // the write was recorded as the last handoff
@@ -775,29 +842,29 @@ test('enabled false: /handoff, /handon, the pane and a handoff write still work;
   expect(rec.closed).toEqual(['ahandoff'])
 })
 
-test('$.handoff.set enabled flips it live: off disarms and drops a pending 5h resume, on re-arms nothing; every spelling', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('$.junkd.set handoff_enabled flips it live: off disarms and drops a pending 5h resume, on re-arms nothing; every spelling', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   on('session.measure', (_$, e) => ({ changed: e.changed }))
   const clock = mock.clock(on)
   await start($)
   await handoff($, 'auto')
-  expect(await frame($, 'set', { key: 'enabled', value: true })).toBe(true) // on while on: stays armed
-  expect(await frame($, 'status')).toMatchObject({ armed: true })
+  expect(await set($, 'enabled', true)).toBe(true) // on while on: stays armed
+  expect(await status($)).toMatchObject({ armed: true })
   rec.percent = 90
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
 
-  expect(await frame($, 'set', { key: 'enabled', value: false })).toBe(false)
-  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: false })
-  expect(await frame($, 'get', 'enabled')).toBe(false)
-  expect(await frame($, 'status')).toEqual({ armed: false, percent: 90, phase: 'idle' })
+  expect(await set($, 'enabled', false)).toBe(false)
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.handoff_enabled', value: false })
+  expect(await get($, 'enabled')).toBe(false)
+  expect(await status($)).toEqual({ armed: false, percent: 90, phase: 'idle' })
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
   expect(await hint($)).not.toMatch(/🪃/)
 
-  expect(await frame($, 'set', { key: 'enabled', value: true })).toBe(true)
-  expect(await frame($, 'status')).toMatchObject({ armed: false }) // on arms nothing
+  expect(await set($, 'enabled', true)).toBe(true)
+  expect(await status($)).toMatchObject({ armed: false }) // on arms nothing
   expect(await hint($)).toMatch(/🪃 off/)
   await handoff($, 'auto')
-  expect(await frame($, 'status')).toMatchObject({ armed: true })
+  expect(await status($)).toMatchObject({ armed: true })
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i) // re-armed at once
   await handoff($, 'off')
 
@@ -808,49 +875,46 @@ test('$.handoff.set enabled flips it live: off disarms and drops a pending 5h re
   await $.session.measure({ context: usage(10).context, rateLimits: [{ kind: 'five_hour', percentUsed: 100, resetsAt: new Date(hour).toISOString() }], changed: ['rateLimits'] })
   await $.turn.complete(DIED('t1'))
   expect(await hint($)).toMatch(/limit → /)
-  await frame($, 'set', { key: 'enabled', value: false })
+  await set($, 'enabled', false)
   await clock.advance(hour * 2)
   expect(rec.prompts).toEqual([])
 
   // one assertion per spelling: true, 'true', 'on' are on; false, 'false', 'off' are off
   for (const [value, want] of [[true, true], [false, false], ['true', true], ['false', false], ['on', true], ['off', false]] as const) {
-    expect(await frame($, 'set', { key: 'enabled', value }), String(value)).toBe(want)
-    expect(await frame($, 'get', 'enabled'), String(value)).toBe(want)
+    expect(await set($, 'enabled', value), String(value)).toBe(want)
+    expect(await get($, 'enabled'), String(value)).toBe(want)
   }
 })
 
-test('the /config menu write of handoff.enabled lands live too, read as set reads it', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('the /config menu write of junkd.handoff_enabled lands live too, read as set reads it', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   await start($)
   await handoff($, 'auto')
   rec.percent = 90
-  await frame($, 'config', { key: 'handoff.enabled', value: 'off' })
-  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: false }) // stored as the boolean
-  expect(await frame($, 'get', 'enabled')).toBe(false)
-  expect(await frame($, 'status')).toMatchObject({ armed: false })
+  await menu($, 'enabled', 'off')
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.handoff_enabled', value: false }) // stored as the boolean
+  expect(await get($, 'enabled')).toBe(false)
+  expect(await status($)).toMatchObject({ armed: false })
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
 
-  await frame($, 'config', { key: 'handoff.enabled', value: 'on' })
-  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: true })
-  expect(await frame($, 'get', 'enabled')).toBe(true)
+  await menu($, 'enabled', 'on')
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.handoff_enabled', value: true })
+  expect(await get($, 'enabled')).toBe(true)
   await handoff($, 'auto')
-  expect(await frame($, 'status')).toMatchObject({ armed: true })
+  expect(await status($)).toMatchObject({ armed: true })
 })
 
-// The /config menu's writes, through the frame's `config` (another plugin's $.config.set reaches handoff's hooks).
-const menu = ($: Engine, key: string, value: unknown) => frame($, 'config', { key: `handoff.${key}`, value }) as Promise<{ value?: unknown; deny?: string }>
-
-test('the /config menu refuses what set refuses: threshold 150, checkEvery 2.6 and the rest; the row and get stay', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('the /config menu refuses what set refuses: threshold 150, checkEvery 2.6 and the rest; the row and get stay', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   await start($)
-  for (const [key, value, holds] of [
+  for (const [field, value, holds] of [
     ['threshold', 150, 80], ['threshold', 101, 80], ['threshold', 0, 80], ['threshold', 'abc', 80],
     ['checkEvery', 2.6, 1], ['checkEvery', 0, 1], ['staleDays', 0, 30], ['staleDays', -1, 30],
   ] as const) {
     const writes = rec.config.length
-    expect((await menu($, key, value)).deny, `${key} ${value}`).toMatch(new RegExp(`not a valid ${key}`))
-    expect(rec.config.length, `${key} ${value} reached the row`).toBe(writes)
-    expect(await frame($, 'get', key), `${key} ${value}`).toBe(holds)
+    expect((await menu($, field, value)).deny, `${field} ${value}`).toMatch(new RegExp(`not a valid ${field}`))
+    expect(rec.config.length, `${field} ${value} reached the row`).toBe(writes)
+    expect(await get($, field), `${field} ${value}`).toBe(holds)
   }
   // the bounds themselves go through
   expect(await menu($, 'threshold', 100)).toEqual({ value: 100 })
@@ -859,21 +923,39 @@ test('the /config menu refuses what set refuses: threshold 150, checkEvery 2.6 a
   expect(await menu($, 'nope', 3)).toEqual({ value: 3 })
 })
 
-test('a /config menu write of every field lands live: get answers it at once', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+// The handoff config.set hook takes the handoff rows only: the old row spelling, another group's row, a row with
+// the group as a mere prefix or inside the key pass to the host untouched, and handoff's settings stay.
+test('the /config menu hook of handoff matches only the junkd.handoff_* rows', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   await start($)
-  for (const [key, value] of [
-    ['threshold', 70], ['checkEvery', 3], ['staleDays', 7], ['autoOn', true], ['resumeAfterLimit', false], ['segment', false], ['enabled', false],
-  ] as const) {
-    expect(await menu($, key, value), key).toEqual({ value })
-    expect(rec.config.at(-1), key).toEqual({ key: `handoff.${key}`, value })
-    expect(await frame($, 'get', key), key).toBe(value)
+  for (const key of ['handoff.threshold', 'junkd.handoffthreshold', 'junkd.handoff.threshold', 'xjunkd.handoff_threshold', 'other.junkd.handoff_threshold', 'junkd.handoff_threshold_x', 'junkd.orch_handoff_threshold']) {
+    expect(await call($, 'menu', { key, value: 150 }), key).toEqual({ value: 150 }) // not refused as threshold 150 would be
+    expect(rec.config.at(-1), key).toEqual({ key, value: 150 })
+    expect(await get($, 'threshold'), key).toBe(80)
   }
-  expect(await menu($, 'threshold', '55')).toEqual({ value: 55 }) // a typed number is stored as the number
-  expect(await frame($, 'get', 'threshold')).toBe(55)
+  for (const key of ['handoff.enabled', 'junkd.tldr_enabled', 'junkd.orch_enabled']) {
+    await call($, 'menu', { key, value: false })
+    expect(await get($, 'enabled'), key).toBe(true)
+  }
+  // and the handoff row itself is refused as set refuses it
+  expect((await menu($, 'threshold', 150)).deny).toMatch(/not a valid threshold/)
 })
 
-test('a /config menu threshold acts at once: the next check denies past it', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('a /config menu write of every field lands live: get answers it at once', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  for (const [field, value] of [
+    ['threshold', 70], ['checkEvery', 3], ['staleDays', 7], ['autoOn', true], ['resumeAfterLimit', false], ['segment', false], ['enabled', false],
+  ] as const) {
+    expect(await menu($, field, value), field).toEqual({ value })
+    expect(rec.config.at(-1), field).toEqual({ key: ROW(field), value })
+    expect(await get($, field), field).toBe(value)
+  }
+  expect(await menu($, 'threshold', '55')).toEqual({ value: 55 }) // a typed number is stored as the number
+  expect(await get($, 'threshold')).toBe(55)
+})
+
+test('a /config menu threshold acts at once: the next check denies past it', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   await start($)
   await handoff($, 'auto')
@@ -883,7 +965,7 @@ test('a /config menu threshold acts at once: the next check denies past it', { .
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
 })
 
-test('segment off in the /config menu hides the 🪃 segment; on brings it back', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('segment off in the /config menu hides the 🪃 segment; on brings it back', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   world(on)
   await start($)
   expect(await hint($)).toMatch(/🪃/)
@@ -892,14 +974,14 @@ test('segment off in the /config menu hides the 🪃 segment; on brings it back'
   await menu($, 'segment', 'on')
   expect(await hint($)).toMatch(/🪃/)
   // a prompt line already drawn is drawn again: the write asks for the redraw
-  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...HINT })
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...HINT })
   expect(await texts(ui as unknown as Mounted<Surface, 'Pane'>)).toMatch(/🪃/)
   await menu($, 'segment', false)
   expect(await texts(ui as unknown as Mounted<Surface, 'Pane'>)).not.toMatch(/🪃/)
   await ui.unmount()
 })
 
-test('resumeAfterLimit off in the /config menu cancels a scheduled 5h-limit resume', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('resumeAfterLimit off in the /config menu cancels a scheduled 5h-limit resume', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   on('session.measure', (_$, e) => ({ changed: e.changed }))
   const clock = mock.clock(on)
@@ -915,72 +997,83 @@ test('resumeAfterLimit off in the /config menu cancels a scheduled 5h-limit resu
   expect(rec.prompts).toEqual([])
 })
 
-test('every boolean row through the /config menu: true, \'true\' and \'on\' are on, the rest off', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
+test('every boolean row through the /config menu: true, \'true\' and \'on\' are on, the rest off', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   await start($)
-  for (const key of ['enabled', 'autoOn', 'resumeAfterLimit', 'segment']) {
+  for (const field of ['enabled', 'autoOn', 'resumeAfterLimit', 'segment']) {
     for (const value of [true, 'true', 'on']) {
-      await menu($, key, false)
-      expect(await frame($, 'get', key), `${key} off before ${String(value)}`).toBe(false)
-      expect(await menu($, key, value), `${key} ${String(value)}`).toEqual({ value: true })
-      expect(rec.config.at(-1), `${key} ${String(value)} stored`).toEqual({ key: `handoff.${key}`, value: true })
-      expect(await frame($, 'get', key), `${key} ${String(value)}`).toBe(true)
+      await menu($, field, false)
+      expect(await get($, field), `${field} off before ${String(value)}`).toBe(false)
+      expect(await menu($, field, value), `${field} ${String(value)}`).toEqual({ value: true })
+      expect(rec.config.at(-1), `${field} ${String(value)} stored`).toEqual({ key: ROW(field), value: true })
+      expect(await get($, field), `${field} ${String(value)}`).toBe(true)
     }
     for (const value of ['false', 'off']) {
-      expect(await menu($, key, value), `${key} ${value}`).toEqual({ value: false })
-      expect(await frame($, 'get', key), `${key} ${value}`).toBe(false)
-      await menu($, key, true)
+      expect(await menu($, field, value), `${field} ${value}`).toEqual({ value: false })
+      expect(await get($, field), `${field} ${value}`).toBe(false)
+      await menu($, field, true)
     }
   }
 })
 
-test('a refused write of handoff.enabled (menu or set) leaves the loop armed', { ...WITH_FRAME, ...OPTIONS }, async ($, on) => {
-  on('config.set', { key: 'handoff.enabled' }, () => ({ deny: 'locked' }))
+test('a refused write of junkd.handoff_enabled (menu or set) leaves the loop armed', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
+  on('config.set', { key: 'junkd.handoff_enabled' }, () => ({ deny: 'locked' }))
   const rec = world(on)
   await start($)
   await handoff($, 'auto')
   rec.percent = 90
-  expect(await frame($, 'config', { key: 'handoff.enabled', value: false })).toEqual({ deny: 'locked' }) // $.config.set answers a deny
-  await expect(frame($, 'set', { key: 'enabled', value: false })).rejects.toThrow(/locked/)
-  expect(await frame($, 'get', 'enabled')).toBe(true)
-  expect(await frame($, 'status')).toMatchObject({ armed: true })
+  expect(await menu($, 'enabled', false)).toEqual({ deny: 'locked' }) // $.config.set answers a deny
+  await expect(set($, 'enabled', false)).rejects.toThrow(/locked/)
+  expect(await get($, 'enabled')).toBe(true)
+  expect(await status($)).toMatchObject({ armed: true })
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
 })
 
 // A 5h-limit resume a previous session left scheduled: the startup notice says how to get it back.
 for (const enabled of [true, false]) {
-  test(`the startup notice of a lost 5h-limit resume, enabled ${enabled}: ${enabled ? 're-arm with /ahandoff' : 'names the enabled setting'}`, { options: { enabled } }, async ($, on) => {
+  test(`the startup notice of a lost 5h-limit resume, enabled ${enabled}: ${enabled ? 're-arm with /junkd:ahandoff' : 'names the enabled setting'}`, { options: { handoff_enabled: enabled } }, async ($, on) => {
     on('store.get', { key: 'ahandoff' }, () => ({ value: { on: true, resumeAt: Date.now() + 3_600_000 } }))
-    const toasts: string[] = []
-    on('ui.toast', { text: /^handoff: / }, (_$, e) => { toasts.push(e.text); return { value: undefined } })
-    world(on)
+    const rec = world(on)
     await start($)
-    const notice = toasts.find(t => /5h-limit resume was due/.test(t))
-    expect(notice, toasts.join(' | ')).toBeDefined()
+    const notice = rec.toasts.find(t => /^handoff: a 5h-limit resume was due/.test(t))
+    expect(notice, rec.toasts.join(' | ')).toBeDefined()
     if (enabled) {
-      expect(notice).toMatch(/re-arm with \/ahandoff$/)
+      expect(notice).toMatch(/re-arm with \/junkd:ahandoff$/)
       expect(notice).not.toMatch(/disabled/)
     } else {
-      expect(notice).toMatch(/auto handoff is disabled: turn the enabled setting on \(\/config, or the pane's Settings tab\), then \/ahandoff$/)
+      expect(notice).toMatch(/auto handoff is disabled: turn the enabled setting on \(\/config, or the pane's Settings tab\), then \/junkd:ahandoff$/)
       expect(notice).not.toMatch(/re-arm with/)
     }
   })
 }
 
-test('Settings tab: the Enabled switch (u) writes handoff.enabled and the Auto tab then says disabled', OPTIONS, async ($, on) => {
+test('the startup notice of a pending handoff names /junkd:handon <id>; none without one', async ($, on) => {
+  on('store.get', { key: 'ahandoff' }, () => ({ value: { on: true, pending: { id: 'abcdef12', prompt: 'x' } } }))
+  const rec = world(on)
+  await start($)
+  expect(rec.toasts).toContain('handoff: pending handoff abcdef12 — run /junkd:handon abcdef12')
+})
+
+test('no startup notice without a pending handoff or a due resume', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  expect(rec.toasts.filter(t => t.startsWith('handoff:'))).toEqual([])
+})
+
+test('Settings tab: the Enabled switch (u) writes junkd.handoff_enabled and the Auto tab then says disabled', OPTIONS, async ($, on) => {
   const rec = world(on)
   await start($)
   await handoff($, 'auto')
-  const ui = await $.ui.mount({ plugin: 'handoff', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
   await hotkey(ui, '3')
   await hotkey(ui, 'u')
-  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: false })
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.handoff_enabled', value: false })
   await hotkey(ui, '1')
   expect(await texts(ui)).toMatch(/disabled/)
   expect((await ui.findAll({ type: 'Button' })).some(b => b.props.hotkey === 'o' || b.props.hotkey === 'a'), 'neither Off nor Arm').toBe(false)
   await hotkey(ui, '3')
   await hotkey(ui, 'u')
-  expect(rec.config.at(-1)).toEqual({ key: 'handoff.enabled', value: true })
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.handoff_enabled', value: true })
   await hotkey(ui, '1')
   await hotkey(ui, 'a')
   expect(rec.config.length).toBe(2)
