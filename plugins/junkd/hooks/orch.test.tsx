@@ -916,6 +916,11 @@ test('orch_enabled off at load: tool.call, agent.spawn and the .catch pass, guar
   rec.model = undefined // no model: inactive, and no fable-guard toast
   expect(await frame($, 'guardState')).toEqual({ active: false, model: '' })
   expect(rec.toasts).toEqual([])
+  // the fable guard reads no model while off: an unreadable one is no news, on a call or on guardState
+  await frame($, 'set', { key: 'orch_guard', value: 'fable' })
+  expect(denial(await edit($))).toBeUndefined()
+  expect(await frame($, 'guardState')).toEqual({ active: false, model: '' })
+  expect(rec.toasts).toEqual([])
   expect(await frame($, 'get', { key: 'orch_enabled' })).toBe(false)
   await orchCmd($, 'panel')
   expect(rec.opened).toEqual(['orch'])
