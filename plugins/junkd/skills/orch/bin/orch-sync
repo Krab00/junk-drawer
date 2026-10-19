@@ -87,7 +87,7 @@ case "${1:-pull}" in
         fi
         ;;
       adhoc|manifest) echo "orch-sync: backend '$backend' — no-op; the canonical task files ARE the source of truth." ;;
-      linear-mcp) echo "orch-sync: backend 'linear-mcp' — sync via Linear MCP in-conversation (the /orch command performs pull/push through the MCP; this script is a stub for that backend). [v0.1 limitation]" ;;
+      linear-mcp) echo "orch-sync: backend 'linear-mcp' — sync via Linear MCP in-conversation (the /junkd:orch skill performs pull/push through the MCP; this script is a stub for that backend). [v0.1 limitation]" ;;
       *) echo "orch-sync: unknown backend '$backend'" >&2; exit 1;;
     esac
     ;;
