@@ -233,10 +233,11 @@ export type Node = {
 
 const folderName = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path
 const shortModel = (model: string) => /fable|opus|sonnet|haiku/i.exec(model)?.[0].toLowerCase() ?? model
-// A path in a folder, or the folder itself; a trailing slash on either side changes nothing.
+// A path in a folder, or the folder itself; a trailing slash on either side changes nothing (a path that is the
+// folder plus slashes starts with `<folder>/`).
 const under = (path: string, dir: string) => {
   const d = dir.replace(/\/+$/, '')
-  return path.replace(/\/+$/, '') === d || path.startsWith(`${d}/`)
+  return path === d || path.startsWith(`${d}/`)
 }
 
 // Root = the main checkout, its children the other worktrees (by path basename, with the branch). An agent sits under
