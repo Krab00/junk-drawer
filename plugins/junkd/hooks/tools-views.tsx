@@ -33,7 +33,8 @@ const KEYS_END: Hint[] = [['r', 'refresh'], ['t', 'transcript'], ['1-4', 'tab'],
 const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
 export const fit = (text: string, n: number) => {
   const chars = [...clean(text)]
-  return chars.length > n ? `${chars.slice(0, Math.max(0, n - 1)).join('')}…` : chars.join('')
+  if (n <= 0) return ''
+  return chars.length > n ? `${chars.slice(0, n - 1).join('')}…` : chars.join('')
 }
 const pad = (text: string, n: number) => fit(text, n).padEnd(n)
 const right = (text: string, n: number) => fit(text, n).padStart(n)
@@ -124,7 +125,8 @@ const agents: View = (c, act, cols) => {
 
 // ------------------------------------------------------------------ Tools
 
-// name | main | sub | ≈tokens, the numbers right-aligned in fixed cells; the name takes what is left.
+// name | main | sub | ≈tokens, the numbers right-aligned in fixed cells; the name takes what is left. A table row is cut
+// at the pane's width too: below about 40 columns the last cells go before the name does.
 const NUM = 6
 const TOK = 9
 const tools: View = (c, act, cols) => {
@@ -132,7 +134,7 @@ const tools: View = (c, act, cols) => {
   const rows = toolRows(T.counters.tools, T.mcp)
   const width = Math.max(4, cols - 2 - NUM * 2 - TOK)
   const calls = rows.reduce((n, r) => n + r.main + r.sub, 0)
-  const line = (name: string, main: string, sub: string, tok: string) => `  ${pad(name, width)}${right(main, NUM)}${right(sub, NUM)}${right(tok, TOK)}`
+  const line = (name: string, main: string, sub: string, tok: string) => fit(`  ${pad(name, width)}${right(main, NUM)}${right(sub, NUM)}${right(tok, TOK)}`, cols)
   return {
     body: (
       <Box flexDirection="column">
@@ -163,7 +165,7 @@ const mcp: View = (c, _act, cols) => {
   const LOAD = 9
   const width = Math.max(4, cols - 2 - NUM - LOAD - TOK * 2)
   const line = (server: string, calls: string, load: string, schema: string, result: string) =>
-    `  ${pad(server, width)}${right(calls, NUM)}${right(load, LOAD)}${right(schema, TOK)}${right(result, TOK)}`
+    fit(`  ${pad(server, width)}${right(calls, NUM)}${right(load, LOAD)}${right(schema, TOK)}${right(result, TOK)}`, cols)
   return {
     body: (
       <Box flexDirection="column">
@@ -189,7 +191,7 @@ const skills: View = (c, _act, cols, now) => {
   const VIA = 7
   const LAST = 10
   const width = Math.max(4, cols - 2 - VIA - NUM - LAST)
-  const line = (name: string, via: string, count: string, last: string) => `  ${pad(name, width)}${right(via, VIA)}${right(count, NUM)}${right(last, LAST)}`
+  const line = (name: string, via: string, count: string, last: string) => fit(`  ${pad(name, width)}${right(via, VIA)}${right(count, NUM)}${right(last, LAST)}`, cols)
   const runs = rows.reduce((n, [, r]) => n + r.count, 0)
   return {
     body: (
