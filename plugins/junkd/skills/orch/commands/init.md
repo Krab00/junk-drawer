@@ -1,13 +1,13 @@
 ---
-description: "Scan this repo and generate .orch/config.md — the adapter /orch reads for every project fact (task backend, branch naming, dev-server run commands, ports, test runners). Run once before /orch."
+description: "Scan this repo and generate .orch/config.md — the adapter /junkd:orch reads for every project fact (task backend, branch naming, dev-server run commands, ports, test runners). Run once before /junkd:orch."
 argument-hint: "(no arguments)"
 allowed-tools: Bash(git:*), Bash(cat:*), Bash(ls:*), Bash(test:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Read, Write, Glob
 ---
 
-# /orch:init — generate the project config for `/orch`
+# /junkd:orch-init — generate the project config for `/junkd:orch`
 
 Produce `.orch/config.md` in this repo: the single adapter that makes the
-project-agnostic `/orch` loop fit THIS stack. Scan, propose, confirm, write — don't invent
+project-agnostic `/junkd:orch` loop fit THIS stack. Scan, propose, confirm, write — don't invent
 facts you can read from the repo, and don't ask the user things the repo already answers.
 
 ## 1. Scan the repo (read, don't guess)
@@ -29,11 +29,11 @@ Gather, quietly:
 
 Show the four options and ask which fits; default to `adhoc` if the user just wants to start:
 - **`adhoc`** — no external tracker; task files in `tasks_dir` are the whole source of truth
-  (`/orch <free text>` creates them). Simplest; `orch-sync` is a no-op.
+  (`/junkd:orch <free text>` creates them). Simplest; `orch-sync` is a no-op.
 - **`manifest`** — same as adhoc but the user maintains the task files by hand.
 - **`github-issues`** — pull issues carrying a label into task files, push a status comment back
   (needs the `gh` CLI authenticated). Ask for the label (default `orch`).
-- **`linear-mcp`** — sync through the Linear MCP in-conversation (thin in v0.1: `/orch` does the
+- **`linear-mcp`** — sync through the Linear MCP in-conversation (thin in v0.1: `/junkd:orch` does the
   pull/push via MCP; the `orch-sync` script is a stub for this backend).
 
 ## 3. Propose the filled config, confirm the commands
@@ -41,7 +41,7 @@ Show the four options and ask which fits; default to `adhoc` if the user just wa
 Show the user the file you're about to write and confirm the run/test commands + ports you
 detected (these are the ones that most often need a human correction). Omit any capability the
 project doesn't have — **do not** write a `web`/`api`/`tests` block for a layer that isn't there;
-`/orch` gates its checks on exactly what's declared here.
+`/junkd:orch` gates its checks on exactly what's declared here.
 
 ```markdown
 ---
@@ -56,7 +56,7 @@ capabilities:
 standing_checks_extra: []          # project lessons promoted to standing checks (starts empty)
 github: { label: "orch" }          # github-issues backend only; drop otherwise
 ---
-Free-form project notes /orch should know: conventions, gotchas, where the visual spec lives,
+Free-form project notes /junkd:orch should know: conventions, gotchas, where the visual spec lives,
 calibration values that must never be guessed, etc.
 ```
 
@@ -67,8 +67,8 @@ so pick bases far enough apart that a few parallel tasks won't collide (e.g. 518
 
 After the user confirms:
 1. Create `.orch/` if needed, then write `.orch/config.md`.
-2. Create `tasks_dir` and an empty `<tasks_dir>/_lessons.md` (the retro log `/orch` appends to).
+2. Create `tasks_dir` and an empty `<tasks_dir>/_lessons.md` (the retro log `/junkd:orch` appends to).
 3. Confirm `${CLAUDE_PLUGIN_ROOT}/bin/orch-state list` runs clean against the new config (empty
-   store is fine), then tell the user how to start: `/orch <free text>` for an adhoc task, or
-   `/orch batch` once tasks exist. If `.orch/config.md` already exists, show the diff and
+   store is fine), then tell the user how to start: `/junkd:orch <free text>` for an adhoc task, or
+   `/junkd:orch batch` once tasks exist. If `.orch/config.md` already exists, show the diff and
    ask before overwriting — never clobber a hand-tuned config silently.

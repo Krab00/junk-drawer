@@ -1,14 +1,14 @@
 ---
-description: "Project-agnostic orchestration loop: pick tasks from the canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Usage: /orch <free text> | <ID...> | batch [N] | chain [N] | all [--base <b>] [--rounds R] [--deep] [--single-pr[=<b>]]"
+description: "Project-agnostic orchestration loop: pick tasks from the canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Usage: /junkd:orch <free text> | <ID...> | batch [N] | chain [N] | all [--base <b>] [--rounds R] [--deep] [--single-pr[=<b>]]"
 argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
 ---
 
-# /orch — project-agnostic orchestration loop
+# /junkd:orch — project-agnostic orchestration loop
 
 Arguments: `$ARGUMENTS`
 
-(`/orch panel` never reaches this text: on Claude Code the plugin's hooks module answers it by
+(`/junkd:orch panel` never reaches this text: on Claude Code the plugin's hooks module answers it by
 toggling the settings pane. On any other host, `panel` is not a mode.)
 
 You are the ORCHESTRATOR. You **never implement or verify code yourself** — implementation
@@ -18,16 +18,23 @@ verdicts, write status, and manage draft PRs. Keeping the heavy output (builds, 
 test runs, screenshots) inside the subagents is the point — it lets `all` drain more tasks
 before your own context fills.
 
+On Claude Code each role is an agent type of the junkd plugin, `junkd:<role>` (`junkd:implementer`,
+`junkd:verify-coordinator`, `junkd:orch-ops`, ...), its model pinned in its definition: spawn it by that
+type without a `model`.
+
 ## 0. Config = the adapter (read it first, or stop)
 
 Every project fact — task store location, default base, branch naming, dev-server run commands, ports,
 test runners, health paths — comes from **`.orch/config.md`** in the target repo.
-Read it before anything else. **No config → STOP** and tell the user to run `/orch:init`;
+Read it before anything else. **No config → STOP** and tell the user to run `/junkd:orch-init`;
 never guess a stack.
 
-Then run `${CLAUDE_PLUGIN_ROOT}/bin/orch-state settings` — the user's plugin settings (from
-`settings.json`, user-global, no config needed), one `key=value` per line. Use them for the whole run:
+Then run `${CLAUDE_PLUGIN_ROOT}/bin/orch-state settings` — the user's plugin settings (the junkd
+plugin's `orch_*` rows in `settings.json`, user-global, no config needed), one `key=value` per line
+without the `orch_` prefix. Use them for the whole run:
 
+- `enabled` — read by the hooks module (the main-loop guard) and the SessionStart hook; nothing to
+  do here. A run you were asked for goes ahead either way.
 - `rounds=<n>` — the fix-round cap (§5); `--rounds R` overrides it for this run.
 - `ui_review=true|false` — `false`: no `ui-reviewer` is spawned; the UI criteria become
   `PM-REVIEW` rows (reason: ui_review off). Pass the value to every `verify-coordinator` (§4).
@@ -72,14 +79,14 @@ for a human — never merge it yourself, or the run's record is lost when the wo
 
 ## Modes (parse from `$ARGUMENTS`)
 
-- **`/orch <free text>`** — *adhoc single task*: `orch-state new <ID> <title>` (ID like
+- **`/junkd:orch <free text>`** — *adhoc single task*: `orch-state new <ID> <title>` (ID like
   `ADHOC-1`), write the description from the prompt, run the freeze ladder (§2)
   **interactively** (show criteria, get approval), then the standard loop for that one task.
-- **`/orch <ID> [<ID>...]`** — explicit tasks from the store (skip selection; still enforce deps).
-- **`/orch batch [N]`** — up to N independent tasks in parallel (default N=3). Pick tasks with
+- **`/junkd:orch <ID> [<ID>...]`** — explicit tasks from the store (skip selection; still enforce deps).
+- **`/junkd:orch batch [N]`** — up to N independent tasks in parallel (default N=3). Pick tasks with
   no unsatisfied `deps` and no shared files; spawn all implementers, then all verify-coordinators.
-- **`/orch chain [N]`** — task-by-task, each branch stacked on the previous finished branch.
-- **`/orch all`** — `chain` with no limit: drain until no `todo` task remains.
+- **`/junkd:orch chain [N]`** — task-by-task, each branch stacked on the previous finished branch.
+- **`/junkd:orch all`** — `chain` with no limit: drain until no `todo` task remains.
 - No mode and no free text → ask which mode.
 
 Flags (any mode): `--rounds R` (fix-loop cap; default the `rounds` setting, §0); `--base <branch>` (start point
@@ -87,7 +94,7 @@ instead of config `default_base`); `--deep` (force `lead-implementer` fan-out �
 `--single-pr[=<branch>]` (one integration branch + one draft PR for the whole run — see
 **Single-PR mode**).
 
-Full autonomous drain: **`/loop /orch all`** — each iteration a fresh cycle, state in the task
+Full autonomous drain: **`/loop /junkd:orch all`** — each iteration a fresh cycle, state in the task
 files + git; the loop keys off the final `BACKLOG:` line and stops on `DRAINED` or `BLOCKED`.
 
 ## Loop
@@ -199,7 +206,7 @@ tell it which apply; never ask for a check on an undeclared layer):
   (no-op for `adhoc`/`manifest`; `github-issues` comments via `gh`; `linear-mcp` you push via MCP).
   Then tear down or PR the orch worktree per **Branch rule**.
 - **Context guard:** if context is getting long, finish the current task cleanly, stop early, and
-  print the resume command: `/orch <mode> [remaining-N] --base <last-finished-branch>`.
+  print the resume command: `/junkd:orch <mode> [remaining-N] --base <last-finished-branch>`.
 
 ### 7. Retro + lessons (the learning step)
 
@@ -243,7 +250,7 @@ PM-REVIEW criterion awaiting a human, and `deps` prerequisites that need a human
 
 ```
 BACKLOG: DRAINED — no `todo` tasks remain
-BACKLOG: REMAINING — <count> (<ids>); resume: /orch <mode> [N] --base <last-finished-branch>
+BACKLOG: REMAINING — <count> (<ids>); resume: /junkd:orch <mode> [N] --base <last-finished-branch>
 BACKLOG: BLOCKED — remaining tasks need a human: <ids + one-line reasons>
 ```
 
