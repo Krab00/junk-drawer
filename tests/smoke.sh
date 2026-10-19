@@ -299,6 +299,11 @@ CONFIG
 
 # The orch plugin's own tests: the SessionStart rule-sheet hook, the agent roster, the bin scripts.
 bash "$root/tests/orch.sh" >/dev/null 2>&1 || { echo "tests/orch.sh failed; run it alone for the reason"; exit 1; }
+# bin/orch-watch, the watchdog of the hosts with no hooks module, over a fixture and a stub ps/lsof; again with a
+# TMPDIR that ends in `/`.
+bash "$root/tests/orch-watch.sh" >/dev/null 2>&1 || { echo "tests/orch-watch.sh failed; run it alone for the reason"; exit 1; }
+TMPDIR="$tmp/slash/" bash "$root/tests/orch-watch.sh" >/dev/null 2>&1 ||
+    { echo "tests/orch-watch.sh failed with TMPDIR ending in /; run it alone with TMPDIR=\$TMPDIR/ for the reason"; exit 1; }
 
 catalog=$(JUNK_DRAWER_RUNTIME=codex "$root/plugins/junk-drawer/bin/junk-drawer")
 rg -q '\$orch' <<<"$catalog"
