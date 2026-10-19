@@ -936,7 +936,7 @@ test('the /config menu refuses what set refuses: threshold 150, checkEvery 2.6 a
 test('the /config menu hook of handoff matches only the junkd.handoff_* rows', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   await start($)
-  for (const key of ['handoff.threshold', 'junkd.handoffthreshold', 'junkd.handoff.threshold', 'xjunkd.handoff_threshold', 'other.junkd.handoff_threshold', 'junkd.handoff_threshold_x', 'junkd.orch_handoff_threshold']) {
+  for (const key of ['handoff.threshold', 'junkd.handoffthreshold', 'junkd.handoff.threshold', 'xjunkd.handoff_threshold', 'other.junkd.handoff_threshold', 'junkd.handoff_threshold_x', 'junkd.handoff_x_threshold', 'junkd.handoff_.threshold', 'junkd.orch_handoff_threshold']) {
     expect(await call($, 'menu', { key, value: 150 }), key).toEqual({ value: 150 }) // not refused as threshold 150 would be
     expect(rec.config.at(-1), key).toEqual({ key, value: 150 })
     expect(await get($, 'threshold'), key).toBe(80)
