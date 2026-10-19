@@ -56,7 +56,7 @@ const Line = ({ c, k, text, color, bold }: { c: Draw; k: string; text: string; c
 )
 const Empty = ({ c, text }: { c: Draw; text: string }) => <Line c={c} k="empty" text={`  ${text}`} color={P.secondary} />
 
-// ------------------------------------------------------------------ Agents
+// Agents tab ------------------------------------------------------------------------------------------------------
 
 // One row: the tree guide, the fold mark (▾ open, ▸ folded, blank on a leaf), the status glyph of an agent, its name,
 // then dim: an agent's type and model (and `done` once finished), a worktree's branch. Every row is a Button: the arrow
@@ -74,7 +74,7 @@ function agentRow(c: Draw, n: Node, guide: string, isOn: boolean, width: number,
     <Box key={`row-${n.id}`} height={1} overflow="hidden" backgroundColor={isOn ? P.bg : undefined}>
       <Button key={`node:${n.id}`} plain label={n.label || n.id} onPress={press}>
         <Text>
-          <Text color={P.dim}>{guide}</Text>
+          <Text color={P.dim}>{guide || ''}</Text>
           <Text color={P.accent}>{mark}</Text>
           {glyph ? <Text color={glyph[1]}>{`${glyph[0]} `}</Text> : null}
           <Text bold={n.kind !== 'agent' || undefined}>{name}</Text>
@@ -96,7 +96,7 @@ const agents: View = (c, act, cols) => {
   const keys: Hint[] = [['↑↓', 'select'], ['enter', 'fold'], ...KEYS_END]
   if (!T.loaded) return { body: <Empty c={c} text="reading…" />, note, keys }
   const rows = flatten(buildTree(T.worktrees, T.agents, T.spawned, T.agentsOnly), T.folded)
-  const ids = rows.map(r => r.node.id)
+  const ids = rows.map(({ node }) => node.id)
   const sel = selectedIn(ids)
   const step = (by: number) => {
     const id = move(ids, by)
@@ -123,7 +123,7 @@ const agents: View = (c, act, cols) => {
   }
 }
 
-// ------------------------------------------------------------------ Tools
+// Tools tab -------------------------------------------------------------------------------------------------------
 
 // name | main | sub | ≈tokens, the numbers right-aligned in fixed cells; the name takes what is left. A table row is cut
 // at the pane's width too: below about 40 columns the last cells go before the name does.
@@ -154,7 +154,7 @@ const tools: View = (c, act, cols) => {
   }
 }
 
-// ------------------------------------------------------------------ MCP
+// MCP tab ---------------------------------------------------------------------------------------------------------
 
 const mcp: View = (c, _act, cols) => {
   const { Box } = c.ui
@@ -183,7 +183,7 @@ const mcp: View = (c, _act, cols) => {
   }
 }
 
-// ------------------------------------------------------------------ Skills
+// Skills tab ------------------------------------------------------------------------------------------------------
 
 const skills: View = (c, _act, cols, now) => {
   const { Box } = c.ui
@@ -207,7 +207,7 @@ const skills: View = (c, _act, cols, now) => {
   }
 }
 
-const VIEWS: Record<Route, View> = { agents, tools, mcp, skills }
+const TAB_VIEW: Record<Route, View> = { agents, tools, mcp, skills }
 
 // The tab row: the current tab inverse, the others dim Buttons on their digit; `q ×` at the right end.
 function Tabs({ c, act }: { c: Draw; act: ToolsActs }) {
@@ -257,7 +257,7 @@ function Footer({ c, note, keys }: { c: Draw; note: JSX.Element | string; keys: 
 export function toolsView(els: Els, props: RenderInput<'Pane'>['props'], now: number, act: ToolsActs) {
   const c: Draw = { ui: els }
   const cols = Math.max(20, props.bodyColumns - EDGE)
-  const s = VIEWS[ROUTES.includes(T.route) ? T.route : 'agents'](c, act, cols, now)
+  const s = TAB_VIEW[ROUTES.includes(T.route) ? T.route : 'agents'](c, act, cols, now)
   return (
     <els.Box flexDirection="column" paddingRight={EDGE}>
       <Hidden c={c} k="refresh" hotkey="r" onPress={act.refresh} />

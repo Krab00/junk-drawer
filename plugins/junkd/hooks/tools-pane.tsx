@@ -9,12 +9,12 @@
 import type { AgentSpawnInput, AgentSpawnResult, CommandRunInput, On, RenderInput, ToolCallInput, ToolCallResult } from 'claude-code'
 import type { HideInput, SetResult } from './feature'
 import type { $ } from './feature'
-import { T, applyToolsSettings, coerce, resetTools, countSkill, countTool, isField, isRoute, newCounters, parseWorktrees, mergeAgents, pickTranscript, projectFolder, revealArgv, type Route } from './tools'
+import { T, applyToolsSettings, coerce, resetTools, countSkill, tallyTool, isField, isRoute, emptyCounters, readWorktrees, mergeAgents, pickTranscript, projectFolder, revealCommand, type Route } from './tools'
 import { toolsView, type Els } from './tools-views'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 
-export const TOOLS_PANE = 'junkd-tools'
-export const TOOLS_OFF = 'junkd: the tools pane is off: /junkd → tools → Tools pane: enabled'
+export const TOOLS_PANE_ID = 'junkd-tools'
+export const OFF_TEXT = 'junkd: the tools pane is off: /junkd → tools → Tools pane: enabled'
 const NO_TAB = (route: unknown) => `junkd: the tools pane has no tab ${String(route)} (agents, tools, mcp or skills)`
 // The pane toggles themselves are no skill runs of the person's.
 const NOT_COUNTED = new Set(['junkd', 'junkd:junkd', 'junkd:tools'])
@@ -42,7 +42,7 @@ async function configDir($: $) {
   return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`
 }
 
-// ------------------------------------------------------------------ loading
+// loading -----------------------------------------------------------------------------------------------------------
 
 // The agent list, the worktrees of the session's repo (`git worktree list --porcelain`; outside a repo, or where git
 // fails, the session's directory alone) and the MCP schemas of the usage summary (estimated locally; a read that fails
@@ -54,7 +54,7 @@ async function load($: $): Promise<void> {
   const listed = await $.agent.list().catch(() => undefined)
   const cwd = await $.session.cwd().catch(() => '')
   const git = cwd ? await $.process.run(['git', '-C', cwd, 'worktree', 'list', '--porcelain']).catch(() => undefined) : undefined
-  const trees = git?.exitCode === 0 ? parseWorktrees(git.stdout) : []
+  const trees = git?.exitCode === 0 ? readWorktrees(git.stdout) : []
   const usage = await $.session.usage({ breakdown: 'summary' }).catch(() => undefined)
   const at = await $.clock.now().catch(() => now)
   if (gen !== loads || !T.open) return
@@ -69,7 +69,7 @@ async function load($: $): Promise<void> {
 // A tick: the pane gone with no ui.close (a drawing that threw, say) ends the poll; else a load.
 async function poll($: $): Promise<void> {
   const panes = await $.ui.panes().catch(() => undefined)
-  if (panes && !panes.some(p => p.id === TOOLS_PANE)) return closed()
+  if (panes && !panes.some(p => p.id === TOOLS_PANE_ID)) return closed()
   await load($)
 }
 
@@ -96,7 +96,7 @@ function closed() {
 // is no pane; one that waits undrawn (a narrow terminal) is open.
 async function openPane($: $, route: Route | undefined, focus: boolean) {
   if (route) T.route = route
-  const opened = $.ui.open({ id: TOOLS_PANE, title: 'tools', focus: focus || undefined })
+  const opened = $.ui.open({ id: TOOLS_PANE_ID, title: 'tools', focus: focus || undefined })
   owner = undefined
   watch($)
   await opened.catch(err => {
@@ -107,10 +107,10 @@ async function openPane($: $, route: Route | undefined, focus: boolean) {
 // The engine does not raise our own `$.ui.close` to our ui.close hook, so the state is cleared here.
 async function closePane($: $) {
   closed()
-  await $.ui.close({ id: TOOLS_PANE })
+  await $.ui.close({ id: TOOLS_PANE_ID })
 }
 
-// ------------------------------------------------------------------ the transcript
+// the transcript ----------------------------------------------------------------------------------------------------
 
 // This session's transcript: `$.session` names no path, so it is the `<session id>.jsonl` (else the newest .jsonl) in
 // the project folder the engine keeps for the session's directory, <config dir>/projects/<cwd, each non-alphanumeric
@@ -123,9 +123,9 @@ async function revealTranscript($: $): Promise<void> {
     if (name === undefined) text = `✗ no transcript in ${dir} yet: send a prompt first`
     else {
       const os = (await $.process.run(['uname', '-s']).catch(() => undefined))?.stdout.trim() ?? ''
-      const argv = revealArgv(os, `${dir}/${name}`)
-      const r = await $.process.run(argv)
-      text = r.exitCode === 0 ? `✓ ${argv.join(' ')}` : `✗ ${r.stderr.trim() || `${argv[0]} exited ${r.exitCode}`}`
+      const argv = revealCommand(os, `${dir}/${name}`)
+      const ran = await $.process.run(argv)
+      text = ran.exitCode === 0 ? `✓ ${argv.join(' ')}` : `✗ ${ran.stderr.trim() || `${argv[0]} exited ${ran.exitCode}`}`
     }
   } catch (err) {
     text = `✗ ${reason(err)}`
@@ -133,7 +133,7 @@ async function revealTranscript($: $): Promise<void> {
   $.ui.toast(text)
 }
 
-// ------------------------------------------------------------------ settings
+// settings ----------------------------------------------------------------------------------------------------------
 
 // A value the row took lands in T. enabled off closes the pane and drops the counters; a new refresh retimes a
 // running poll.
@@ -141,13 +141,13 @@ async function apply($: $, field: string, value: number | boolean): Promise<void
   applyToolsSettings({ enabled: T.enabled, refresh: T.refresh, agents_only: T.agentsOnly, [field]: value })
   if (field === 'refresh' && timer) startPoll($)
   if (field === 'enabled' && !T.enabled) {
-    T.counters = newCounters()
+    T.counters = emptyCounters()
     if (T.open) await closePane($)
   }
   redraw($)
 }
 
-// ------------------------------------------------------------------ what index.tsx, dispatch.ts and the hooks call
+// what index.tsx, dispatch.ts and the hooks call --------------------------------------------------------------------
 
 export async function toolsGet(_$: $, field: string): Promise<number | boolean> {
   if (field === 'refresh') return T.refresh
@@ -169,7 +169,7 @@ export async function toolsSet($: $, field: string, raw: unknown): Promise<SetRe
 // `owner` marks it as that caller's, for hide. Off: refused with the reason.
 export async function toolsShow($: $, input: ToolsInput = {}): Promise<void> {
   if (input.route !== undefined && !isRoute(input.route)) throw new Error(NO_TAB(input.route))
-  if (!T.enabled) throw new Error(TOOLS_OFF)
+  if (!T.enabled) throw new Error(OFF_TEXT)
   const opened = openPane($, input.route, input.focus === true)
   owner = input.owner
   await opened
@@ -182,7 +182,7 @@ export async function toolsHide($: $, input: HideInput = {}): Promise<void> {
 // open toggles the pane, as /junkd:tools does; a `route` while the pane is up switches its tab instead.
 export async function toolsOpen($: $, input: ToolsInput = {}): Promise<void> {
   if (input.route !== undefined && !isRoute(input.route)) throw new Error(NO_TAB(input.route))
-  if (!T.enabled) throw new Error(TOOLS_OFF)
+  if (!T.enabled) throw new Error(OFF_TEXT)
   if (input.route !== undefined && T.open) {
     T.route = input.route
     redraw($)
@@ -196,9 +196,9 @@ export async function toolsOpen($: $, input: ToolsInput = {}): Promise<void> {
 export async function toolsStart($: $): Promise<void> {
   T.since = await $.clock.now().catch(() => T.since)
   now = T.since
-  if (!(await $.ui.panes().catch(() => [])).some(p => p.id === TOOLS_PANE)) return
+  if (!(await $.ui.panes().catch(() => [])).some(p => p.id === TOOLS_PANE_ID)) return
   if (T.enabled) watch($)
-  else await $.ui.close({ id: TOOLS_PANE })
+  else await $.ui.close({ id: TOOLS_PANE_ID })
 }
 
 // index.tsx's tool.call, for the model's own calls only: one more call of the tool, on the main loop or a subagent
@@ -207,8 +207,8 @@ export async function toolsStart($: $): Promise<void> {
 export async function toolsCount($: $, e: ToolCallInput, r: ToolCallResult): Promise<void> {
   try {
     if (!T.enabled || r.deny !== undefined) return
-    countTool(T.counters, e.tool, e.agentId !== undefined, r.text?.length ?? 0)
-    const skill = (e as { skill?: unknown }).skill
+    tallyTool(T.counters, e.tool, e.agentId !== undefined, r.text?.length ?? 0)
+    const { skill } = e as { skill?: unknown }
     if (e.tool === 'Skill' && typeof skill === 'string') countSkill(T.counters, skill, 'tool', (now = await $.clock.now()))
     if (T.open) redraw($)
   } catch {}
@@ -223,7 +223,8 @@ export async function toolsCommandRan($: $, e: CommandRunInput): Promise<void> {
     if (!T.enabled || e.origin.kind === 'plugin' || NOT_COUNTED.has(e.command)) return
     if (!sources.has(e.command)) sources = new Map((await $.command.list()).map(c => [c.name, c.source]))
     const source = sources.get(e.command)
-    if (source !== 'plugin' && source !== 'user') return
+    const counted = source === 'user' || source === 'plugin'
+    if (!counted) return
     countSkill(T.counters, e.command, 'slash', (now = await $.clock.now()))
     if (T.open) redraw($)
   } catch {}
@@ -266,7 +267,7 @@ export function registerTools(on: On, options: Record<string, unknown>): void {
 
   // /junkd:tools toggles the pane; /junkd:tools <tab> opens it on that tab, or switches to it.
   on('command.run', { command: 'junkd:tools' }, async ($, e) => {
-    if (!T.enabled) return { text: TOOLS_OFF }
+    if (!T.enabled) return { text: OFF_TEXT }
     const route = e.args.trim().toLowerCase()
     if (route !== '' && !isRoute(route)) return { text: NO_TAB(route) }
     try {
@@ -281,9 +282,9 @@ export function registerTools(on: On, options: Record<string, unknown>): void {
 
   // A /clear or a /resume ends the session and the process goes on under another, with no session.start: the counters
   // and the agents seen start over. The folds and the selection stay.
-  on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear' || e.reason === 'resume') {
-      T.counters = newCounters()
+  on('session.end', async ($, end, next) => {
+    if (end.reason === 'resume' || end.reason === 'clear') {
+      T.counters = emptyCounters()
       T.seen = Object.create(null)
       T.agents = []
       T.since = await $.clock.now().catch(() => T.since)
@@ -292,11 +293,11 @@ export function registerTools(on: On, options: Record<string, unknown>): void {
         void load($)
       }
     }
-    return next(e)
+    return next(end)
   })
 
   // The arrows move the focus ring along the agent rows: the row it lands on is the selection.
-  on('ui.focus', { requestId: TOOLS_PANE }, ($, e, next) => {
+  on('ui.focus', { requestId: TOOLS_PANE_ID }, ($, e, next) => {
     if (e.element?.startsWith('node:')) {
       T.selected = e.element.slice('node:'.length)
       redraw($)
@@ -305,13 +306,13 @@ export function registerTools(on: On, options: Record<string, unknown>): void {
   })
 
   // The person's closes (q, ×) pass here; ours go through closePane.
-  on('ui.close', { id: TOOLS_PANE }, (_$, e, next) => {
+  on('ui.close', { id: TOOLS_PANE_ID }, (_$, e, next) => {
     closed()
     return next(e)
   })
 
   // A drawing that throws ends the poll (the engine drops what it could not draw).
-  on('ui.render', { component: 'Pane', requestId: TOOLS_PANE }, ($, e: RenderInput<'Pane'>, next) => {
+  on('ui.render', { component: 'Pane', requestId: TOOLS_PANE_ID }, ($, e: RenderInput<'Pane'>, next) => {
     if (e.surface === 'mobile') return next(e)
     try {
       return toolsView($.ui.resolve(e) as Els, e.props, now, {
@@ -323,7 +324,7 @@ export function registerTools(on: On, options: Record<string, unknown>): void {
         refresh: () => void load($),
         reveal: () => void revealTranscript($),
         redraw: () => void redraw($),
-        focus: key => void $.ui.focus({ requestId: TOOLS_PANE, key }).catch(() => undefined), // a refused ring is no error
+        focus: key => void $.ui.focus({ requestId: TOOLS_PANE_ID, key }).catch(() => undefined), // a refused ring is no error
       })
     } catch (err) {
       closed()
