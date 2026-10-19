@@ -1,7 +1,7 @@
 {
   "name": "junkd",
   "description": "One plugin for handoff, orch and tldr, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff and orch tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr) and the commands. The hooks module exports $.junkd for other mods.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {
     "name": "Krab00"
   },
@@ -105,6 +105,12 @@
       "title": "Fix rounds",
       "description": "Fix rounds per task; --rounds overrides it for one run.",
       "default": 3
+    },
+    "orch_claude_md": {
+      "type": "boolean",
+      "title": "CLAUDE.md pointer block",
+      "description": "On: the \"## Orchestrator mode\" section of ~/.claude/CLAUDE.md (with its ### children) becomes a short block pointing at /junkd:orch, between <!-- junkd:orch start --> and <!-- junkd:orch end -->. Off: the block is removed. CLAUDE.md is backed up before each change; off never puts the old section back (the backup holds it). Applied at once and at every session start while orch is enabled.",
+      "default": false
     },
     "tldr_enabled": {
       "type": "boolean",

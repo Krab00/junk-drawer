@@ -1,4 +1,4 @@
-// The orch pane, `$`-free: the seven orch rows of plugin.json's userConfig on one Settings tab (a choice row, switches,
+// The orch pane, `$`-free: the eight orch rows of plugin.json's userConfig on one Settings tab (a choice row, switches,
 // number fields), in the frame the handoff pane draws (tabs, rule, title, rows, footer). orch.tsx hands it the
 // elements, the current values, the note and the actions. Own copies of the few parts the handoff pane draws alike.
 import type { ElementTable, RenderInput } from 'claude-code'
@@ -26,6 +26,7 @@ const HINTS: Record<OrchField, string> = {
   ui_review: 'ui-reviewer on web UI criteria; off: PM-REVIEW rows',
   inject_rules: 'ORCHESTRATOR.md into the main session at start',
   rounds: 'fix rounds per task; --rounds overrides',
+  claude_md: 'the CLAUDE.md orchestrator section as a pointer block; off removes it',
 }
 
 // The engine empties a field on Enter and only puts `value` back when it changed, so every Enter draws the field
