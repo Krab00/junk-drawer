@@ -342,4 +342,7 @@ rg -q '\$orch' <<<"$standalone_catalog"
 # The orch_claude_md switch: scripts/orch-claude-md.sh on|off and its session-start run, over a temp config dir.
 bash "$root/tests/claude-md.sh" >/dev/null 2>&1 || { echo "tests/claude-md.sh failed; run it alone for the reason"; exit 1; }
 
+# The prompt-cache check: scripts/cache-check.sh over fixture transcripts in a temp project folder.
+bash "$root/tests/cache-check.sh" >/dev/null 2>&1 || { echo "tests/cache-check.sh failed; run it alone for the reason"; exit 1; }
+
 echo "smoke tests passed"
