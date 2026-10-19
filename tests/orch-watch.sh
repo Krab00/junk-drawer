@@ -7,7 +7,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 watch="$root/plugins/junkd/bin/orch-watch"
 tmp=$(cd "$(mktemp -d)" && pwd -P) # the physical path: a TMPDIR ending in `/` gives mktemp a `//`
 loop=''
-trap '[ -z "$loop" ] || kill "$loop" 2>/dev/null; rm -rf "$tmp"' EXIT
+trap '[ -z "$loop" ] || kill "$loop" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 fail() { echo "orch-watch tests: $*" >&2; exit 1; }
 
 [ -L "$watch" ] || fail "plugins/junkd/bin/orch-watch is not a link"
@@ -171,6 +171,7 @@ kill -INT "$loop"
 set +e
 wait "$loop"
 rc=$?
+loop=''
 set -e
 [ $rc = 0 ] || fail "the loop exited $rc on INT, expected 0"
 [ "$(grep -c '^orch-watch · ' "$tmp/loop.out")" -ge 2 ] || fail "the loop printed $(grep -c '^orch-watch · ' "$tmp/loop.out") tables in 2.5 s"
