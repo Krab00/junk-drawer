@@ -10,6 +10,7 @@ import { O, PREFIX, applyOrchSettings, coerce, guardActive, isField, orchGuard, 
 import { orchView, type Els } from './orch-views'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 import { toolsSpawned } from './tools-pane'
+import { dashboardAgentStop, dashboardClose, dashboardOpen, dashboardRetime, dashboardSpawned } from './dashboard.tsx'
 
 type $ = EngineInterface
 
@@ -188,6 +189,7 @@ async function apply($: $, key: OrchField, value: OrchGuard | number | boolean):
   ;(O as Record<string, unknown>)[key] = value
   if (key === 'enabled' || key === 'inject_rules') await writeFlag($, key)
   if (key === 'claude_md') await runClaudeMd($)
+  if (key === 'dashboard_refresh') dashboardRetime($)
   redraw($)
 }
 
@@ -303,6 +305,7 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
     if (deny) return { deny }
     const r = await next(e)
     await toolsSpawned($, e, r)
+    await dashboardSpawned($, e, r)
     return r
   }).catch(($, e, next) => {
     if (next.called) return next(e)
@@ -318,11 +321,18 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
     records.set(e.agent_id, record)
     const name = (await $.agent.list().catch(() => [])).find(a => a.id === e.agent_id)?.name
     if (name) records.set(name, record)
+    await dashboardAgentStop($, e.agent_id, record.tokens)
     return next(e)
   })
 
   // /junkd:orch panel toggles the pane; anything else is the plain skill.
   on('command.run', { command: 'junkd:orch' }, async ($, e, next) => {
+    // `dashboard` and `dashboard close`: /junkd:dashboard's own path (dashboard.tsx).
+    const dash = /^dashboard(?:\s+(open|close))?$/i.exec(e.args.trim())
+    if (dash) {
+      const text = dash[1]?.toLowerCase() === 'close' ? await dashboardClose($) : await dashboardOpen($)
+      return text ? { text } : {}
+    }
     if (e.args.trim() !== 'panel') return next(e)
     await togglePane($)
     return {}
@@ -345,6 +355,7 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
         note = text
         redraw($)
       },
+      dashboard: () => void dashboardOpen($).then(text => { if (text) { note = text; redraw($) } }),
     })
   })
 }

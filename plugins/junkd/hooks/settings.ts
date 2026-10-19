@@ -26,6 +26,8 @@ export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'orch_inject_rules', group: 'orch', field: 'inject_rules', type: 'boolean', title: 'Inject orchestrator rules', default: true, main: false },
   { key: 'orch_rounds', group: 'orch', field: 'rounds', type: 'number', title: 'Fix rounds', default: 3, main: false },
   { key: 'orch_claude_md', group: 'orch', field: 'claude_md', type: 'boolean', title: 'CLAUDE.md pointer block', default: false, main: true },
+  { key: 'orch_dashboard_refresh', group: 'orch', field: 'dashboard_refresh', type: 'number', title: 'Dashboard: write every N seconds', default: 30, main: false },
+  { key: 'orch_dashboard_window_h', group: 'orch', field: 'dashboard_window_h', type: 'number', title: 'Dashboard: timeline window (hours)', default: 24, main: false },
   { key: 'tldr_enabled', group: 'tldr', field: 'enabled', type: 'boolean', title: 'TL;DR: enabled', default: true, main: true },
   { key: 'tldr_terse', group: 'tldr', field: 'terse', type: 'boolean', title: 'Terse mode', default: false, main: true },
   { key: 'tldr_sentences', group: 'tldr', field: 'sentences', type: 'number', title: 'Sentences in a summary', default: 3, main: true },

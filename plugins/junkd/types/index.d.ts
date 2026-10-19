@@ -12,7 +12,9 @@
 
 export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr' | 'ctx' | 'statusline' | 'tools'
 export type JunkdHandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
-export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md'
+export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md' | JunkdOrchDashboardField
+// The orch dashboard's two rows (orch_dashboard_refresh, orch_dashboard_window_h), clamped in code.
+export type JunkdOrchDashboardField = 'dashboard_refresh' | 'dashboard_window_h'
 export type JunkdTldrField = 'enabled' | 'terse' | 'sentences'
 export type JunkdCoreField = 'output_style' | 'cache_check_sessions'
 export type JunkdCtxField = 'enabled' | 'threshold' | 'action' | 'cmd'
