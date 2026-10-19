@@ -1,12 +1,12 @@
-// The /junkd pane's drawing, `$`-free: index.tsx hands it the surface's elements, the pane's data and its actions
-// as closures (the engine follows `$` into no other file). Three sections: the marketplace's plugins (on/off at
-// user scope), the main settings of every enabled plugin that exposes a noun on `$`, the enabled plugins' commands.
+// The /junkd pane's drawing, `$`-free: panel.tsx hands it the surface's elements, the pane's data and its actions
+// as closures. Three sections: the marketplace's plugins (on/off at user scope), the main settings of every group of
+// junkd (core, handoff, orch, tldr), the enabled plugins' commands.
 import type { ElementTable, RenderChildren, RenderInput } from 'claude-code'
 
 export type PluginRow = { name: string; description: string; isSelf: boolean; isUserOn: boolean; isActive: boolean }
-// One `main` entry of a plugin's schema(), with its current value (get) beside it.
+// One `main` row of a group (settings.ts), by its field, with its current value beside it.
 export type Field = { key: string; type: string; title: string; options?: readonly string[]; value: unknown }
-export type Section = { plugin: string; fields: Field[]; hasPane: boolean }
+export type Section = { group: string; fields: Field[]; hasPane: boolean }
 export type Command = { name: string; description: string }
 export type PanelData = {
   marketplace: string
@@ -15,15 +15,15 @@ export type PanelData = {
   plugins: PluginRow[]
   sections: Section[]
   commands: Command[]
-  nouns: readonly string[] // the plugins whose noun the pane reads, for the empty-settings note
+  groups: readonly string[] // every settings group, in order: the Settings title, and the line drawn before the first read
   note: string
   isChanged: boolean
 }
 export type PanelActs = {
   close(): void
   togglePlugin(name: string): void
-  set(plugin: string, key: string, value: unknown): void
-  openPane(plugin: string): void
+  set(group: string, field: string, value: unknown): void
+  openPane(group: string): void
 }
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button' | 'Input'>
 
@@ -57,7 +57,7 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
   const nameWidth = Math.min(24, Math.floor(cols / 3))
   const toggles = plugins.filter(p => !p.isSelf)
   // Hotkeys follow the drawn order: the sections', then each section's fields'.
-  const switches = sections.flatMap(s => s.fields.filter(f => f.type === 'boolean').map(f => `${s.plugin}:${f.key}`))
+  const switches = sections.flatMap(s => s.fields.filter(f => f.type === 'boolean').map(f => `${s.group}:${f.key}`))
 
   const rule = (key: string) => (
     <Box key={key} height={1} overflow="hidden">
@@ -109,14 +109,14 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
       <Button key={key} plain dimColor hotkey={hotkey} label={isOn ? 'off' : 'on'} onPress={flip} />
     </Box>,
   ]
-  // A boolean flips through the plugin's set; a choice picks an option; a number or string is typed, Enter saves
-  // it as typed: the plugin's `set` validates and refuses what does not fit (its reason lands in the note).
-  const control = (plugin: string, f: Field) => {
-    const id = `set:${plugin}:${f.key}`
+  // A boolean flips through the group's set; a choice picks an option; a number or string is typed, Enter saves
+  // it as typed: the group's `set` validates and refuses what does not fit (its reason lands in the note).
+  const control = (group: string, f: Field) => {
+    const id = `set:${group}:${f.key}`
     if (f.type === 'boolean') {
-      return switcher(id, f.value === true, LETTERS[switches.indexOf(`${plugin}:${f.key}`)], () => act.set(plugin, f.key, f.value !== true))
+      return switcher(id, f.value === true, LETTERS[switches.indexOf(`${group}:${f.key}`)], () => act.set(group, f.key, f.value !== true))
     }
-    if (f.options && f.options.length > 0) return choices(els, id, f.options, f.value, v => act.set(plugin, f.key, v))
+    if (f.options && f.options.length > 0) return choices(els, id, f.options, f.value, v => act.set(group, f.key, v))
     if (f.type === 'number' || f.type === 'string') {
       return (
         <Box width={Math.min(24, Math.floor(cols / 3))}>
@@ -126,7 +126,7 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
             value={String(f.value ?? '')}
             onSubmit={value => {
               entered[id] = (entered[id] ?? 0) + 1
-              act.set(plugin, f.key, value)
+              act.set(group, f.key, value)
             }}
           />
         </Box>
@@ -186,21 +186,20 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
         </Box>
 
         <Box flexDirection="column">
-          {title('Settings', "each enabled plugin's main settings, through its $ noun")}
-          {sections.length === 0 &&
-            row('no-settings', '', <Text color={P.dim}>{`no settings: none of ${data.nouns.join(', ')} is loaded`}</Text>)}
+          {title('Settings', `the main settings of ${data.groups.join(', ')}`)}
+          {sections.length === 0 && row('no-settings', '', <Text color={P.dim}>reading…</Text>)}
           {sections.map(s => (
-            <Box key={`group:${s.plugin}`} flexDirection="column" marginTop={1}>
-              {rule(`rule:${s.plugin}`)}
+            <Box key={`group:${s.group}`} flexDirection="column" marginTop={1}>
+              {rule(`rule:${s.group}`)}
               <Box flexDirection="row" height={1} paddingLeft={2}>
                 <Box flexGrow={1}>
                   <Text bold color={P.accent}>
-                    {s.plugin}
+                    {s.group}
                   </Text>
                 </Box>
-                {s.hasPane && <Button key={`pane:${s.plugin}`} plain dimColor label="settings ▸" onPress={() => act.openPane(s.plugin)} />}
+                {s.hasPane && <Button key={`pane:${s.group}`} plain dimColor label="settings ▸" onPress={() => act.openPane(s.group)} />}
               </Box>
-              {s.fields.map(f => row(`setting:${s.plugin}:${f.key}`, f.key, <Text wrap="truncate-end">{f.title}</Text>, control(s.plugin, f)))}
+              {s.fields.map(f => row(`setting:${s.group}:${f.key}`, f.key, <Text wrap="truncate-end">{f.title}</Text>, control(s.group, f)))}
             </Box>
           ))}
         </Box>
