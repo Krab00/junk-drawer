@@ -233,7 +233,7 @@ export function tick(prev: WatchState, snap: Snapshot, now: number): { state: Wa
       finished,
       finishedAt: m.finishedAt,
       inFlight: (call?.inFlight ?? 0) > 0,
-      lastEnd: call?.end ?? snap.spawns[m.id]?.at ?? m.firstSeen,
+      lastEnd: Math.max(call?.end ?? 0, m.moved), // a resume or a call start moves it too
       lastCall: call?.last,
       task: taskOf(m.name, m.cwd),
     })
