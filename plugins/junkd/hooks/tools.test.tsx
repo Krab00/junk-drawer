@@ -213,6 +213,7 @@ function world(on: On, o: Opts = {}) {
     spawnModel: 'claude-haiku-5-5',
     hold: undefined as Promise<void> | undefined, // agent.list waits on it while set
     files: {} as Record<string, string>,
+    asked: 0, // ui.panes queries: a poll tick asks before it loads
   }
   const done = (stdout = '', exitCode = 0, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
   on('ui.open', (_$, e) => {
@@ -221,7 +222,7 @@ function world(on: On, o: Opts = {}) {
     return { value: { isPlaced: true as const } }
   })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); rec.panes = rec.panes.filter(p => p !== e.id); return { value: undefined } })
-  on('ui.panes', () => ({ value: rec.panes.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) as never }))
+  on('ui.panes', () => { rec.asked++; return { value: rec.panes.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) as never } })
   on('ui.focus', () => ({}))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
@@ -717,8 +718,10 @@ test('the poll: every tools_refresh seconds while open; it stops on q, on the pa
   // q
   await onPane($, ui => ui.press({ key: 'close' }))
   expect(rec.closed).toEqual([PANE_ID])
+  let asked = rec.asked
   await rec.clock.advance(600_000)
   expect(gitRuns(rec)).toBe(3)
+  expect(rec.asked).toBe(asked) // no tick left: the timer itself is cancelled
 
   // the person's × (another plugin's close reaches the pane's hook as the engine's does)
   await tools($)
@@ -726,8 +729,10 @@ test('the poll: every tools_refresh seconds while open; it stops on q, on the pa
   expect(gitRuns(rec)).toBe(4)
   await frame($, 'close', { id: PANE_ID })
   expect(rec.panes).toEqual([])
+  asked = rec.asked
   await rec.clock.advance(600_000)
   expect(gitRuns(rec)).toBe(4)
+  expect(rec.asked).toBe(asked)
   await tools($) // closed by the person: the next toggle opens
   await rec.clock.settle()
   expect(rec.panes).toEqual([PANE_ID])
@@ -738,8 +743,11 @@ test('the poll: every tools_refresh seconds while open; it stops on q, on the pa
   await rec.clock.advance(60_000)
   expect(gitRuns(rec)).toBe(6)
   await mount($).then(ui => ui.unmount(), () => undefined)
+  await rec.clock.advance(60_000) // the tick that finds the pane gone ends the poll
+  asked = rec.asked
   await rec.clock.advance(600_000)
   expect(gitRuns(rec)).toBe(6)
+  expect(rec.asked).toBe(asked)
   // the pane is no longer the module's: the next toggle opens it again
   rec.agents = []
   await tools($)
@@ -760,8 +768,10 @@ test('the poll ends at a tick that finds the pane gone with no close; tools_refr
   expect(gitRuns(rec)).toBe(before + 2)
   rec.panes = [] // gone with no ui.close
   await rec.clock.advance(10_000)
+  const asked = rec.asked
   await rec.clock.advance(100_000)
   expect(gitRuns(rec)).toBe(before + 2)
+  expect(rec.asked).toBe(asked) // that tick was the last
   await tools($) // not open any more: the toggle opens
   expect(rec.panes).toEqual([PANE_ID])
 })
