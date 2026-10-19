@@ -14,7 +14,7 @@ export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr'
 export type JunkdHandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
 export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md'
 export type JunkdTldrField = 'enabled' | 'terse' | 'sentences'
-export type JunkdCoreField = 'output_style'
+export type JunkdCoreField = 'output_style' | 'cache_check_sessions'
 export type JunkdKey =
   | `core_${JunkdCoreField}`
   | `handoff_${JunkdHandoffField}`
