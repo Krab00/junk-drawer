@@ -129,10 +129,10 @@ printf 'not json' >"$CLAUDE_CONFIG_DIR/settings.json"
 head -n1 <<<"$(run --once)" | grep -qF 'idle stop after 10 min' || fail "a broken settings.json is not the default"
 rm "$CLAUDE_CONFIG_DIR/settings.json"
 
-# bad arguments: exit 2 with the reason
+# bad arguments: exit 2 with the reason (each with --once, so a lost bound fails here instead of looping)
 for args in '--interval 0' '--interval 3601' '--interval x' '--idle-minutes -3' '--idle-minutes 2.5' '--session ../s1' '--bogus' '--interval'; do
     set +e
-    err=$(run $args 2>&1 >/dev/null)
+    err=$(run $args --once 2>&1 >/dev/null)
     rc=$?
     set -e
     [ $rc = 2 ] || fail "$args: exit $rc, expected 2"
