@@ -144,6 +144,7 @@ done
 for cfgjson in '{"junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' '{"junkd@junk-drawer": {"options": {"core_output_style": "blue"}}}' \
     '{"tldr@junk-drawer": {"options": {"core_output_style": "off"}}}' \
     '{"other@x": {"options": {"core_output_style": "off"}}, "junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' \
+    '{"my-junkd@x": {"options": {"core_output_style": "off"}}, "junkd-x@y": {"options": {"core_output_style": "off"}}, "junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' \
     '{"junkd@a": {"options": {"core_output_style": "ste"}}, "junkd@b": {"options": {"core_output_style": "off"}}}' \
     '{"junkd@a": {"options": {}}, "junkd@b": {"options": {"core_output_style": "off"}}}' \
     '{"junkd@junk-drawer": {"options": {"output_style": "off"}}}' '{"junkd@junk-drawer": {}}' '{}'; do
