@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# orch-status — the orch dashboard's status.js from a shell (any host; on Claude Code the hooks module writes the same
+# file: hooks/dashboard.ts holds the rules this script ports, skills/orch/dashboard/status.sample.js the data contract).
+#   orch-status [--out <dir>] [--sample] [--open]
+#   --out <dir>   write there (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/orch/dashboard/<hash>/, <hash> = host-lib's
+#                 jd_hash8 of the git toplevel of the current folder, `_none` outside a repo: the module's folder)
+#   --sample      write the demo data (status.sample.js) as status.js instead of building it; with --open the
+#                 open flag is left alone, so a session's hooks module does not overwrite the demo
+#   --open        also copy the page (index.html, scale.js) beside it, touch the `open` flag and open index.html
+#                 (`open` on macOS, `xdg-open` elsewhere, else the path is all you get)
+# Prints the written file's path. Built from: the task store (.orch/tasks/*.md frontmatter and the last
+# "## Verification round N" table; files starting with `_` are not tasks), _lessons.md, the SubagentStop records under
+# junkd/orch/_agents/<session>/ (ORCH_SESSION, else the newest folder), the OAuth usage endpoint (macOS keychain; any
+# failure is no usage), git for repo and branch. Env: ORCH_DASHBOARD_WINDOW_H (hours the timeline shows, 1-168; else the
+# orch_dashboard_window_h setting, else 24), ORCH_NOW_MS (the clock), ORCH_STATUS_NO_USAGE=1 (no keychain, no network).
+# Exit 0 with a partial file rather than nothing (no jq: an empty status and a note on stderr); 2 on bad arguments.
+set -u
+
+usage() { echo "usage: orch-status [--out <dir>] [--sample] [--open]" >&2; exit 2; }
+
+out="" sample=0 open=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out) [ $# -ge 2 ] && [ -n "$2" ] || usage; out="$2"; shift 2 ;;
+    --out=*) out="${1#--out=}"; [ -n "$out" ] || usage; shift ;;
+    --sample) sample=1; shift ;;
+    --open) open=1; shift ;;
+    -h|--help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 0 ;;
+    *) usage ;;
+  esac
+done
+
+# This script's real folder (the plugin reaches it through bin -> skills/junkd/bin -> ../../orch/bin links): each link
+# resolved by hand, as macOS has no readlink -f.
+self="$0"
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
+done
+here=$(cd -P "$(dirname "$self")" && pwd)
+dash="$here/../dashboard"
+hostlib="$here/../../handoff/bin/host-lib"
+
+cfg="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+
+if [ -z "$out" ]; then
+  if [ -z "$top" ]; then
+    hash=_none
+  else
+    # shellcheck source=/dev/null
+    . "$hostlib" 2>/dev/null && hash=$(jd_hash8 "$top") || hash=""
+    [[ "$hash" =~ ^[0-9a-f]{8}$ ]] || { echo "orch-status: the repo folder could not be hashed (host-lib: no shasum, md5sum or md5)" >&2; exit 1; }
+  fi
+  out="$cfg/junkd/orch/dashboard/$hash"
+fi
+mkdir -p "$out" || { echo "orch-status: cannot create $out" >&2; exit 1; }
+
+now="${ORCH_NOW_MS:-}"
+[[ "$now" =~ ^[0-9]+$ ]] || now=$(( $(date +%s) * 1000 ))
+
+# write <name> <text>: atomically (a .tmp beside it, then mv), so the page never reads half a file.
+write() {
+  printf '%s' "$2" >"$out/$1.tmp" && mv -f "$out/$1.tmp" "$out/$1" || { rm -f "$out/$1.tmp"; echo "orch-status: cannot write $out/$1" >&2; exit 1; }
+}
+
+# The orch root (orch-state's `root`): the toplevel, or inside a task worktree with no .orch/ of its own the nearest
+# enclosing checkout above a /.worktrees/ segment that has one.
+root="$top"
+if [ -n "$top" ]; then
+  up="$top"
+  while [ ! -e "$up/.orch" ] && [[ "$up" == */.worktrees/* ]]; do up="${up%/.worktrees/*}"; done
+  [ -e "$up/.orch" ] && root="$up"
+fi
+
+# The usage windows from the OAuth endpoint, `{}` on any failure. The token goes to curl on stdin, never in argv.
+usage_json() {
+  [ "${ORCH_STATUS_NO_USAGE:-}" = 1 ] && { echo '{}'; return; }
+  [ "$(uname -s 2>/dev/null)" = Darwin ] || { echo '{}'; return; }
+  local tok body
+  tok=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null) || tok=""
+  [ -n "$tok" ] || { echo '{}'; return; }
+  body=$(printf 'Authorization: Bearer %s\n' "$tok" | curl -s --max-time 5 -H @- -H 'anthropic-beta: oauth-2025-04-20' \
+    https://api.anthropic.com/api/oauth/usage 2>/dev/null) || body=""
+  body=$(jq -c 'def pct: if type == "number" then round else null end;
+    {fiveHour: (.five_hour.utilization | pct), week: (.seven_day.utilization | pct)} | with_entries(select(.value != null))' \
+    <<<"$body" 2>/dev/null) || body=""
+  [ -n "$body" ] && echo "$body" || echo '{}'
+}
+
+# One JSON line per input: {kind: "task", name, text} for each task-dir file that reads, {kind: "agent", id, rec} for
+# each agent record that parses.
+inputs() {
+  local f n adir sid
+  if [ -n "$tasks_dir" ] && [ -d "$tasks_dir" ]; then
+    for f in "$tasks_dir"/*; do
+      [ -f "$f" ] || continue
+      n=${f##*/}
+      jq -Rsc --arg n "$n" '{kind: "task", name: $n, text: .}' 2>/dev/null <"$f"
+    done
+  fi
+  adir="$cfg/junkd/orch/_agents"
+  sid="${ORCH_SESSION:-}"
+  if [ -n "$sid" ]; then
+    [[ "$sid" =~ ^[A-Za-z0-9_-]+$ ]] || sid=""
+  elif [ -d "$adir" ]; then
+    sid=$(ls -t "$adir" 2>/dev/null | while IFS= read -r d; do [ -d "$adir/$d" ] && { echo "$d"; break; }; done)
+  fi
+  if [ -n "$sid" ] && [ -d "$adir/$sid" ]; then
+    for f in "$adir/$sid"/*.json; do
+      [ -f "$f" ] || continue
+      n=${f##*/}
+      jq -c --arg id "${n%.json}" '{kind: "agent", id: $id, rec: .}' "$f" 2>/dev/null
+    done
+  fi
+}
+
+build() {
+  local config="" lessons="" settings="null" branch=""
+  tasks_dir=""
+  if [ -n "$root" ]; then
+    config=$(cat "$root/.orch/config.md" 2>/dev/null) || config=""
+    tasks_dir="$root/$(jq -rn --arg c "$config" '
+      def unquote: sub("^\\s+"; "") | sub("\\s+$"; "") | if length >= 2 and (test("^\".*\"$") or test("^'"'"'.*'"'"'$")) then .[1:-1] else . end;
+      ($c | gsub("\r\n?"; "\n") | split("\n") | map(select(test("^tasks_dir:"))) | first // null) as $l
+      | (if $l == null then "" else $l | sub("^tasks_dir:\\s*"; "") | sub("\\s+#.*$"; "") | unquote | sub("/+$"; "") end) as $d
+      | if ($d | test("^\\.orch/[^/]")) and ($d | split("/") | index("..") | not) then $d else ".orch/tasks" end')"
+    lessons=$(cat "$tasks_dir/_lessons.md" 2>/dev/null) || lessons=""
+  fi
+  [ -n "$top" ] && { branch=$(git -C "$top" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=""; }
+  settings=$(jq -cs 'if length == 1 then .[0] else null end' "$cfg/settings.json" 2>/dev/null) || settings=null
+  [ -n "$settings" ] || settings=null
+  local repo="${root:-$top}"
+  repo="${repo%/}"; repo="${repo##*/}"
+  inputs | jq -sc \
+    --argjson now "$now" --arg repo "$repo" --arg branch "$branch" --arg lessons "$lessons" \
+    --arg winenv "${ORCH_DASHBOARD_WINDOW_H-}" --arg haswin "${ORCH_DASHBOARD_WINDOW_H+1}" \
+    --argjson settings "$settings" --argjson usage "$(usage_json)" '
+    def trim: sub("^\\s+"; "") | sub("\\s+$"; "");
+    def unquote: trim | if length >= 2 and (test("^\".*\"$") or test("^'"'"'.*'"'"'$")) then .[1:-1] else . end;
+    def lines: gsub("\r\n?"; "\n") | split("\n");
+    # the hours the timeline shows: rounded, 1-168; anything but a number is 24
+    def hours: (if type == "number" then . elif type == "string" then (try (trim | tonumber) catch null) else null end) as $n
+      | if $n == null or ($n | isinfinite) or ($n | isnan) then 24 else [168, ([1, ($n | round)] | max)] | min end;
+    # [a, b], a, b or a block list
+    def listof($inline; $block): ($inline | trim) as $v
+      | (if $v == "" then $block else ($v | gsub("^\\[|\\]$"; "") | split(",")) end) | map(unquote) | map(select(. != ""));
+    # the first --- block: id, title, status, deps; null without one (or an unclosed one)
+    def task($file):
+      lines as $ls
+      | if ($ls[0] | trim) != "---" then null
+        else ($ls[1:] | index(["---"])) as $c
+        | if $c == null then null
+          else (reduce $ls[1:$c + 1][] as $l ({fm: {}, blocks: {}, last: ""};
+              ([$l | capture("^\\s+-\\s*(?<v>.*)$")] | .[0]) as $item
+              | if $item != null and .last != "" then .blocks[.last] += [$item.v]
+                else ([$l | capture("^(?<k>[A-Za-z_][A-Za-z0-9_]*):(?<v>.*)$")] | .[0]) as $kv
+                | if $kv == null then . else .last = $kv.k | .fm[$kv.k] = ($kv.v | sub("\\s+#.*$"; "")) end
+                end)) as $s
+          | {id: ((($s.fm.id // "") | unquote) as $i | if $i == "" then ($file | sub("\\.md$"; ""; "i")) else $i end),
+             title: (($s.fm.title // "") | unquote),
+             status: ((($s.fm.status // "") | unquote) as $st | if $st == "" then "todo" else $st end),
+             deps: listof($s.fm.deps // ""; $s.blocks.deps // [])}
+          end
+        end;
+    # the last "## Verification round N" section: N, the AC and ACX rows as [passed, all], the FAIL/PM-REVIEW note
+    def verdicts:
+      lines as $ls
+      | ([$ls | to_entries[] | select(.value | test("^##\\s+Verification round\\s+\\d+\\b"; "i"))] | last) as $h
+      | if $h == null then null
+        else ($h.value | capture("round\\s+(?<n>\\d+)"; "i").n | tonumber) as $round
+        | ($ls[($h.key + 1):] | (map(test("^##\\s")) | index(true)) as $end | if $end == null then . else .[:$end] end) as $sec
+        | (reduce ($sec[] | select(trim | startswith("|")) | trim | gsub("^\\||\\|$"; "") | split("|") | map(trim)) as $row
+            ({at: -1, ac: [0, 0], acx: [0, 0], fail: [], pm: []};
+            if .at < 0 then
+              (if (($row[0] // "") | test("^criterion$"; "i")) or (($row[0] // "") | test("^item$"; "i"))
+               then .at = ([$row | to_entries[] | select(.value | test("^verdict$"; "i")) | .key] | first // -1) else . end)
+            elif ($row | all(test("^:?-+:?$"))) then .
+            else ($row[0] // "") as $crit
+              | (($row[.at] // $row[-1] // "") | ascii_upcase) as $v
+              | ($crit | sub("\\s.*$"; "")) as $name
+              | (if ($crit | test("^ACX\\d"; "i")) then "acx" elif ($crit | test("^AC\\d"; "i")) then "ac" else null end) as $b
+              | (if $b == null then . else .[$b][1] += 1 | (if ($v | startswith("PASS")) then .[$b][0] += 1 else . end) end)
+              | if ($v | startswith("FAIL")) then .fail += [$name] elif ($v | startswith("PM-REVIEW")) then .pm += [$name] else . end
+            end)) as $r
+        | ([if ($r.fail | length) > 0 then "FAIL: \($r.fail | join(", "))" else empty end,
+            if ($r.pm | length) > 0 then "PM-REVIEW: \($r.pm | join(", "))" else empty end] | join(" · ")) as $note
+        | {round: $round}
+          + (if $r.ac[1] > 0 then {ac: $r.ac} else {} end)
+          + (if $r.acx[1] > 0 then {acx: $r.acx} else {} end)
+          + (if $note != "" then {note: "round \($round): \($note)"} else {} end)
+        end;
+    # _lessons.md: each "## T<n> (date)" heading and the first sentence of its paragraph, newest first
+    def lessons:
+      lines as $ls
+      | def body($j; $acc):
+          if $j >= ($ls | length) or ($ls[$j] | test("^##\\s")) then $acc
+          elif ($ls[$j] | trim) == "" then (if $acc != "" then $acc else body($j + 1; $acc) end)
+          else body($j + 1; $acc + (if $acc != "" then " " else "" end) + ($ls[$j] | trim)) end;
+        [range(0; $ls | length) as $i | ($ls[$i] | capture("^##\\s+(?<t>\\S+)")?) as $m | select($m != null)
+         | body($i + 1; "") as $b | ((($b | capture("^(?<s>.*?[.!?])(\\s|$)")?) | .s) // $b) as $s
+         | select($s != "") | {task: $m.t, text: $s}] | reverse;
+    def column: (. | trim | ascii_downcase) as $s
+      | if $s == "done" or $s == "blocked" or $s == "todo" or $s == "in_progress" or $s == "verify" then $s else "todo" end;
+    def ctx: if type != "number" or isinfinite or isnan then "—" elif . < 1000 then (round | tostring) else "\((. / 1000) | round)k" end;
+    # file names in the numeric order (T2 before T10)
+    def bykey: [scan("\\d+|\\D+") | if test("^\\d") then [0, tonumber] else [1, ascii_downcase] end];
+    (if $haswin == "1" then $winenv else ($settings | (.pluginConfigs? // {}) | [to_entries[]? | select(.key | startswith("junkd@"))][0].value.options.orch_dashboard_window_h? // null) end
+      | hours) as $h
+    | {
+      mock: false,
+      generatedAt: $now,
+      repo: $repo,
+      branch: $branch,
+      window: {start: ($now - $h * 3600000), end: $now},
+      tasks: [map(select(.kind == "task" and (.name | test("\\.md$"; "i")) and (.name | startswith("_") | not)))
+        | sort_by(.name | bykey)[]
+        | (. as $f | [$f.text | task($f.name)] | .[0]) as $t | select($t != null)
+        | (.text | verdicts) as $v
+        | {id: $t.id, title: $t.title, column: ($t.status | column)}
+          + (if ($t.deps | length) > 0 then {deps: $t.deps} else {} end)
+          + (if $v != null then $v else {} end)],
+      agents: [.[] | select(.kind == "agent" and (.rec | type) == "object")
+        | {name: .id, role: ((.rec.type // "") | tostring | sub("^.*:"; "")), model: "—", status: "done", lastCallSec: null,
+           ctx: (.rec.tokens | ctx)}],
+      events: [],
+      lessons: ($lessons | lessons),
+      usage: $usage,
+      watchdog: {}
+    }'
+}
+
+name=status.js
+if [ "$sample" = 1 ]; then
+  text=$(cat "$dash/status.sample.js") || { echo "orch-status: no $dash/status.sample.js" >&2; exit 1; }
+  # $(...) drops the trailing newline: the copy keeps the file's own bytes
+  [ -n "$(tail -c1 "$dash/status.sample.js")" ] || text="$text"$'\n'
+  write "$name" "$text"
+else
+  if command -v jq >/dev/null 2>&1 && json=$(build) && [ -n "$json" ]; then
+    write "$name" "window.ORCH = $json;"$'\n'
+  else
+    command -v jq >/dev/null 2>&1 || echo "orch-status: jq is not installed: status.js holds no tasks, agents or lessons (install jq)" >&2
+    command -v jq >/dev/null 2>&1 && echo "orch-status: the status could not be built: status.js holds an empty status" >&2
+    write "$name" 'window.ORCH = {"mock":false,"generatedAt":'"$now"',"tasks":[],"agents":[],"events":[],"lessons":[],"usage":{},"watchdog":{}};'$'\n'
+  fi
+fi
+
+if [ "$open" = 1 ]; then
+  cp -f "$dash/orch-dashboard.html" "$out/index.html" && cp -f "$dash/scale.js" "$out/scale.js" ||
+    echo "orch-status: the page could not be copied from $dash" >&2
+  [ "$sample" = 1 ] || : >"$out/open"
+  page="$out/index.html"
+  if [ "$(uname -s 2>/dev/null)" = Darwin ] && command -v open >/dev/null 2>&1; then
+    open "$page" >/dev/null 2>&1 || echo "orch-status: open $page in a browser" >&2
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$page" >/dev/null 2>&1 || echo "orch-status: open $page in a browser" >&2
+  else
+    echo "orch-status: open $page in a browser" >&2
+  fi
+fi
+echo "$out/$name"
+exit 0
