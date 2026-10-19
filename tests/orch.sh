@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# junkd's orch tests: the SessionStart rule-sheet hook, the agent roster, and the bin scripts
+# junkd's orch tests: the SessionStart rule-sheet hook, the SubagentStop agent records, the agent roster, and the bin scripts
 # (orch-state list/set/new/reset-stale, orch-worktree add/slot/remove). Run: bash tests/orch.sh
 # (tests/smoke.sh runs it too). Every check is an explicit `if`/`[ ]` so `set -e` catches it.
 set -euo pipefail
@@ -220,6 +220,170 @@ mkdir -p "$tmp/nosheet/scripts"
 cp "$plugin/skills/orch/scripts/orch-context.sh" "$tmp/nosheet/scripts/"
 missing=$(printf '{}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$tmp/nosheet/scripts/orch-context.sh") || fail "missing sheet: hook exited non-zero"
 [ -z "$missing" ] || fail "missing sheet: hook printed output"
+
+# ---------------------------------------------------------------- agent records: the SubagentStop hook (T12 AC1)
+stop="$plugin/scripts/orch-agent-stop.sh"
+jq -e '.hooks.SubagentStop[0].hooks[] | select(.type == "command" and (.command | contains("/scripts/orch-agent-stop.sh")))' \
+    "$plugin/hooks/hooks.json" >/dev/null || fail "hooks.json has no SubagentStop hook for scripts/orch-agent-stop.sh"
+[ -x "$plugin/skills/orch/scripts/orch-agent-stop.sh" ] || fail "orch-agent-stop.sh is not executable"
+[ -L "$plugin/skills/junkd/scripts/orch-agent-stop.sh" ] || fail "skills/junkd/scripts/orch-agent-stop.sh must be a link into skills/orch/scripts"
+rcfg="$tmp/rcfg"
+export CLAUDE_CONFIG_DIR="$rcfg"
+agents="$rcfg/junkd/orch/_agents"
+tr_dir="$tmp/transcripts"
+mkdir -p "$tr_dir"
+usage() { printf '{"type":"assistant","message":{"role":"assistant","usage":%s}}\n' "$1"; }
+# the last usage record counts (input + cache-write + cache-read; output is no context), its last iteration when
+# it has any; a line that does not parse, a usage that is no object and a line that only mentions "usage" are skipped
+{
+    usage '{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":900}'
+    printf '{"type":"user","message":{"content":"the usage of x"}}\n'
+    usage '{"input_tokens":10,"cache_creation_input_tokens":200,"cache_read_input_tokens":3000,"output_tokens":5}'
+    printf 'not json at all, "usage"\n'
+    printf '{"type":"assistant","message":{"usage":"none"}}\n'
+} > "$tr_dir/plain.jsonl"
+{
+    usage '{"input_tokens":7}'
+    printf '{"broken": "usage"\n'
+    usage '{"input_tokens":1,"cache_read_input_tokens":2,"iterations":[{"input_tokens":5000},{"input_tokens":40,"cache_creation_input_tokens":500,"cache_read_input_tokens":6000,"output_tokens":7}]}'
+} > "$tr_dir/iter.jsonl"
+usage '{"input_tokens":30,"cache_read_input_tokens":12,"iterations":[]}' > "$tr_dir/emptyiter.jsonl"
+usage '{"input_tokens":"500","cache_creation_input_tokens":null,"cache_read_input_tokens":8}' > "$tr_dir/oddtypes.jsonl"
+printf '{"type":"user"}\n' > "$tr_dir/nousage.jsonl"
+# stop_event <session_id JSON> <agent_id JSON> <transcript> [agent_type]: the hook input, the ids as given (JSON values)
+stop_event() {
+    printf '{"session_id":%s,"transcript_path":"/x/main.jsonl","cwd":"/repo","hook_event_name":"SubagentStop","stop_hook_active":false,"agent_id":%s,"agent_transcript_path":"%s","agent_type":"%s","last_assistant_message":"done"}' \
+        "$1" "$2" "$3" "${4:-junkd:implementer}"
+}
+# stop <session_id> <agent_id> <transcript> [agent_type]: runs the hook, which must exit 0 and print nothing
+stop() {
+    local out
+    out=$(stop_event "\"$1\"" "\"$2\"" "$3" "${4:-}" | "$stop") || fail "stop $1/$2: exited non-zero"
+    [ -z "$out" ] || fail "stop $1/$2: printed $out"
+}
+records() { [ -d "$agents" ] && find "$agents" -type f | sort || true; }
+# want <file> <record>: the file holds exactly that record
+want() { [ -f "$1" ] || fail "no record $1"; [ "$(cat "$1")" = "$2" ] || fail "record $1: $(cat "$1"), expected $2"; }
+rm -rf "$rcfg"
+stop s1 a1 "$tr_dir/plain.jsonl"
+want "$agents/s1/a1.json" '{"type":"junkd:implementer","tokens":3210}'
+[ "$(records)" = "$agents/s1/a1.json" ] || fail "an unnamed agent wrote more than its id's record: $(records)"
+stop s1 a2 "$tr_dir/iter.jsonl" junkd:verify-coordinator
+want "$agents/s1/a2.json" '{"type":"junkd:verify-coordinator","tokens":6540}'
+stop s1 a3 "$tr_dir/emptyiter.jsonl"
+want "$agents/s1/a3.json" '{"type":"junkd:implementer","tokens":42}'
+stop s1 a4 "$tr_dir/oddtypes.jsonl"
+want "$agents/s1/a4.json" '{"type":"junkd:implementer","tokens":8}'
+# no usage record, or no transcript at all: the type is still recorded, the tokens unknown
+stop s1 a5 "$tr_dir/nousage.jsonl"
+want "$agents/s1/a5.json" '{"type":"junkd:implementer","tokens":null}'
+stop s1 a6 "$tr_dir/missing.jsonl"
+want "$agents/s1/a6.json" '{"type":"junkd:implementer","tokens":null}'
+# a later stop of the same agent replaces its record
+stop s1 a1 "$tr_dir/iter.jsonl"
+want "$agents/s1/a1.json" '{"type":"junkd:implementer","tokens":6540}'
+# each session in its own folder
+stop s-2_B a1 "$tr_dir/emptyiter.jsonl"
+want "$agents/s-2_B/a1.json" '{"type":"junkd:implementer","tokens":42}'
+want "$agents/s1/a1.json" '{"type":"junkd:implementer","tokens":6540}'
+
+# a named agent (the .meta.json beside its transcript) gets a second, identical record under its name; a name that
+# is no plain id, an empty or non-string one, or no meta file adds nothing
+cp "$tr_dir/plain.jsonl" "$tr_dir/named.jsonl"
+printf '{"agentType":"junkd:implementer","name":"impl-T12_b"}' > "$tr_dir/named.meta.json"
+rm -rf "$rcfg"
+stop s1 n1 "$tr_dir/named.jsonl"
+want "$agents/s1/n1.json" '{"type":"junkd:implementer","tokens":3210}'
+want "$agents/s1/impl-T12_b.json" '{"type":"junkd:implementer","tokens":3210}'
+for meta in '{"name":"impl\n"}' '{"name":"../escape"}' '{"name":"a/b"}' '{"name":"a b"}' '{"name":"a.b"}' '{"name":""}' '{"name":5}' '{"name":["x"]}' '{}' 'not json' NOFILE; do
+    rm -rf "$rcfg"
+    if [ "$meta" = NOFILE ]; then rm -f "$tr_dir/named.meta.json"; else printf '%s' "$meta" > "$tr_dir/named.meta.json"; fi
+    stop s1 n1 "$tr_dir/named.jsonl"
+    [ "$(records)" = "$agents/s1/n1.json" ] || fail "meta $meta: expected only the id's record, got $(records)"
+done
+[ ! -e "$tmp/escape.json" ] && [ ! -e "$agents/escape.json" ] || fail "a ../ name was written outside the session folder"
+
+# ids that are no plain id ([A-Za-z0-9_-]+): nothing is written, exit 0
+for pair in '"../x" "a1"' '"a/b" "a1"' '"" "a1"' 'null "a1"' '5 "a1"' '"s1" "../x"' '"s1" "a.b"' '"s1" "a b"' '"s1" ""' \
+    '"s1" null' '"s1" 7' '"s1" ["a1"]' '"s1\nx" "a1"' '"s1" "a1\n"'; do
+    rm -rf "$rcfg"
+    out=$(stop_event ${pair% *} ${pair#* } "$tr_dir/plain.jsonl" | "$stop") || fail "ids $pair: exited non-zero"
+    [ -z "$out" ] || fail "ids $pair: printed output"
+    [ -z "$(records)" ] || fail "ids $pair: wrote $(records)"
+done
+# no session_id or agent_id key, an input that does not parse, no input
+for input in '{"agent_id":"a1","agent_transcript_path":"x"}' '{"session_id":"s1"}' 'not json' ''; do
+    rm -rf "$rcfg"
+    printf '%s' "$input" | "$stop" || fail "input $input: exited non-zero"
+    [ -z "$(records)" ] || fail "input $input: wrote $(records)"
+done
+
+# the gate, from settings.json (the first junkd@ entry): orch_enabled anything but true, or orch_guard off (any case,
+# padded), writes nothing; no file, no junkd@ entry, no key, a file that does not parse = on
+rsettings="$rcfg/settings.json"
+# gated <settings or NOFILE> <none|record>
+gated() {
+    rm -rf "$rcfg"; mkdir -p "$rcfg"
+    [ "$1" = NOFILE ] || printf '%s' "$1" > "$rsettings"
+    stop s1 g1 "$tr_dir/plain.jsonl"
+    if [ "$2" = none ]; then [ -z "$(records)" ] || fail "settings $1: expected no record, got $(records)"
+    else want "$agents/s1/g1.json" '{"type":"junkd:implementer","tokens":3210}'; fi
+}
+for key in 'junkd@junk-drawer' 'junkd@other'; do
+    for v in false null 0 '"true"' '"on"' '{}'; do
+        gated "{\"pluginConfigs\":{\"$key\":{\"options\":{\"orch_enabled\":$v}}}}" none
+    done
+    for g in '"off"' '"OFF"' '" Off "' '"off\n"'; do
+        gated "{\"pluginConfigs\":{\"$key\":{\"options\":{\"orch_enabled\":true,\"orch_guard\":$g}}}}" none
+        gated "{\"pluginConfigs\":{\"$key\":{\"options\":{\"orch_guard\":$g}}}}" none
+    done
+    gated "{\"pluginConfigs\":{\"$key\":{\"options\":{\"orch_enabled\":true}}}}" record
+    for g in '"fable"' '"always"' '"of"' '"offx"' '"o ff"' 'null' 'false'; do
+        gated "{\"pluginConfigs\":{\"$key\":{\"options\":{\"orch_enabled\":true,\"orch_guard\":$g}}}}" record
+    done
+done
+# the first junkd@ entry decides, both ways
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":false}},"junkd@b":{"options":{"orch_enabled":true}}}}' none
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":true}},"junkd@b":{"options":{"orch_enabled":false}}}}' record
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_guard":"off"}},"junkd@b":{"options":{"orch_guard":"fable"}}}}' none
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_guard":"fable"}},"junkd@b":{"options":{"orch_guard":"off"}}}}' record
+# no value of junkd's: on
+for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"orch_enabled":false,"orch_guard":"off"}}}}' \
+    '{"pluginConfigs":{"junkdx@x":{"options":{"orch_enabled":false}}}}' '{"pluginConfigs":{"xjunkd@x":{"options":{"orch_guard":"off"}}}}' \
+    '{"pluginConfigs":{"orch@junk-drawer":{"options":{"enabled":false,"guard":"off"}}}}' \
+    '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"enabled":false,"guard":"off"}}}}' '{"pluginConfigs":{"junkd@junk-drawer":{}}}' \
+    '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_rounds":5}}}}' '{"pluginConfigs":null}' '{"theme":"dark"}' '{"pluginConfigs":' 'NOFILE'; do
+    gated "$content" record
+done
+# the module's flag files are not this hook's gate: only settings.json is
+mkdir -p "$rcfg/junkd" && : > "$rcfg/junkd/orch-off"
+stop s1 f1 "$tr_dir/plain.jsonl"
+want "$agents/s1/f1.json" '{"type":"junkd:implementer","tokens":3210}'
+# with no CLAUDE_CONFIG_DIR, the records and the settings are under $HOME/.claude
+rm -rf "$tmp/rhome"
+stop_event '"s1"' '"h1"' "$tr_dir/plain.jsonl" | env -u CLAUDE_CONFIG_DIR HOME="$tmp/rhome" "$stop" || fail "HOME: exited non-zero"
+want "$tmp/rhome/.claude/junkd/orch/_agents/s1/h1.json" '{"type":"junkd:implementer","tokens":3210}'
+rm -rf "$tmp/rhome"; mkdir -p "$tmp/rhome/.claude"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_guard":"off"}}}}' > "$tmp/rhome/.claude/settings.json"
+stop_event '"s1"' '"h1"' "$tr_dir/plain.jsonl" | env -u CLAUDE_CONFIG_DIR HOME="$tmp/rhome" "$stop" || fail "HOME guard off: exited non-zero"
+[ ! -e "$tmp/rhome/.claude/junkd" ] || fail "HOME settings guard off: a record was written"
+# through every path the hook is reached by: the plugin root's link, skills/junkd's link, the real file
+for via in "$plugin/scripts/orch-agent-stop.sh" "$plugin/skills/junkd/scripts/orch-agent-stop.sh" "$plugin/skills/orch/scripts/orch-agent-stop.sh"; do
+    rm -rf "$rcfg"
+    stop_event '"s1"' '"v1"' "$tr_dir/plain.jsonl" | "$via" || fail "via $via: exited non-zero"
+    want "$agents/s1/v1.json" '{"type":"junkd:implementer","tokens":3210}'
+done
+# a folder it cannot write (the config dir is a file): nothing, exit 0
+rm -rf "$rcfg"; : > "$rcfg"
+stop s1 w1 "$tr_dir/plain.jsonl"
+rm -f "$rcfg"
+# no jq on PATH (the script adds nothing to it): nothing is written, exit 0
+mkdir -p "$tmp/nojq-stop"
+for t in bash cat grep tail mkdir; do ln -sf "$(command -v "$t")" "$tmp/nojq-stop/$t"; done
+rm -rf "$rcfg"
+stop_event '"s1"' '"j1"' "$tr_dir/plain.jsonl" | PATH="$tmp/nojq-stop" "$stop" || fail "no jq: exited non-zero"
+[ -z "$(records)" ] || fail "no jq: wrote $(records)"
+export CLAUDE_CONFIG_DIR="$tmp/cfg"
 
 # ---------------------------------------------------------------- agents (AC1)
 for agent in implementer verify-coordinator ui-reviewer orch-ops lead-implementer test-planner test-reviewer; do
