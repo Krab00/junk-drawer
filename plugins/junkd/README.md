@@ -488,7 +488,7 @@ main session only:
   (`scripts/` → `skills/junkd/scripts/`, whose `orch-context.sh` links to `../../orch/scripts/`) and
   follows them to find the sheet beside the real file.
 
-`tests/orch.sh` (run by `tests/smoke.sh`) covers the hook, the agent roster and the bin scripts.
+`tests/orch.sh` (run by `tests/smoke.sh`) covers the hook, the agent records hook, the agent roster and the bin scripts.
 
 ### The main-loop guard (Claude Code only)
 
@@ -509,9 +509,9 @@ Every denial starts with `Orchestrator mode (orch):` and says what to do instead
 |---|---|
 | `ListAgents`, `TaskStop`, `AskUserQuestion`, `ToolSearch`, `Skill`, `CronList`, `CronDelete`, `EnterPlanMode`, `ExitPlanMode`, `PushNotification`, `RemoteTrigger` | always |
 | `Agent` | with `model: opus\|sonnet\|haiku`, or as a `junkd:` agent type with no `model` (theirs is pinned). Never as a fork or with `inherit`. With a Fable model only when `allow_fable_agents` is on. An `agent.spawn` hook checks the resolved model again (a fork, `inherit`, or no model on a non-`junkd:` type would run on the main loop's model). |
-| `SendMessage` | except to a reviewer (`verify-coordinator`, `ui-reviewer`, `test-planner`, `test-reviewer`, bare or `junkd:`: spawn a new one), to an agent past `implementer_ctx_k` k tokens of context, or to an agent nobody knows. A stopped agent is known by its `SubagentStop`: the module keeps its type and the context tokens of its transcript's last usage record, by id and by name. |
+| `SendMessage` | except to a reviewer (`verify-coordinator`, `ui-reviewer`, `test-planner`, `test-reviewer`, bare or `junkd:`: spawn a new one), to an agent past `implementer_ctx_k` k tokens of context, or to an agent nobody knows. A stopped agent is known by its `SubagentStop` record (see [Agent records](#agent-records)): its type and the context tokens of its transcript's last usage record, by id and by name. |
 | `Read` | in the session scratchpad, the repo's task store `<repo>/.orch/` (`<repo>` = git's toplevel of the session's cwd; none outside a repo) and, in the config dir (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), `orch/`, `handoffs/` and `projects/*/memory/`. The path must be a plain absolute ASCII path (no `~`, no relative path, no surrounding spaces, no non-ASCII letters) with no `..` segment; symlinks and case aliases are resolved first and where it lands must pass too, and a path that cannot be placed is denied. |
-| `Write` | in the same places as `Read`, except that in the task store only a `.md` file (task files, `_lessons.md`) and never an existing `.orch/config.md` (its `tasks_dir` steers the bin scripts; a new one passes as any new `.md` does), or to a new `.md` file. Never a path with a `..` segment, never to settings, Claude Code config (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, anything in a `.claude/` dir, any plugin's `agents`, `commands`, `skills`, `hooks`, `rules`, `output-styles`, a `.claude-plugin/` dir), the module's own control files `junkd/orch-off` and `junkd/orch-rules-off` (or any path under those names) or this plugin. The path must be a plain absolute ASCII path; symlinks and case aliases are resolved first, and a path that cannot be placed (a link to nothing, a folder that does not resolve) is denied. |
+| `Write` | in the same places as `Read`, except that in the task store only a `.md` file (task files, `_lessons.md`) and never an existing `.orch/config.md` (its `tasks_dir` steers the bin scripts; a new one passes as any new `.md` does), or to a new `.md` file. Never a path with a `..` segment, never to settings, Claude Code config (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, anything in a `.claude/` dir, any plugin's `agents`, `commands`, `skills`, `hooks`, `rules`, `output-styles`, a `.claude-plugin/` dir), the module's own control files `junkd/orch-off` and `junkd/orch-rules-off` (or any path under those names), the agent records `junkd/orch/_agents/` (any case, any path under it) or this plugin. The path must be a plain absolute ASCII path; symlinks and case aliases are resolved first, and a path that cannot be placed (a link to nothing, a folder that does not resolve) is denied. |
 | `Bash`, `Monitor` | only to run one of this plugin's own `bin/` scripts, by its path under the plugin root, with plain arguments (no quotes, `$`, backticks, `;`, `&`, `\|`, `<`, `>`) |
 | `CronCreate`, `ScheduleWakeup` | only to schedule `/junkd:orch` (or bare `/orch`), `/loop` of an allowed prompt, or a plain prompt, or to stop one |
 | anything else (`Edit`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `LSP`, MCP tools, …) | never |
@@ -520,6 +520,25 @@ If the guard itself throws, the call is denied (`Orchestrator mode (orch): guard
 gaps: a `context: fork` skill raises no spawn event, so the guard never sees it; a plugin loaded
 from outside a `plugins/` path is not covered by the Write rule. The exact rules are in
 `hooks/orch-lib.ts`, the tests in `hooks/orch.test.tsx` (`claude plugin test plugins/junkd`).
+
+#### Agent records
+
+`hooks/hooks.json` registers `scripts/orch-agent-stop.sh` (real file in `skills/orch/scripts/`) as a
+`SubagentStop` hook. At every subagent stop it writes the agent's record,
+`{"type":"<agent type>","tokens":<n>}`, to
+`~/.claude/junkd/orch/_agents/<session id>/<agent id>.json` (under `CLAUDE_CONFIG_DIR` when set), and the same
+record to `<name>.json` beside it for a named agent (the name from the `.meta.json` beside its transcript).
+`tokens` is the input + cache-write + cache-read tokens of the last usage record in the agent's transcript (its
+last iteration when that request ran server tools), `null` when there is none. A session id, agent id or name
+that is not plain (`[A-Za-z0-9_-]+`) is ignored, so a record never lands outside its folder. The hook reads
+`orch_enabled` and `orch_guard` from `settings.json` (the first `junkd@` entry): with `orch_enabled` anything but
+`true`, or `orch_guard` `off`, it writes nothing; no file, no entry or no key counts as on. It always exits 0.
+
+The `SendMessage` rule reads the target's record file first (this session's folder, by the agent's id, or by
+the name used when the agent list does not know it) and falls back to what the module itself kept at the
+`SubagentStop`. So the context cap still holds after `/reload-plugins`, which empties the module's memory. The
+main loop may not write into `junkd/orch/_agents/`. Records are never pruned: each is under 100 bytes, and old
+session folders can be removed by hand.
 
 ##### Deliberate differences from the guard this one was ported from
 
@@ -533,14 +552,13 @@ Row by row, against the table above:
   holds: the `CronCreate` rule (only `/junkd:orch`, `/loop` of an allowed prompt, a plain prompt, or a
   stop). Same behaviour, no shadowed entry.
 - **`SendMessage`:** `test-planner` and `test-reviewer` count as reviewers too (they exist only in
-  this plugin), so they are always spawned fresh. The `SubagentStop` records are kept in the
-  module's memory, not on disk: after `/reload-plugins`, an agent that stopped earlier has no token
-  count, so the context cap is not checked for it.
+  this plugin), so they are always spawned fresh. The record on disk comes first, and the module's own
+  `SubagentStop` record is the fallback when no file holds one (new here).
 - **`Read`, `Write`:** the task store is `<repo>/.orch/` in the project, not a folder in the config
   dir, so the repo's `.orch/` is a root of its own (new here). Writes there take a `.md` only and
   never an existing `config.md`. The config dir's `orch/` stays a root for scratch state.
 - **`Write`:** stricter on `.claude/`: anything in any `.claude/` dir is refused, not only its
-  loaded folders. In place of protecting a records folder, the module's own control files
+  loaded folders. Beside the records folder `junkd/orch/_agents/`, the module's own control files
   `junkd/orch-off` and `junkd/orch-rules-off` (and any path under them) are refused.
 - **`Bash`, `Monitor`:** no separate `..` check on the script path. The script name may not hold a
   `/`, so a `..` cannot lead out of `bin/`.
