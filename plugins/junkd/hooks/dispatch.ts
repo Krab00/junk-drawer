@@ -9,8 +9,9 @@ import { orchGet, orchHide, orchOpen, orchSet, orchShow } from './orch'
 import { SCHEMA, entryOf } from './settings'
 import { statuslineGet, statuslineHide, statuslineOpen, statuslineSet, statuslineShow } from './statusline'
 import { tldrGet, tldrSet } from './tldr'
+import { toolsGet, toolsHide, toolsOpen, toolsSet, toolsShow } from './tools-pane'
 
-export type FeaturePane = 'handoff' | 'orch' | 'statusline'
+export type FeaturePane = 'handoff' | 'orch' | 'statusline' | 'tools'
 
 // One row's current value. The key is a row of SCHEMA (the caller checked).
 export async function getSetting($: $, key: JunkdKey): Promise<JunkdValue> {
@@ -20,6 +21,7 @@ export async function getSetting($: $, key: JunkdKey): Promise<JunkdValue> {
   if (group === 'orch') return orchGet($, field)
   if (group === 'ctx') return ctxGet($, field)
   if (group === 'statusline') return statuslineGet($, field)
+  if (group === 'tools') return toolsGet($, field)
   return tldrGet($, field)
 }
 
@@ -31,6 +33,7 @@ export async function setSetting($: $, key: JunkdKey, raw: unknown): Promise<Set
   if (group === 'orch') return orchSet($, field, raw)
   if (group === 'ctx') return ctxSet($, field, raw)
   if (group === 'statusline') return statuslineSet($, field, raw)
+  if (group === 'tools') return toolsSet($, field, raw)
   return tldrSet($, field, raw)
 }
 
@@ -44,15 +47,18 @@ export async function allSettings($: $): Promise<Record<JunkdKey, JunkdValue>> {
 export async function showPane($: $, pane: FeaturePane, input: ShowInput = {}): Promise<void> {
   if (pane === 'handoff') return handoffShow($, input)
   if (pane === 'statusline') return statuslineShow($, input)
+  if (pane === 'tools') return toolsShow($, input)
   return orchShow($, input)
 }
 export async function hidePane($: $, pane: FeaturePane, input: HideInput = {}): Promise<void> {
   if (pane === 'handoff') return handoffHide($, input)
   if (pane === 'statusline') return statuslineHide($, input)
+  if (pane === 'tools') return toolsHide($, input)
   return orchHide($, input)
 }
 export async function openPane($: $, pane: FeaturePane, input: OpenInput = {}): Promise<void> {
   if (pane === 'handoff') return handoffOpen($, input)
   if (pane === 'statusline') return statuslineOpen($, input)
+  if (pane === 'tools') return toolsOpen($, input)
   return orchOpen($, input)
 }

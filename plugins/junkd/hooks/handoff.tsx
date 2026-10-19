@@ -11,6 +11,7 @@ import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
 import { VIEWS } from './handoff-views'
+import { toolsTurnEnd } from './tools-pane'
 
 const PANE = 'ahandoff'
 const EDGE = 2 // empty columns at the pane's right edge (a docked pane's last column may not show)
@@ -483,7 +484,9 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     return r
   })
 
+  // The module's one turn.complete hook: the tools pane reads its tree again at every turn's end, first.
   on('turn.complete', async ($, e, next) => {
+    toolsTurnEnd($)
     if (!S.armed || e.agentId) return next(e)
     // ponytail: the host names no error kind here — an error with the 5h window at 99%+ is the limit.
     if (e.reason === 'error' && S.resumeAfterLimit && S.fiveHour >= 99) {
