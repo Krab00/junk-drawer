@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# orch-worktree — per-task git worktrees under .worktrees/ + stable port slots.
+# Zero deps (bash + git). Ports = capability port_base + slot; the slot is printed here,
+# the orchestrator/verify-coordinator adds the config port_base (also printed when declared).
+# `.worktrees/` goes to .git/info/exclude so it never shows up as untracked.
+#   orch-worktree add <id> <branch> [base]  # create/attach the worktree (detached at <branch> when it
+#                                           # exists: the implementer's own worktree may still hold it);
+#                                           # print dir + slot + ports
+#   orch-worktree remove <id>               # remove the worktree, free its slot
+#   orch-worktree slot <id>                 # print (assigning if needed) the slot for <id>
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+# root = the checkout we run in (a project that is itself a worktree keeps its own .orch/; from a task
+# worktree, the project's root), orch-state's resolution; the common dir only hosts the shared info/exclude.
+git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "orch: not inside a git repo" >&2; exit 2; }
+root=$("$here/orch-state" root)
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+config="$root/.orch/config.md"
+[ -f "$config" ] || config="$root/.claude/orch.config.md"
+[ -f "$config" ] || { echo "orch: no config - run orch-init" >&2; exit 2; }
+wt="$root/.worktrees"; reg="$wt/.orch-slots"     # registry lines: "<id> <slot>"
+mkdir -p "$wt" "$common/info"; touch "$reg"
+grep -qxF '.worktrees/' "$common/info/exclude" 2>/dev/null || echo '.worktrees/' >> "$common/info/exclude"
+
+# _cap_port_base <web|api> -> port_base int (empty if the capability is not declared)
+_cap_port_base(){
+  awk -v cap="$1" '
+    { sub(/\r$/, "") }
+    $0 ~ /^capabilities:/ { inc=1; next }
+    inc && $0 ~ /^[^ \t]/ { inc=0 }
+    inc && $0 ~ ("^[ \t]+" cap "[ \t]*:") {
+      if (match($0, /port_base:[ \t]*[0-9]+/)) { s=substr($0,RSTART,RLENGTH); gsub(/[^0-9]/,"",s); print s; exit }
+    }' "$config"
+}
+
+# The registry is shared by parallel verify-coordinators (batch): one writer at a time.
+_lock(){
+  local n=0
+  until mkdir "$reg.lock" 2>/dev/null; do
+    n=$((n+1)); [ "$n" -le 100 ] || { echo "orch: $reg.lock held for 10s; remove it if no orch-worktree runs" >&2; exit 1; }
+    sleep 0.1
+  done
+  trap 'rmdir "$reg.lock" 2>/dev/null || true' EXIT
+}
+
+# Branch and base reach git as arguments: each must be a name git takes for a branch (no option, no -x).
+_ref(){
+  git check-ref-format --branch "$1" >/dev/null 2>&1 || { echo "orch: bad branch name '$1'" >&2; exit 1; }
+  echo "$1"
+}
+
+# The config's default_base is never a task branch: nothing is checked out as one.
+_not_base(){
+  local b; b=$("$here/orch-state" cfg default_base)
+  [ -z "$b" ] || [ "$1" != "$b" ] || { echo "orch: '$1' is the default base (config default_base): never a task branch" >&2; exit 1; }
+}
+
+# stable slot for an id: reuse the registered one, else claim the lowest free index.
+_slot_for(){
+  local id="$1" s
+  _lock
+  s=$(awk -v id="$id" '$1==id{print $2; exit}' "$reg")
+  if [ -z "$s" ]; then
+    s=0
+    while awk -v n="$s" '$2==n{f=1} END{exit !f}' "$reg"; do s=$((s+1)); done
+    printf '%s %s\n' "$id" "$s" >> "$reg"
+  fi
+  echo "$s"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  add)
+    id=$("$here/orch-state" id "${1:?usage: orch-worktree add <id> <branch> [base]}")
+    branch=$(_ref "${2:?branch required}"); base="${3:-}"; _not_base "$branch"
+    if [ -n "$base" ]; then
+      base=$(_ref "$base"); [ "$branch" != "$base" ] || { echo "orch: branch and base are both '$base'" >&2; exit 1; }
+    fi
+    dir="$wt/$id"
+    want=$(git -C "$root" rev-parse --verify --quiet "$branch^{commit}" || true)
+    if [ -d "$dir" ]; then
+      [ -n "$want" ] && [ "$(git -C "$dir" rev-parse HEAD)" = "$want" ] ||
+        { echo "orch: $dir is not at $branch; run orch-worktree remove $id first" >&2; exit 1; }
+    elif [ -n "$want" ]; then
+      # detached: the implementer's own worktree may still have the branch checked out; verify needs the commit only
+      git -C "$root" worktree add --detach "$dir" "$branch" >&2
+    else
+      git -C "$root" worktree add "$dir" -b "$branch" "${base:-HEAD}" >&2
+    fi
+    slot=$(_slot_for "$id")
+    echo "dir=$dir"
+    echo "slot=$slot"
+    wb=$(_cap_port_base web); if [ -n "$wb" ]; then echo "web_port=$((wb+slot))"; fi
+    ab=$(_cap_port_base api); if [ -n "$ab" ]; then echo "api_port=$((ab+slot))"; fi
+    ;;
+  remove)
+    id=$("$here/orch-state" id "${1:?usage: orch-worktree remove <id>}")
+    git -C "$root" worktree remove --force "$wt/$id" 2>/dev/null || true
+    _lock
+    awk -v id="$id" '$1!=id' "$reg" > "$reg.tmp"; mv -f "$reg.tmp" "$reg"
+    echo "removed $id"
+    ;;
+  slot)
+    _slot_for "$("$here/orch-state" id "${1:?usage: orch-worktree slot <id>}")"
+    ;;
+  *) echo "orch-worktree: unknown command '$cmd'" >&2; exit 1;;
+esac

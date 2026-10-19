@@ -1,0 +1,15 @@
+{
+  "description": "junkd hooks for Codex. Codex reads this file (the manifest's hooks key) instead of hooks/hooks.json, which carries the Claude Code-only modules key Codex refuses. Plugin-root symlinks are dropped on install, so the command names the real script inside the tldr skill.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$PLUGIN_ROOT/skills/tldr/bin/tldr-hook\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TL;DR"
+  short_description: "Condense the last substantive reply or keep replies terse"
+  default_prompt: "Use $tldr to condense your last substantive reply in three sentences."

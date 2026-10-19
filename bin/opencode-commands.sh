@@ -32,8 +32,19 @@ for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
     continue
   fi
 
+  # The first sentence when it fits in 100 characters, else the longest run of whole words that does, plus "...".
+  # Never cut inside a word.
   desc=$(sed -n 's/^description:[[:space:]]*//p' "$skill_md" | head -1 |
-    tr -d '"' | cut -c1-100)
+    tr -d '"' | awk -v max=100 '{
+      s = $0
+      i = index(s, ". ")
+      if (i > 0 && i <= max) { print substr(s, 1, i); exit }
+      if (length(s) <= max) { print s; exit }
+      t = substr(s, 1, max - 3)
+      if (substr(s, max - 2, 1) != " ") sub(/ +[^ ]*$/, "", t)
+      sub(/[ ,;:(-]+$/, "", t)
+      print t "..."
+    }')
 
   cat >"$out" <<EOF
 ---

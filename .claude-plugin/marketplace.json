@@ -1,6 +1,8 @@
 {
   "name": "junk-drawer",
-  "owner": { "name": "Krab00" },
+  "owner": {
+    "name": "Krab00"
+  },
   "plugins": [
     {
       "name": "statusline",
@@ -13,16 +15,6 @@
       "description": "Read current context token usage from the live session transcript."
     },
     {
-      "name": "tldr",
-      "source": "./plugins/tldr",
-      "description": "Summarize on demand."
-    },
-    {
-      "name": "handoff",
-      "source": "./plugins/handoff",
-      "description": "Save a session handoff to disk and restore it in a fresh session by id (/handoff, /handon <id>); /ahandoff automates handoff → /clear → /handon past a context threshold and resumes after the 5h rate limit."
-    },
-    {
       "name": "ctx-limit",
       "source": "./plugins/ctx-limit",
       "description": "Per-session context-size limit: past the threshold a hook blocks the prompt, warns, or runs a command. Pairs with handoff. Run /ctx-limit."
@@ -33,9 +25,9 @@
       "description": "Cheatsheet of the whole marketplace: every plugin with its version, description, and commands + params. Run /junk-drawer."
     },
     {
-      "name": "orch",
-      "source": "./plugins/orch",
-      "description": "Project-agnostic orchestration loop: pick tasks from a canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .claude/orch.config.md. Run /orch:init then /orch."
+      "name": "junkd",
+      "source": "./plugins/junkd",
+      "description": "Handoff, orch and tldr in one plugin, every command /junkd:<name>: /junkd:handoff and /junkd:handon save and resume a session, /junkd:ahandoff hands off at a context threshold; /junkd:orch runs the orchestration loop (/junkd:orch-init first) with a main-loop guard on Fable; /junkd:tldr summarizes or keeps replies terse. /junkd opens the junkd, handoff and orch tabs: the marketplace's plugins, every setting group and the commands. The hooks module exports $.junkd for other mods."
     }
   ]
 }

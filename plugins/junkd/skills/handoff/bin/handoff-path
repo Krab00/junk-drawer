@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Target path for a new handoff + short id (also copied to the clipboard). Used by the handoff skill (/junkd:handoff).
+# Prints: line 1 = file path, line 2 = short id (8 hex chars). The host and its handoffs folder come from host-lib
+# (JUNK_DRAWER_RUNTIME, else auto-detected); an unknown host exits 2 and writes nothing.
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac # no dirname: a hook may run with a bare PATH
+. "$here/host-lib" || exit 2
+jd_host || exit 2
+# The id first: a failure leaves nothing behind, not even the folder.
+short=$(jd_short_id)
+[ "${#short}" = 8 ] || { echo "handoff-path: could not derive a short id (no shasum, md5sum or md5)" >&2; exit 1; }
+mkdir -p "$JD_HANDOFFS" || exit 1
+printf '%s' "$short" | pbcopy 2>/dev/null || true
+echo "$JD_HANDOFFS/$(date +%Y-%m-%dT%H-%M)_${short}.md"
+echo "$short"
