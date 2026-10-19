@@ -87,6 +87,12 @@ probe "Codex hook, PLUGIN_ROOT under .codex" "$codex_h" "$codex_f" "$repo" \
 probe "Codex hook, PLUGIN_ROOT under CODEX_HOME" "$tmp/cx/junk-drawer/handoffs" "$tmp/cx/junk-drawer" "$repo" CODEX_HOME="$tmp/cx" \
     PLUGIN_ROOT="$tmp/cx/plugins/cache/junk-drawer/junkd/0.4.0" CLAUDE_PLUGIN_ROOT="$tmp/cx/plugins/cache/junk-drawer/junkd/0.4.0" \
     CLAUDE_CONFIG_DIR="$tmp/cc"
+# a PLUGIN_ROOT outside any Codex home is no Codex signal: CLAUDE_PLUGIN_ROOT beside it still means Claude Code,
+# also when the Codex home's path appears inside it further down
+probe "PLUGIN_ROOT outside .codex, no CODEX_HOME" "$claude_h" "$claude_f" "$repo" PLUGIN_ROOT="$tmp/elsewhere/junkd" \
+    CLAUDE_PLUGIN_ROOT="$tmp/elsewhere/junkd"
+probe "PLUGIN_ROOT holding CODEX_HOME's path further down" "$claude_h" "$claude_f" "$repo" CODEX_HOME="$tmp/cx" \
+    PLUGIN_ROOT="$tmp/elsewhere$tmp/cx/plugins/junkd" CLAUDE_PLUGIN_ROOT="$tmp/elsewhere$tmp/cx/plugins/junkd"
 probe "CODEX_HOME alone" "$tmp/cx/junk-drawer/handoffs" "$tmp/cx/junk-drawer" "$repo" CODEX_HOME="$tmp/cx"
 # Kimi Code: its hooks' KIMI_PLUGIN_ROOT; its bash tool runs the helper from <home>/plugins/managed/<plugin>/
 probe "KIMI_PLUGIN_ROOT" "$kimi_h" "$kimi_f" "$repo" KIMI_PLUGIN_ROOT="$root/plugins/junkd"
