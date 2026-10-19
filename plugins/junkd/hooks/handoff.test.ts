@@ -742,6 +742,14 @@ test('the /junkd set shows the handoff pane without the keys, and closes it only
   await handoff($, 'panel')
   expect(isUp(rec, 'ahandoff')).toBe(false)
 
+  // Closed by its own command while the set is up: closing the set does not close it a second time.
+  await junkd()
+  await handoff($, 'panel')
+  expect(isUp(rec, 'ahandoff')).toBe(false)
+  const ownCloses = rec.closed.length
+  await junkd()
+  expect(rec.closed.slice(ownCloses)).not.toContain('ahandoff')
+
   // The person's close clears the mark: closing the set closes nothing of handoff's again.
   await junkd()
   await shut($)
