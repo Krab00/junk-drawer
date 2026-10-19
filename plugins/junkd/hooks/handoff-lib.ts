@@ -1,14 +1,16 @@
 // The handoff mod's state and the reads every file shares: options, commands, the handoffs folder.
 import type { EngineInterface } from 'claude-code'
+import type { JunkdHandoffField } from '../types'
+import { rowsOf } from './settings'
 
 export type $ = EngineInterface
 export type Phase = 'idle' | 'handoff' | 'clear' | 'resume'
 export type Route = 'auto' | 'handoffs' | 'settings'
 export type Entry = { id: string; path: string; mtimeMs: number; title: string; stale: boolean }
-export type Field = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
+export type Field = JunkdHandoffField
 
-// The engine follows `$` only into functions of the hooks module itself, never across an import:
-// every helper that takes `$` (findCommand, homeDir, handoffDir, listHandoffs, sync, persist) lives in register.tsx.
+// `$`-free: every helper that takes `$` (findCommand, homeDir, handoffDir, listHandoffs, sync, persist) lives in
+// handoff.tsx.
 
 // ponytail: runtime state in a module object — it survives /clear (no reload); $.state is only a mirror.
 export const DEFAULT_PROMPT = 'Continue after the handoff'
@@ -80,22 +82,15 @@ export function idOf(name: string): string | null {
   return /_([0-9a-f]{8})\.md$/.exec(name)?.[1] ?? null
 }
 
-// The `$.handoff` contract's schema: a mirror of plugin.json's `userConfig` (a hooks module cannot import JSON).
-// `main` marks the fields a frame plugin shows first. tests/smoke.sh holds every entry to the manifest; the plugin
-// test checks the defaults through the options the engine fills in from it.
+// The handoff rows of junkd's settings (settings.ts, the one mirror of plugin.json's `userConfig`), by field:
+// `handoff_threshold` -> `threshold`. isField, coerce and the pane read the fields from here.
 export type SchemaEntry = { key: Field; type: 'number' | 'boolean'; title: string; default: number | boolean; main: boolean }
-export const SCHEMA: readonly SchemaEntry[] = [
-  { key: 'enabled', type: 'boolean', title: 'Auto handoff: enabled', default: true, main: true },
-  { key: 'threshold', type: 'number', title: 'Auto handoff: context threshold (%)', default: 85, main: true },
-  { key: 'checkEvery', type: 'number', title: 'Auto handoff: check every N tool calls', default: 5, main: false },
-  { key: 'autoOn', type: 'boolean', title: 'Auto handoff: armed at session start', default: false, main: true },
-  { key: 'resumeAfterLimit', type: 'boolean', title: 'Auto handoff: resume after the 5h rate limit', default: true, main: true },
-  { key: 'staleDays', type: 'number', title: 'Handoffs: mark stale after N days', default: 30, main: false },
-  { key: 'segment', type: 'boolean', title: 'Status line: show the 🪃 segment', default: true, main: true },
-]
+export const SCHEMA: readonly SchemaEntry[] = rowsOf('handoff').map(f => ({
+  key: f.field as Field, type: f.type as SchemaEntry['type'], title: f.title, default: f.default as SchemaEntry['default'], main: f.main,
+}))
 export const isField = (key: unknown): key is Field => SCHEMA.some(f => f.key === key)
 
-// A raw value (typed in the pane, handed to $.handoff.set or written in the /config menu) to the field's kind;
+// A raw value (typed in the pane, handed to $.junkd.set or written in the /config menu) to the field's kind;
 // `error` when it does not fit. The value is stored as it comes back, never rounded later: what the row holds is
 // what get answers. threshold: above 0, up to 100; checkEvery: a whole number, 1 or more; staleDays: above 0.
 export type Coerced = { value: number | boolean; error?: undefined } | { error: string; value?: undefined }
