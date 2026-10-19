@@ -854,18 +854,18 @@ test('the /config menu: each spelling of a switch, and refresh read and clamped 
 test('tools_enabled off: the pane closes, the /junkd set leaves its tab out, /junkd:tools and open say it is off; on again', W, async ($, on) => {
   const rec = world(on)
   await start($)
-  await run($, 'junkd') // the set: junkd, handoff, orch, tools
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', PANE_ID])
+  await run($, 'junkd') // the set: junkd, handoff, orch, statusline, tools
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID])
   await rec.clock.settle()
   const polled = gitRuns(rec)
   await frame($, 'set', { key: 'tools_enabled', value: false })
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch'])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
   await rec.clock.advance(600_000)
   expect(gitRuns(rec)).toBe(polled) // its poll went with it
   await run($, 'junkd')
   expect(rec.panes).toEqual([])
   await run($, 'junkd')
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch'])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
   await run($, 'junkd')
   expect((await tools($)).text).toBe('junkd: the tools pane is off: /junkd → tools → Tools pane: enabled')
   expect((await tools($, 'mcp')).text).toMatch(/the tools pane is off/)
@@ -880,14 +880,14 @@ test('tools_enabled off: the pane closes, the /junkd set leaves its tab out, /ju
   expect(rec.panes).toEqual([])
   await frame($, 'config', { key: 'junkd.tools_enabled', value: 'on' })
   await run($, 'junkd')
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', PANE_ID])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID])
 })
 
 test('tools_enabled off in the options: the set has no tools tab from the start', { ...W, options: { tools_enabled: false } }, async ($, on) => {
   const rec = world(on)
   await start($)
   await run($, 'junkd')
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch'])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
 })
 
 test('/junkd:tools toggles; /junkd:tools <tab> opens on that tab or switches to it; an unknown tab is said', W, async ($, on) => {
