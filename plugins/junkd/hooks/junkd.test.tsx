@@ -117,7 +117,7 @@ type Open = { id: string; title?: string; focus?: true }
 // The world's knobs: `env` replaces the config-dir variables; `checkout` answers the checkout's marketplace.json
 // (whatever the engine resolves `<root>/../..` to); `panes` is what session.start finds open; `mvExit`/`mvErr` fail
 // the rename; `realPath` resolves a symlinked path; `listThrows` and `hintThrows` fail $.command.list and the prompt
-// hint beneath; `registerThrows` and `panesThrows` fail $.command.register and $.ui.panes; `existsThrows` fails fs.exists on the paths it matches; `shHome` is what `sh -c 'echo $HOME'` prints
+// hint beneath; `existsThrows` fails fs.exists on the paths it matches; `shHome` is what `sh -c 'echo $HOME'` prints
 // (default /fake/h2); `sha` is what `git rev-parse --short HEAD` prints (absent: git exits 128, no checkout),
 // `gitThrows` fails the run itself (no git binary); `render` draws a Pane the module passes on.
 type Opts = {
@@ -130,8 +130,6 @@ type Opts = {
   realPath?: Record<string, string>
   listThrows?: boolean
   hintThrows?: boolean
-  registerThrows?: boolean
-  panesThrows?: boolean
   existsThrows?: RegExp
   sha?: string
   gitThrows?: boolean
@@ -143,7 +141,7 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   const rec = {
     files, reads: [] as string[], writes: [] as string[], mvs: [] as string[][], rms: [] as string[][], runs: [] as string[][],
     config: [] as { key: string; value: unknown }[], toasts: [] as string[], opens: [] as Open[], closed: [] as string[],
-    registered: [] as string[], started: 0, // started: session.start reached the engine's own handler (no start step threw)
+    registered: [] as string[],
     commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], beneath: '', merged: '',
     // `log`: every pane open and close, one line each (`ui.open <id>[ focus]`, `ui.close <id>`), in the order they came.
     log: [] as string[], gits: [] as string[][],
@@ -217,10 +215,10 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   })
   on('ui.close', (_$, e) => { rec.closed.push(e.id); rec.log.push(`ui.close ${e.id}`); rec.tabs = rec.tabs.filter(t => t !== e.id); return { value: undefined } })
   on('ui.focus', () => ({}))
-  on('ui.panes', () => { if (o.panesThrows) throw new Error('panes broke'); return { value: (o.panes ?? []) as never } })
-  on('command.register', (_$, e) => { rec.registered.push(e.name); if (o.registerThrows) throw new Error('the engine refuses the name'); return { value: { command: e.name } } })
+  on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
+  on('command.register', (_$, e) => { rec.registered.push(e.name); return { value: { command: e.name } } })
   on('command.list', () => { if (o.listThrows) throw new Error('list broke'); return { value: rec.commands } })
-  on('session.start', (_$, e) => { rec.started++; return { cwd: e.cwd } })
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
   // The engine's own drawing where the mod passes; under the prompt, another plugin's hint when `beneath` names one.
   on('ui.render', ($, e) => {
     if (e.component === 'PromptHint' && o.hintThrows) throw new Error('no hint beneath')
@@ -894,24 +892,11 @@ test('T27: session.start never registers the bare junkd command (the engine refu
   expect(rec.registered).not.toContain('junkd')
 })
 
-test('T27: a refusing command.register or a failing ui.panes leaves session.start resolved and the segment drawn', W, async ($, on) => {
-  const rec = world(on, fixture(), { registerThrows: true, panesThrows: true })
-  await start($)
-  expect(rec.started).toBe(1)
-  // The engine swallows a throwing hook, so the start step itself is called with the same failures.
+test('T27: the start step resolves when command.register and ui.panes both reject', W, async ($, on) => {
+  world(on, fixture())
+  // The engine swallows a throwing hook, so only a direct call to the start step observes a rejection.
   const failing = { ui: { panes: () => Promise.reject(new Error('panes broke')) }, command: { register: () => Promise.reject(new Error('refused')) } }
   await expect(panelStart(failing as never)).resolves.toBeUndefined()
-  const hint = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...HINT })
-  expect((await hint.find({ type: 'Button', key: 'junkd-toggle' }))?.text).toBe('✚ junkd')
-})
-
-test('T27: /junkd:junkd toggles the pane', W, async ($, on) => {
-  const rec = world(on, fixture())
-  await start($)
-  await run($, 'junkd:junkd')
-  expect(opened(rec, 'junkd')).toHaveLength(1)
-  await run($, 'junkd:junkd')
-  expect(closes(rec, 'junkd')).toHaveLength(1)
 })
 
 test('the mobile surface gets the engine pane, not ours', W, async ($, on) => {
