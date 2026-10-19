@@ -165,7 +165,7 @@ lifecycle hooks, so `tldr` and `ctx-limit` lose their automatic hook behavior an
 them explicitly instead.
 
 ```bash
-npx skills add Krab00/junk-drawer                     # all eleven skills
+npx skills add Krab00/junk-drawer                     # all twelve skills
 npx skills add Krab00/junk-drawer --skill orch        # just one
 npx skills add Krab00/junk-drawer --list              # preview, install nothing
 ```
@@ -195,9 +195,10 @@ Known limits of the skills-only install:
 
 - `$junk-drawer` catalogs sibling skills instead of plugins, since no plugin manifests are present,
   so it cannot report versions or slash commands.
-- `orch-init` borrows `orch`'s helpers through a sibling symlink, so its own tree hash does not move
-  when those helpers change. Once `npx skills update` has refreshed `orch`, refresh it explicitly
-  with `npx skills add Krab00/junk-drawer --skill orch-init`; `add` always reinstalls.
+- `orch-init` and `dashboard` borrow `orch`'s helpers through a sibling symlink, so their own tree
+  hashes do not move when those helpers change. Once `npx skills update` has refreshed `orch`, refresh
+  them explicitly with `npx skills add Krab00/junk-drawer --skill orch-init --skill dashboard`; `add`
+  always reinstalls. `dashboard`'s `orch-status` takes the page from the sibling `orch` skill.
 - Codex's plugin installer drops every symlink (the plugin-root `bin/`, `agents/` and `scripts/` too).
   Under the previous layout that left Codex plugin installs with no `bin/` inside the skills at all;
   now the skills carry real files and work. `orch-init`'s sibling symlinks are still dropped there,

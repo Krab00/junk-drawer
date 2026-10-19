@@ -39,6 +39,9 @@ while [ -L "$self" ]; do
 done
 here=$(cd -P "$(dirname "$self")" && pwd)
 dash="$here/../dashboard"
+# A skills-only install copies skills/dashboard/bin (a link to this folder) as a real folder: the page is then the
+# sibling orch skill's.
+[ -d "$dash" ] || dash="$here/../../orch/dashboard"
 hostlib="$here/../../handoff/bin/host-lib"
 
 cfg="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
