@@ -369,6 +369,17 @@ handon_files=$(cd "$installed/handon" && find . -mindepth 1 ! -type d | LC_ALL=C
 cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load" ||
     { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
 
+# Every host map names all four hosts; handoff tells the resume command of each; tldr says OpenCode has no hook.
+for skill in handoff tldr orch orch-init; do
+    for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do
+        rg -qF "$host" "$root/plugins/junkd/skills/$skill/SKILL.md" || { echo "junkd: skills/$skill/SKILL.md does not name $host"; exit 1; }
+    done
+done
+for resume in '`/junkd:handon <id>`' '`$handon <id>`' '`/skill:handon <id>`' '`/handon <id>`'; do
+    rg -qF -- "$resume" "$root/plugins/junkd/skills/handoff/SKILL.md" || { echo "junkd: handoff/SKILL.md does not list $resume"; exit 1; }
+done
+rg -qF 'OpenCode has no hook' "$root/plugins/junkd/skills/tldr/SKILL.md" || { echo "junkd: tldr/SKILL.md does not say OpenCode has no hook"; exit 1; }
+
 # The Kimi model followed whichever host line came first: handon, junkd and ahandoff put the non-Claude line before
 # the Claude Code one.
 for skill in handon junkd ahandoff; do
