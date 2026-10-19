@@ -58,8 +58,8 @@ links), so the skills run their own `./bin`; its terse-mode hook is `.codex-plug
 plugin's hooks. Kimi Code keeps the symlinks of a local-path install rewritten to absolute paths into your checkout
 (the plugin-root `bin/` and `scripts/`, orch-init's `bin/` and `commands/`): moving the checkout breaks them, and
 switching its branch changes what they run. Its manifest names no agents (`"agents": []`), so `agents/` is not read
-as agent definitions. Skills in `~/.agents/skills` shadow the plugin's on Kimi (a stale `npx skills add -g` copy
-wins).
+as agent definitions. Skills in `~/.agents/skills` shadow the plugin's on Kimi and on Codex (a stale `npx skills add -g`
+copy wins).
 
 ## The /junkd frame (Claude Code only)
 
@@ -263,7 +263,8 @@ bounds, the nothing cases, the one count per message id, the 50 MB tail read and
 ## handoff
 
 Codex: `$handoff` saves, `$handon <id>` (or `$handoff resume <id>`) restores. Kimi Code: `/skill:handoff` and
-`/skill:handon <id>`. OpenCode: `/handoff` and `/handon <id>` through the generated wrappers, or "use the handon
+`/skill:handon <id>`. Under `codex exec -s workspace-write`, add `--add-dir "${CODEX_HOME:-$HOME/.codex}/junk-drawer"`
+or saving a handoff is refused (the folder is outside the workspace). OpenCode: `/handoff` and `/handon <id>` through the generated wrappers, or "use the handon
 skill". Each host keeps its handoffs apart (see [Hosts and data roots](#hosts-and-data-roots)); Claude Code retains
 the paths below.
 
@@ -764,7 +765,8 @@ Code: `/skill:tldr`; OpenCode: `/tldr` (the generated wrapper). Codex stores the
 `~/.codex/junk-drawer`, Kimi Code under `~/.kimi-code/junk-drawer`, OpenCode under
 `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer`; Claude Code keeps its flags under `~/.claude/junkd`.
 OpenCode has no hook: `/tldr on` only records the flag there and replies do not change. On Codex the hook runs once
-you trust the plugin's hooks.
+you trust the plugin's hooks, and under `codex exec -s workspace-write` `$tldr on|off` needs
+`--add-dir "${CODEX_HOME:-$HOME/.codex}/junk-drawer"` to write the flag.
 
 Two things in one command:
 
