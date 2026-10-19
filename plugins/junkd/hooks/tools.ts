@@ -233,7 +233,11 @@ export type Node = {
 
 const folderName = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path
 const shortModel = (model: string) => /fable|opus|sonnet|haiku/i.exec(model)?.[0].toLowerCase() ?? model
-const under = (path: string, dir: string) => path === dir || path.startsWith(`${dir.replace(/\/+$/, '')}/`)
+// A path in a folder, or the folder itself; a trailing slash on either side changes nothing.
+const under = (path: string, dir: string) => {
+  const d = dir.replace(/\/+$/, '')
+  return path.replace(/\/+$/, '') === d || path.startsWith(`${d}/`)
+}
 
 // Root = the main checkout, its children the other worktrees (by path basename, with the branch). An agent sits under
 // the deepest worktree its cwd is in (the cwd agent.spawn gave it, else the session's then); one whose cwd is in no
