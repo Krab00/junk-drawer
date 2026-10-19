@@ -250,7 +250,7 @@ const junkdRows = (rec: { config: { key: string; value: unknown }[] }) => rec.co
 const MAIN_ROWS = [
   'setting:core:output_style',
   'setting:handoff:enabled', 'setting:handoff:threshold', 'setting:handoff:autoOn', 'setting:handoff:resumeAfterLimit', 'setting:handoff:segment',
-  'setting:orch:enabled', 'setting:orch:guard', 'setting:orch:allow_fable_agents', 'setting:orch:implementer_ctx_k',
+  'setting:orch:enabled', 'setting:orch:guard', 'setting:orch:allow_fable_agents', 'setting:orch:implementer_ctx_k', 'setting:orch:claude_md',
   'setting:tldr:enabled', 'setting:tldr:terse', 'setting:tldr:sentences',
 ]
 const GROUP_BOXES = ['group:core', 'group:handoff', 'group:orch', 'group:tldr']
@@ -631,7 +631,7 @@ test('AC2: a tenth plugin has no hotkey; 1-9 stay with the first nine; the pane 
   world(on, files)
   const pane = await openPane($)
   for (const [i, n] of names.entries()) expect((await pane.find({ type: 'Button', key: `plugin:${n}` }))?.props.hotkey, n).toBe(i < 9 ? String(i + 1) : undefined)
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-9 plugin  a-h setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-9 plugin  a-i setting  tab move  q close')
 })
 
 // Values away from the defaults where a default drawn in a value's place would show.
@@ -666,9 +666,9 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
     expect(row?.text, f.key).toContain(f.field)
     expect(row?.text, f.key).toContain(f.title)
   }
-  // The switches, a-h in drawn order, each showing the value its group answers.
-  const switches = ['handoff:enabled', 'handoff:autoOn', 'handoff:resumeAfterLimit', 'handoff:segment', 'orch:enabled', 'orch:allow_fable_agents', 'tldr:enabled', 'tldr:terse']
-  for (const [i, k] of switches.entries()) expect((await pane.find({ type: 'Button', key: `set:${k}` }))?.props.hotkey, k).toBe('abcdefgh'[i])
+  // The switches, a-i in drawn order, each showing the value its group answers.
+  const switches = ['handoff:enabled', 'handoff:autoOn', 'handoff:resumeAfterLimit', 'handoff:segment', 'orch:enabled', 'orch:allow_fable_agents', 'orch:claude_md', 'tldr:enabled', 'tldr:terse']
+  for (const [i, k] of switches.entries()) expect((await pane.find({ type: 'Button', key: `set:${k}` }))?.props.hotkey, k).toBe('abcdefghi'[i])
   expect((await pane.find({ type: 'Button', key: 'set:handoff:enabled' }))?.text).toBe('off') // on now: the button turns it off
   expect((await pane.find({ type: 'Button', key: 'set:handoff:autoOn' }))?.text).toBe('on') // off now: the button turns it on
   expect((await pane.find({ type: 'Button', key: 'set:handoff:segment' }))?.text).toBe('off')
@@ -684,7 +684,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   expect((await pane.find({ type: 'Button', key: 'set:orch:guard=always' }))?.text).toBe('always')
   expect((await pane.find({ key: 'set:core:output_style=ste' }))?.text).toBe(' ste ')
   expect((await pane.find({ type: 'Button', key: 'set:core:output_style=off' }))?.text).toBe('off')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-h setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-i setting  tab move  q close')
 
   // Each write goes to its group's row through the group's set: a flip sends the other state, a number as typed
   // (the group coerces and validates it), a choice its option.
@@ -802,7 +802,7 @@ test('AC5: with no other plugin on, /junkd opens the set with Plugins, every set
   expect(await pane.find({ key: 'no-settings' })).toBeUndefined()
   expect((await pane.find({ type: 'Text', text: '/junkd' }))?.text).toBe('/junkd')
   expect((await pane.find({ key: 'note' }))?.text).toBe('')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-h setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-i setting  tab move  q close')
 })
 
 test('AC6: PromptHint with nothing beneath (next throws) -> the toggle alone, and it still opens', withOptions({ handoff_segment: false }), async ($, on) => {
@@ -854,7 +854,7 @@ test('AC2: no marketplace.json anywhere -> the error note and no plugin rows; Se
   expect(await keysOf(pane, 'setting:')).toEqual(MAIN_ROWS)
   expect(await pane.find({ key: 'no-settings' })).toBeUndefined()
   expect((await pane.find({ type: 'Text', text: 'No commands.' }))?.text).toBe('No commands.')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-h setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-i setting  tab move  q close')
 })
 
 test('AC2: a broken marketplace.json is the note; an empty object draws no rows and the default name', W, async ($, on) => {
@@ -873,7 +873,7 @@ test('AC2: a broken marketplace.json is the note; an empty object draws no rows 
   expect((await pane3.find({ key: 'note' }))?.text).toBe('')
   expect(await keysOf(pane3, 'plugin-row:')).toEqual([])
   expect((await pane3.find({ type: 'Text', text: /junk-drawer$/ }))?.text).toBe('✚ junkd  junk-drawer')
-  expect((await pane3.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-h setting  tab move  q close')
+  expect((await pane3.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-i setting  tab move  q close')
 })
 
 test('AC2: no settings.json yet -> created with enabledPlugins only, the temp file gone', W, async ($, on) => {
@@ -1146,7 +1146,7 @@ test('AC3: a write another hook refuses leaves the flag file alone, on both path
 const MANIFEST_KEYS = [
   'core_output_style',
   'handoff_enabled', 'handoff_threshold', 'handoff_checkEvery', 'handoff_autoOn', 'handoff_resumeAfterLimit', 'handoff_staleDays', 'handoff_segment',
-  'orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds',
+  'orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md',
   'tldr_enabled', 'tldr_terse', 'tldr_sentences',
 ]
 

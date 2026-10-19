@@ -31,6 +31,15 @@ BLOCK_CRLF='<!-- junkd:orch start -->\r\n## Orchestrator mode\r\nThe junkd plugi
 [ -x "$plugin/skills/orch/scripts/orch-claude-md.sh" ] || fail "skills/orch/scripts/orch-claude-md.sh is not executable"
 [ -L "$plugin/skills/junkd/scripts/orch-claude-md.sh" ] || fail "skills/junkd/scripts/orch-claude-md.sh is not the symlink to the orch skill's copy"
 [ "$(readlink "$plugin/skills/junkd/scripts/orch-claude-md.sh")" = ../../orch/scripts/orch-claude-md.sh ] || fail "the symlink does not lead to ../../orch/scripts/orch-claude-md.sh"
+# the seam: the hooks module runs the script at the plugin-root path, which resolves to the same file setup.sh runs
+rg -qF '`${$.plugin.root}/scripts/orch-claude-md.sh`' "$plugin/hooks/orch.tsx" || fail "hooks/orch.tsx does not run \${\$.plugin.root}/scripts/orch-claude-md.sh"
+[ -x "$plugin/scripts/orch-claude-md.sh" ] && [ "$plugin/scripts/orch-claude-md.sh" -ef "$plugin/skills/orch/scripts/orch-claude-md.sh" ] ||
+    fail "scripts/orch-claude-md.sh at the plugin root is not the orch skill's script"
+rg -qF '"$root/skills/orch/scripts/orch-claude-md.sh"' "$plugin/skills/junkd/scripts/setup.sh" || fail "setup.sh does not run skills/orch/scripts/orch-claude-md.sh"
+jq -e '.userConfig.orch_claude_md | .type == "boolean" and .default == false' "$plugin/.claude-plugin/plugin.json" >/dev/null ||
+    fail "plugin.json: userConfig.orch_claude_md is not a boolean defaulting to false"
+rg -qF "{ key: 'orch_claude_md', group: 'orch', field: 'claude_md', type: 'boolean', title: 'CLAUDE.md pointer block', default: false, main: true }" "$plugin/hooks/settings.ts" ||
+    fail "settings.ts: orch_claude_md is not a main row of the orch group defaulting to false"
 
 # ---------------------------------------------------------------- the mode
 reset

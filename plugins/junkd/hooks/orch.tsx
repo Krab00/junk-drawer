@@ -143,12 +143,28 @@ async function writeFlag($: $, key: keyof typeof FLAGS): Promise<void> {
   else await $.fs.write(flag, '')
 }
 
-// A value the row took lands in O (and, for enabled and inject_rules, in the flag file). Idempotent: a write of ours
-// passes the other plugins' config.set hooks and skips our own, so setOption applies it; the menu's write reaches
-// the hook.
+// claude_md: scripts/orch-claude-md.sh on|off over ${CLAUDE_CONFIG_DIR}/CLAUDE.md, at once (scripts/setup.sh runs it
+// again at every session start). Not while orch is disabled, as at session start. Its `updated` line, or the reason
+// it refused, is a toast; a run that cannot start is one too, and never fails the write.
+async function runClaudeMd($: $): Promise<void> {
+  if (!O.enabled) return
+  const mode = O.claude_md ? 'on' : 'off'
+  try {
+    const r = await $.process.run([`${$.plugin.root}/scripts/orch-claude-md.sh`, mode], { env: { CLAUDE_CONFIG_DIR: await configDir($) } })
+    const line = r.exitCode === 0 ? r.stdout.split('\n').find(l => l.startsWith('updated ')) : r.stderr.trim().split('\n').at(-1) || `exit ${r.exitCode}`
+    if (line) $.ui.toast(`orch: ${line}`)
+  } catch (err) {
+    $.ui.toast(`orch: orch-claude-md.sh ${mode} did not run: ${String((err as Error).message ?? err)}`)
+  }
+}
+
+// A value the row took lands in O (and, for enabled and inject_rules, in the flag file; claude_md runs its script).
+// Idempotent: a write of ours passes the other plugins' config.set hooks and skips our own, so setOption applies it;
+// the menu's write reaches the hook.
 async function apply($: $, key: OrchField, value: OrchGuard | number | boolean): Promise<void> {
   ;(O as Record<string, unknown>)[key] = value
   if (key === 'enabled' || key === 'inject_rules') await writeFlag($, key)
+  if (key === 'claude_md') await runClaudeMd($)
   redraw($)
 }
 
