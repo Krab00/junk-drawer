@@ -5,21 +5,6 @@
   },
   "plugins": [
     {
-      "name": "statusline",
-      "source": "./plugins/statusline",
-      "description": "Status line: git branch + worktree + ANSI colors, context/effort segments."
-    },
-    {
-      "name": "ctx-tokens",
-      "source": "./plugins/ctx-tokens",
-      "description": "Read current context token usage from the live session transcript."
-    },
-    {
-      "name": "ctx-limit",
-      "source": "./plugins/ctx-limit",
-      "description": "Per-session context-size limit: past the threshold a hook blocks the prompt, warns, or runs a command. Pairs with handoff. Run /ctx-limit."
-    },
-    {
       "name": "junk-drawer",
       "source": "./plugins/junk-drawer",
       "description": "Cheatsheet of the whole marketplace: every plugin with its version, description, and commands + params. Run /junk-drawer."
@@ -27,7 +12,7 @@
     {
       "name": "junkd",
       "source": "./plugins/junkd",
-      "description": "Handoff, orch and tldr in one plugin, every command /junkd:<name>: /junkd:handoff and /junkd:handon save and resume a session, /junkd:ahandoff hands off at a context threshold; /junkd:orch runs the orchestration loop (/junkd:orch-init first) with a main-loop guard on Fable; /junkd:tldr summarizes or keeps replies terse. /junkd opens the junkd, handoff and orch tabs: the marketplace's plugins, every setting group and the commands. The hooks module exports $.junkd for other mods."
+      "description": "Handoff, orch, tldr, ctx-limit, ctx-tokens and the status line in one plugin, every command /junkd:<name>: /junkd:handoff and /junkd:handon save and resume a session, /junkd:ahandoff hands off at a context threshold; /junkd:orch runs the orchestration loop (/junkd:orch-init first) with a main-loop guard on Fable; /junkd:tldr summarizes or keeps replies terse; /junkd:ctx-limit guards the context size, /junkd:ctx-tokens reads it; /junkd:statusline wires a colored status line. /junkd opens the junkd, handoff, orch and statusline tabs: the marketplace's plugins, every setting group and the commands. The hooks module exports $.junkd for other mods."
     }
   ]
 }

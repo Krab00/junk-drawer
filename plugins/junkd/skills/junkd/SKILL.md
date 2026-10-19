@@ -1,6 +1,6 @@
 ---
 name: junkd
-description: Toggle the junkd pane, a Claude Code mod with the marketplace's plugins, every junkd setting group (core, handoff, orch, tldr) and the commands, opened beside the handoff and orch tabs. Use when the user runs /junkd:junkd or asks to open or close the junkd pane.
+description: Toggle the junkd pane, a Claude Code mod with the marketplace's plugins, every junkd setting group (core, handoff, orch, tldr, ctx, statusline) and the commands, opened beside the handoff, orch and statusline tabs. Use when the user runs /junkd:junkd or asks to open or close the junkd pane.
 ---
 
 # junkd
