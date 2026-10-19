@@ -1,6 +1,6 @@
 # junkd
 
-One plugin for three tools and the frame over them. Every command is a skill of junkd, so on Claude Code each is
+One plugin for six tools and the frame over them. Every command is a skill of junkd, so on Claude Code each is
 `/junkd:<name>`:
 
 | Command | Does |
@@ -11,15 +11,20 @@ One plugin for three tools and the frame over them. Every command is a skill of 
 | `/junkd:orch …` | The orchestration loop: tasks, implementer and verifier subagents, evidence gates, draft PRs (`panel` opens its settings pane) |
 | `/junkd:orch-init` | Write the project's `.orch/config.md` once, before the first `/junkd:orch` |
 | `/junkd:tldr [N \| on \| off \| status]` | Summarize the last substantive reply in at most N sentences, or keep every reply terse |
+| `/junkd:ctx-limit [<tokens> \| on \| off \| status \| action <m> \| cmd <shell>]` | A context-size limit a per-prompt hook enforces: block, warn, or run a command |
+| `/junkd:ctx-tokens` | How full the context is, from the session transcript |
+| `/junkd:statusline [on \| off \| status]` | The colored status line in settings.json, a switch per segment; no argument toggles its pane (Claude Code only) |
 | `/junkd`, `/junkd:junkd` | Open or close the junkd set of panes (Claude Code only) |
 
-On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`… (the model sees them as `junkd:<name>`), on Kimi
+On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`, `$ctx-limit`… (the model sees them as `junkd:<name>`), on Kimi
 Code as `/skill:<name>`, on OpenCode through the `skill` tool or the `/<name>` wrappers `bin/opencode-commands.sh`
 generates. The hooks module (Claude Code only) adds the auto handoff loop, the orch main-loop guard,
-the panes and `$.junkd` for other mods; the skills, the `bin/` helpers and the shell hooks work on every host.
+the panes, the status line's wiring and `$.junkd` for other mods; the skills, the `bin/` helpers and the shell hooks
+work on every host.
 
-handoff, orch and tldr were three plugins before; see [Moving from the handoff, orch and tldr
-plugins](#moving-from-the-handoff-orch-and-tldr-plugins).
+handoff, orch, tldr, ctx-limit, ctx-tokens and statusline were six plugins before; see [Moving from the handoff,
+orch, tldr, ctx-limit, ctx-tokens and statusline
+plugins](#moving-from-the-handoff-orch-tldr-ctx-limit-ctx-tokens-and-statusline-plugins).
 
 ## Install
 
@@ -37,8 +42,9 @@ install" (a GitHub URL and a bare `/plugins install junkd` do not work). OpenCod
 
 ### Hosts and data roots
 
-The helpers (`handoff-path`, `handoff-load`, `tldr-flag`, `tldr-hook`) detect the host they run on through
-`skills/handoff/bin/host-lib`, and each host keeps its own data:
+The helpers (`handoff-path`, `handoff-load`, `tldr-flag`, `tldr-hook`, `ctx-limit`, `ctx-limit-hook`, `ctx-tokens`)
+detect the host they run on through `skills/handoff/bin/host-lib`, and each host keeps its own data (ctx-limit's
+files in a `junkd/` folder beside the terse flag: [ctx-limit and ctx-tokens](#ctx-limit-and-ctx-tokens)):
 
 | Host | Detected by | Handoffs | Terse flag |
 |---|---|---|---|
@@ -50,10 +56,11 @@ The helpers (`handoff-path`, `handoff-load`, `tldr-flag`, `tldr-hook`) detect th
 `JUNK_DRAWER_RUNTIME=claude|codex|kimi|opencode` overrides the detection. The config-dir variables
 (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIMI_CODE_HOME`) count only after every host's own signal, so one a shell
 profile exports never pulls another host's helper into it. With no signal at all a helper exits 2 with one line
-naming `JUNK_DRAWER_RUNTIME` and writes nothing: it never falls back to `~/.claude`.
+naming `JUNK_DRAWER_RUNTIME` and writes nothing: it never falls back to `~/.claude` (ctx-limit's hook exits 0
+instead, so the guard never blocks a prompt on a guess).
 
 Install quirks: Codex drops every symlink (the plugin-root `bin/`, `agents/`, `scripts/` and orch-init's sibling
-links), so the skills run their own `./bin`; its terse-mode hook is `.codex-plugin/hooks.json` (Codex refuses the
+links), so the skills run their own `./bin`; its hooks (terse mode, ctx-limit) are `.codex-plugin/hooks.json` (Codex refuses the
 `modules` key of `hooks/hooks.json`) and runs only after you trust it when a session asks you to review the
 plugin's hooks. Kimi Code keeps the symlinks of a local-path install rewritten to absolute paths into your checkout
 (the plugin-root `bin/` and `scripts/`, orch-init's `bin/` and `commands/`): moving the checkout breaks them, and
@@ -69,12 +76,13 @@ closes them together:
 1. **junkd** — focused, the frame below.
 2. **handoff** — handoff's pane ([below](#handoff)).
 3. **orch** — orch's settings pane ([below](#orch)).
+4. **statusline** — the status line's pane ([below](#statusline)).
 
-All three are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
+All four are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
 already open on its own closes first and opens again behind junkd's tab, so its tab never comes first, and from
-then on it is the set's. `q`, a second `/junkd`, or closing junkd's tab by hand (`×`) closes all three, but only a
+then on it is the set's. `q`, a second `/junkd`, or closing junkd's tab by hand (`×`) closes all four, but only a
 feature pane that is still the set's: one you closed and opened again on your own (`/junkd:handoff panel`,
-`/junkd:orch panel`, `/junkd:ahandoff panel`, the 🪃 click) stays.
+`/junkd:orch panel`, `/junkd:ahandoff panel`, `/junkd:statusline`, the 🪃 click) stays.
 
 Where the set sits depends on the layout. Only in the fullscreen layout (`"tui": "fullscreen"` in
 `settings.json`), from 110 terminal columns, it docks beside the transcript; narrower, and always on the main
@@ -85,19 +93,18 @@ its tab may wait undrawn below 144 columns. After that, 110 columns are enough.
 The header reads `✚ junkd  junk-drawer <sha>`: the short sha of the marketplace checkout (none where it is not
 a git checkout). The junkd pane has three sections, their titles in junk-drawer's orange (the theme's accent):
 
-- **Plugins** — every plugin of the marketplace (`.claude-plugin/marketplace.json`: statusline, ctx-tokens,
-  ctx-limit, junk-drawer, junkd), on or off at user scope as `enabledPlugins` in `~/.claude/settings.json`
+- **Plugins** — every plugin of the marketplace (`.claude-plugin/marketplace.json`: junk-drawer, junkd), on or off at user scope as `enabledPlugins` in `~/.claude/settings.json`
   (`$CLAUDE_CONFIG_DIR/settings.json`) says; the title names the file it writes. A plugin on in this project only
-  is marked. Keys `1`–`9` flip one; the pane then says to run `/reload-plugins`. handoff, orch and tldr are no
-  plugins of their own anymore: each group's `enabled` row in Settings is their on/off.
-- **Settings** — the groups core, handoff, orch and tldr, in that order, each with its `main` rows and `enabled`
+  is marked. Keys `1`–`9` flip one; the pane then says to run `/reload-plugins`. handoff, orch, tldr, ctx-limit and
+  statusline are no plugins of their own anymore: each group's `enabled` row in Settings is their on/off.
+- **Settings** — the groups core, handoff, orch, tldr, ctx and statusline, in that order, each with its `main` rows and `enabled`
   first, with their current values. A letter flips a boolean; a number is typed and saved with `enter`, a choice
-  (`orch_guard`, `core_output_style`) is picked with `tab` and `enter`. The group's own rules validate what it
+  (`orch_guard`, `core_output_style`, `ctx_action`) is picked with `tab` and `enter`. The group's own rules validate what it
   gets, and a refusal shows in the note line. Each row: the field, its title, the control on the right (a switch
   as an `on`/`off` pill and its letter, a choice as its options with the current one inverse, a number as a
-  field). `settings ▸` on handoff and orch opens that pane (handoff on its Settings tab), closes junkd and the
-  set's other feature pane (while it is still the set's), then asks again for the keys, so the feature pane ends
-  alone with them; it is yours from then on. core and tldr have no pane and no button.
+  field). `settings ▸` on handoff, orch and statusline opens that pane (handoff on its Settings tab), closes junkd
+  and the set's other feature panes (while they are still the set's), then asks again for the keys, so the feature
+  pane ends alone with them; it is yours from then on. core, tldr and ctx have no pane and no button.
 - **Commands** — the enabled plugins' slash commands with their one-line descriptions, as the engine lists them
   (`$.command.list()`, filtered to the plugins on in this session), junkd's `/junkd:*` among them.
 
@@ -116,7 +123,7 @@ a git checkout). The junkd pane has three sections, their titles in junk-drawer'
 
 Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/config` row `junkd.<group>_<field>`
 (Claude Code takes only identifier keys in a manifest's `userConfig`, so the group and the field are joined by
-`_`). Four groups, each feature group with its `enabled` row first:
+`_`). Six groups, each feature group with its `enabled` row first:
 
 | Group | Rows | Details |
 |---|---|---|
@@ -124,23 +131,28 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 | handoff | `handoff_enabled`, `handoff_threshold`, `handoff_checkEvery`, `handoff_autoOn`, `handoff_resumeAfterLimit`, `handoff_staleDays`, `handoff_segment` | [handoff settings](#settings-1) |
 | orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md` | [orch settings](#settings-2) |
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
+| ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
+| statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
 
 The `enabled` rows: `handoff_enabled` off is no auto handoff loop and no 🪃 segment (`/junkd:handoff`,
 `/junkd:handon` and the pane still work); `orch_enabled` off is no main-loop guard and no rule sheet at session
 start (`/junkd:orch` and its pane still work); `tldr_enabled` off keeps the per-turn terse hook silent
-(`/junkd:tldr N` still summarizes). Scope: user-global; project/session overrides: planned.
+(`/junkd:tldr N` still summarizes); `ctx_enabled` off (the default) is no context limit; `statusline_enabled` off
+takes junkd's line out of settings.json. Scope: user-global; project/session overrides: planned.
 
 A shell hook runs before the hooks module at a session start and reads no plugin setting, so each shell hook reads
 its row from `settings.json` itself (`pluginConfigs`, the first entry whose key starts with `junkd@`, its
 `.options.<row>`), and only where that names no value a flag file the module mirrors the row into decides. The
 flag files live under `~/.claude/junkd/` (`$CLAUDE_CONFIG_DIR/junkd/`): `output-style-off`, `tldr-on`,
-`tldr-off`, `orch-off`, `orch-rules-off`, and the setup stamps `setup-<version>.stamp`.
+`tldr-off`, `orch-off`, `orch-rules-off`, ctx-limit's `ctx-limit-threshold`, `ctx-limit-action` and
+`ctx-limit-cmd`, the status line's copy `statusline.sh`, and the setup stamps `setup-<version>.stamp`.
 
-## Moving from the handoff, orch and tldr plugins
+## Moving from the handoff, orch, tldr, ctx-limit, ctx-tokens and statusline plugins
 
-handoff, orch and tldr were separate plugins of this marketplace; they are now part of junkd, which no longer
-depends on them. Uninstall the old ones (`/plugin uninstall handoff@junk-drawer`, `orch@junk-drawer`,
-`tldr@junk-drawer`) and install junkd. Nothing is copied over: set the values you had changed again (`/config`,
+handoff, orch, tldr, ctx-limit, ctx-tokens and statusline were separate plugins of this marketplace; they are now
+part of junkd, which no longer depends on them. Uninstall the old ones (`/plugin uninstall handoff@junk-drawer`,
+`orch@junk-drawer`, `tldr@junk-drawer`, `ctx-limit@junk-drawer`, `ctx-tokens@junk-drawer`,
+`statusline@junk-drawer`, and the same plugins on Codex and Kimi Code) and install junkd. Nothing is copied over: set the values you had changed again (`/config`,
 the junkd pane, a feature pane), or rename the keys in `~/.claude/settings.json` by hand.
 
 | Before | Now |
@@ -161,6 +173,13 @@ the junkd pane, a feature pane), or rename the keys in `~/.claude/settings.json`
 | `~/.claude/tldr-on` | `~/.claude/junkd/tldr-on` (run `/junkd:tldr on` again; the old file is not read) |
 | `~/.claude/orch/rules-off` | `~/.claude/junkd/orch-rules-off` (written by the module at the next session start) |
 | `$.handoff`, `$.orch`, `$.tldr` | `$.junkd` ([below](#junkd-for-other-mods)) |
+| `/ctx-limit`, `/ctx-limit:ctx-limit` | `/junkd:ctx-limit` |
+| `ctx-tokens` (the bare command) | `/junkd:ctx-tokens`; `ctx-tokens` stays on the Bash tool's PATH while junkd is on |
+| `/statusline:init` | `/junkd:statusline on` (on by default: the first session start wires it) |
+| `~/.claude/ctx-limit-threshold`, `-action`, `-cmd` | `~/.claude/junkd/ctx-limit-*`: the module moves them once at session start where the new ones are missing |
+| `<home>/junk-drawer/ctx-limit-*` (Codex, Kimi Code) | `<home>/junk-drawer/junkd/ctx-limit-*`: not moved, set the limit again with the skill |
+| `~/.claude/junk-drawer-statusline.sh` | `~/.claude/junkd/statusline.sh`: `statusline-setup on` (the first session start, or `/junkd:statusline on`) moves the statusLine and removes the old copy |
+| — | new rows `ctx_*` (the guard off by default) and `statusline_*` (all on by default) |
 
 Saved handoffs stay where they were (`~/.claude/handoffs`) and need nothing. Codex and Kimi Code keep their flags
 and handoffs under `<home>/junk-drawer/`.
@@ -835,6 +854,127 @@ are three of its settings:
 There is no tldr pane; `/junkd:tldr` stays the command on Claude Code. The module is Claude-only: Codex and Kimi
 run the shell hook and `tldr-flag` as before (OpenCode only `tldr-flag`), and `tldr_enabled` does not apply there.
 
+## ctx-limit and ctx-tokens
+
+Two context tools that work on every host. `ctx-tokens` reads how full the context is from the session transcript;
+`ctx-limit` sets a context-size limit that a per-prompt hook enforces.
+
+### Usage
+
+```text
+/junkd:ctx-limit 300k          # set the limit and turn the guard on (also 400000, 1m)
+/junkd:ctx-limit on            # on at the last threshold (300k by default)
+/junkd:ctx-limit               # status (also `status`)
+/junkd:ctx-limit off           # off
+/junkd:ctx-limit action warn   # block | warn | cmd
+/junkd:ctx-limit cmd terminal-notifier -message "ctx limit hit"   # the command, and action cmd
+/junkd:ctx-tokens              # how full the context is: ctx 61k (61951) | out 562
+```
+
+Past the threshold the hook does one of three things:
+
+- **block** (the default): the prompt is refused until you `/clear`, `/junkd:handoff`, or `/junkd:ctx-limit off`.
+- **warn**: a warning goes into the context and the prompt runs.
+- **cmd**: your command runs with `CTX_TOKENS` and `CTX_LIMIT` in its environment, and the prompt runs.
+
+The guard never blocks its own way out: `/junkd:ctx-limit`, `/junkd:handoff`, `/junkd:handon`, `/junkd:ahandoff`,
+`/clear`, `$ctx-limit`, `$handoff`, `/skill:ctx-limit`, `/skill:handoff`, `/skill:handon` and the OpenCode
+wrappers `/ctx-limit`, `/handoff`, `/handon` always pass. Whole names only: `/ctx-limiter` or `$handoffs` is
+blocked like any prompt.
+
+`ctx-tokens` keeps its CLI: `ctx-tokens` prints the context tokens as a bare number, `-h` the human form,
+`<file.jsonl>` reads that transcript, `--codex`, `--kimi`, `--claude` pick the host, `--cwd <dir>` the project.
+Without a flag it finds the session of the host `host-lib` detects; the flags override that. "Context" is the last
+turn's input side (input + cache creation + cache read): what fills the window.
+
+### Settings
+
+Four rows (`/config` key `junkd.<row>`); the junkd pane shows the first three in its ctx group:
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `ctx_enabled` | boolean | `false` | The guard on or off, the same switch as `/junkd:ctx-limit on|off` |
+| `ctx_threshold` | number | `300000` | The limit in tokens: a whole number, 1000 or more; `300k` and `1m` are read too |
+| `ctx_action` | choice | `block` | `block`, `warn` or `cmd` |
+| `ctx_cmd` | string | `''` | The shell command of action `cmd` |
+
+**The files are the shell-side truth.** The hook is a shell script and reads no `$.config`, so three files under
+`~/.claude/junkd/` (`$CLAUDE_CONFIG_DIR/junkd/`) stand in for the rows: `ctx-limit-threshold` (there while the
+guard is on, holding the limit), `ctx-limit-action`, `ctx-limit-cmd` (none while it is empty). A write to a row,
+through `/config`, the pane, `$.junkd.set` or `/junkd:ctx-limit`, writes its file first and then the row; a row
+that is refused puts the file back. `ctx_threshold` changes the file only while the guard is on (the row keeps the
+number `ctx_enabled` writes). `$.junkd.get` answers from the files, so a change made with the skill's CLI
+(`./bin/ctx-limit`) shows there too.
+
+### Hosts
+
+| Host | Command | State files | Hook |
+|---|---|---|---|
+| Claude Code | `/junkd:ctx-limit`, `/junkd:ctx-tokens` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/ctx-limit-*` | `hooks/hooks.json`, UserPromptSubmit; block is exit 2 |
+| Codex | `$ctx-limit`, `$ctx-tokens` | `${CODEX_HOME:-$HOME/.codex}/junk-drawer/junkd/ctx-limit-*` | `.codex-plugin/hooks.json`, once you trust it; block is `{"continue": false}` |
+| Kimi Code | `/skill:ctx-limit`, `/skill:ctx-tokens` | `${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/junkd/ctx-limit-*` | the manifest's `hooks`; block is exit 2 |
+| OpenCode | `/ctx-limit`, `/ctx-tokens` (the wrappers) | `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer/junkd/ctx-limit-*` | none: the limit is recorded, not enforced |
+
+On every host but Claude Code the skill runs `./bin/ctx-limit` and `./bin/ctx-tokens` from its own folder, and
+`host-lib` tells the host (`JUNK_DRAWER_RUNTIME` overrides). The CLI exits 2 on a host it cannot tell and writes
+nothing; the hook exits 0 there, so the guard never blocks on a guess. `on` with no threshold set uses 300000 on
+Claude Code and 200000 elsewhere. The hook reads `token_count` events on Codex, `step.end` usage records on Kimi
+Code (found from the hook's `session_id`), and the usage blocks of `transcript_path` on Claude Code; no usage
+record it knows, and it lets the prompt through. Neither the Codex nor the Kimi transcript layout is a stable API:
+the host's own context footer is the stable reference.
+
+## statusline
+
+A colored status line for Claude Code. Segments, separated by a dim `│`:
+
+`ctx` (cyan: context free and used) · `branch` (green) · `⑂worktree` (magenta, only in a linked worktree) · `model`
+(bold blue) · `effort` (yellow) · `limits` (the 5h and weekly rate-limit use, green, orange past 50%, red past 80%)
+
+### Usage
+
+```text
+/junkd:statusline              # toggle the statusline pane
+/junkd:statusline on           # wire it into settings.json (the statusline_enabled row)
+/junkd:statusline off          # take it out again
+/junkd:statusline status       # on, off, or off (<your own command>), and the segments that are off
+```
+
+The status line is on by default: the first session start with junkd copies `bin/statusline.sh` to
+`~/.claude/junkd/statusline.sh` and points `statusLine` in `~/.claude/settings.json` at that absolute path (a
+plugin path is a versioned cache, and `${CLAUDE_PLUGIN_ROOT}` does not resolve in settings.json). It does so only
+where settings.json has no `statusLine` or one that is junkd's. A `statusLine` of your own is never replaced:
+turning the row on refuses with the reason (`bin/statusline-setup on --force` from the skill folder replaces it),
+and `off` leaves it alone. At every session start, while the row is on, a copy that differs from the plugin's (a
+plugin update) is copied again. Every write backs settings.json up to `settings.json.bak`, goes through a symlink
+to the real file (temp + `mv`), and never touches a settings.json that does not parse.
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `statusline_enabled` | boolean | `true` | `statusLine` points at junkd's line: true runs `bin/statusline-setup on`, false `off`; a refusal is the deny and the row stays |
+| `statusline_ctx` | boolean | `true` | Draw the context segment |
+| `statusline_branch` | boolean | `true` | Draw the git branch |
+| `statusline_worktree` | boolean | `true` | Draw the linked worktree's folder |
+| `statusline_model` | boolean | `true` | Draw the model's name |
+| `statusline_effort` | boolean | `true` | Draw the effort level |
+| `statusline_limits` | boolean | `true` | Draw the 5h and weekly rate limits |
+
+The renderer reads the segment rows from settings.json itself at every draw (`pluginConfigs`, the first entry
+whose key starts with `junkd@`, its `options.statusline_<segment>`): a missing key, a settings.json that does not
+parse, or no `jq` draws the segment. A segment off takes out exactly it and its separator.
+
+The junkd pane shows `statusline_enabled`; its `settings ▸` opens the statusline pane: the enabled switch (`a`), one
+switch per segment (`b`–`g`), and a preview of the line for your choice (the renderer run on a sample session:
+model "preview", the project folder, 61k of a 200k context used, the rate limits at 12% and 33%; drawn without its
+colors). `q` closes it; `$.junkd.open({ pane: 'statusline' })` toggles it.
+
+### Hosts
+
+The line is Claude Code only. Codex: the skill (`$statusline`) proposes the native `[tui].status_line` list in
+`config.toml`. Kimi Code: a fixed footer, themes only. OpenCode: no status line to configure (no `/statusline`
+wrapper either: `bin/opencode-commands.sh` skips the skill).
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
@@ -848,14 +988,20 @@ run the shell hook and `tldr-flag` as before (OpenCode only `tldr-flag`), and `t
   segment, its pane.
 - `hooks/orch.tsx`, `orch-lib.ts`, `orch-views.tsx` — orch: the main-loop guard, its pane.
 - `hooks/tldr.tsx` — tldr: the sentences default and the flag files `tldr-on`, `tldr-off`.
+- `hooks/ctx.ts` — ctx: the rows, their files `ctx-limit-*`, `/junkd:ctx-limit`, the move of the old files.
+- `hooks/statusline.tsx`, `statusline-views.tsx` — statusline: the rows, `statusline-setup` on|off, the refresh at
+  session start, `/junkd:statusline`, its pane.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
-  `tldr`); the real helpers live inside their skill (`skills/handoff/bin`, `skills/orch/bin`,
-  `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/junkd/scripts/setup.sh`,
-  `skills/junkd/scripts/cache-check.sh`).
+  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`); the real helpers live inside their skill (`skills/handoff/bin`,
+  `skills/orch/bin`, `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
+  (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
+  `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a
+  real copy in each skill that sources it (handoff, handon, tldr, ctx-limit, ctx-tokens).
 - `bin/`, `scripts/`, `agents/` at the plugin root — links: `bin -> skills/junkd/bin` and `scripts ->
   skills/junkd/scripts` (each entry a link to its skill's real file), `agents -> skills/orch/roles`, as the
   layout invariant of `tests/smoke.sh` asks.
 - `output-styles/STE.md` — the `junkd:STE` output style. `docs/orch-guide.md` (and `.html`) — orch's long guide.
 - Tests: `hooks/*.test.ts(x)` (`claude plugin test plugins/junkd`), `tests/junkd.sh`, `tests/orch.sh`,
-  `tests/tldr.sh`, `tests/cache-check.sh`, all run by `tests/smoke.sh`.
+  `tests/tldr.sh`, `tests/cache-check.sh`, `tests/ctx.sh`, `tests/statusline.sh` (its golden line in
+  `tests/statusline/`), all run by `tests/smoke.sh`.

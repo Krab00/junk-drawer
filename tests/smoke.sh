@@ -73,63 +73,18 @@ done
 stray=$(find "$root"/plugins -type f -name '*.sh' ! -path '*/skills/*')
 [ -z "$stray" ] || { echo "real *.sh outside skills/ (move it under skills/<name>/, link it from the plugin root):"; printf '%s\n' "$stray"; exit 1; }
 
-cat > "$tmp/codex.jsonl" <<'JSONL'
-{"type":"session_meta","payload":{"cwd":"/tmp/example"}}
-{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1200,"output_tokens":30},"model_context_window":10000}}}
-JSONL
-[ "$("$root/plugins/ctx-tokens/bin/ctx-tokens" --codex "$tmp/codex.jsonl")" = 1200 ]
-ctx_human=$("$root/plugins/ctx-tokens/bin/ctx-tokens" --codex -h "$tmp/codex.jsonl")
-rg -q 'remaining 8k \(8800\)' <<<"$ctx_human"
-
-cat > "$tmp/claude.jsonl" <<'JSONL'
-{"message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":200,"cache_read_input_tokens":300,"output_tokens":20}}}
-JSONL
-[ "$("$root/plugins/ctx-tokens/bin/ctx-tokens" --claude "$tmp/claude.jsonl")" = 600 ]
-
+# ctx-limit, ctx-tokens and the status line are skills of junkd: their own tests run them over temp homes on every
+# host (tests/ctx.sh) and hold the renderer to the pre-move golden (tests/statusline.sh).
+bash "$root/tests/ctx.sh" >/dev/null 2>&1 || { echo "tests/ctx.sh failed; run it alone for the reason"; exit 1; }
+bash "$root/tests/statusline.sh" >/dev/null 2>&1 || { echo "tests/statusline.sh failed; run it alone for the reason"; exit 1; }
 runtime="$tmp/runtime"
-CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$root/plugins/ctx-limit/bin/ctx-limit" 1k >/dev/null
-hook=$(printf '{"prompt":"continue","transcript_path":"%s"}' "$tmp/codex.jsonl" |
-    CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
-printf '%s\n' "$hook" | jq -e '.continue == false and (.stopReason | length > 0)' >/dev/null
-escape=$(printf '{"prompt":"Use $ctx-limit to turn the guard off","transcript_path":"%s"}' "$tmp/codex.jsonl" |
-    CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
-[ -z "$escape" ]
-mention=$(printf '{"prompt":"Explain why $ctx-limit blocked me","transcript_path":"%s"}' "$tmp/codex.jsonl" |
-    CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
-printf '%s\n' "$mention" | jq -e '.continue == false' >/dev/null
-for lookalike in '/ctx-limiter off' '/clearance review' '$ctx-limiter off'; do
-    blocked=$(printf '{"prompt":"%s","transcript_path":"%s"}' "$lookalike" "$tmp/codex.jsonl" |
-        CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
-    printf '%s\n' "$blocked" | jq -e '.continue == false' >/dev/null
-done
-
 claude_runtime="$tmp/claude-runtime"
-CLAUDE_CONFIG_DIR="$claude_runtime" "$root/plugins/ctx-limit/bin/ctx-limit" 1 >/dev/null
-set +e
-claude_block=$(printf '{"prompt":"continue","transcript_path":"%s"}' "$tmp/claude.jsonl" |
-    CLAUDE_CONFIG_DIR="$claude_runtime" "$root/plugins/ctx-limit/bin/ctx-limit-hook" 2>&1)
-claude_status=$?
-set -e
-[ "$claude_status" -eq 2 ]
-rg -q 'ctx-limit reached' <<<"$claude_block"
-
-# A control command passes the guard over the limit; a lookalike of it does not.
-for passing in '/junkd:handoff' '/junkd:handon abc' '/junkd:ahandoff off' '/handoff' '/skill:handon'; do
-    passed=$(printf '{"prompt":"%s","transcript_path":"%s"}' "$passing" "$tmp/codex.jsonl" |
-        CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
-    [ -z "$passed" ] || { echo "ctx-limit blocked the control command $passing"; exit 1; }
-done
-for lookalike in '/junkd:handoffs' '/junkd:orch' '/handoff:handoff' '/ahandoff'; do
-    blocked=$(printf '{"prompt":"%s","transcript_path":"%s"}' "$lookalike" "$tmp/codex.jsonl" |
-        CODEX_HOME="$runtime" PLUGIN_ROOT="$root/plugins/ctx-limit" "$root/plugins/ctx-limit/bin/ctx-limit-hook")
-    printf '%s\n' "$blocked" | jq -e '.continue == false' >/dev/null || { echo "ctx-limit let $lookalike through"; exit 1; }
-done
 
 junkd="$root/plugins/junkd"
 CODEX_HOME="$runtime" JUNK_DRAWER_RUNTIME=codex "$junkd/bin/tldr-flag" on >/dev/null
 # As a Codex hook runs it: PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT name the installed plugin under $CODEX_HOME, and no
 # Claude Code signal of the shell that runs these tests leaks in.
-codex_plugin="$runtime/plugins/cache/junk-drawer/junkd/0.4.0"
+codex_plugin="$runtime/plugins/cache/junk-drawer/junkd/0.5.0"
 tldr_hook=$(env -u CLAUDECODE -u CLAUDE_CONFIG_DIR -u JUNK_DRAWER_RUNTIME CODEX_HOME="$runtime" PLUGIN_ROOT="$codex_plugin" \
     CLAUDE_PLUGIN_ROOT="$codex_plugin" "$junkd/skills/tldr/bin/tldr-hook")
 rg -q 'TL;DR MODE ON' <<<"$tldr_hook"
@@ -139,11 +94,19 @@ handoff_result=$(CODEX_THREAD_ID=codex-id CLAUDE_CODE_SESSION_ID=claude-id CLAUD
     JUNK_DRAWER_RUNTIME=claude "$junkd/bin/handoff-path")
 [ "$(printf '%s\n' "$handoff_result" | tail -1)" = claude-i ]
 
-# One plugin: plugins/ holds junkd, ctx-limit, ctx-tokens, statusline and junk-drawer; no host's marketplace lists the
-# plugins that moved into junkd (handoff, orch, tldr), and junkd depends on nothing.
-[ "$(ls -1 "$root/plugins" | sort | tr '\n' ' ')" = "ctx-limit ctx-tokens junk-drawer junkd statusline " ] ||
-    { echo "plugins/ holds $(ls -1 "$root/plugins" | tr '\n' ' '), expected ctx-limit ctx-tokens junk-drawer junkd statusline"; exit 1; }
-for gone in handoff orch tldr; do
+# Two plugins: plugins/ holds junkd and junk-drawer (the cheatsheet); every host's marketplace lists those two and
+# nothing else, no plugin that moved into junkd (handoff, orch, tldr, ctx-limit, ctx-tokens, statusline) among them,
+# and junkd depends on nothing.
+[ "$(ls -1 "$root/plugins" | sort | tr '\n' ' ')" = "junk-drawer junkd " ] ||
+    { echo "plugins/ holds $(ls -1 "$root/plugins" | tr '\n' ' '), expected junk-drawer junkd"; exit 1; }
+for gone in ctx-limit ctx-tokens statusline; do
+    [ ! -e "$root/plugins/$gone" ] || { echo "plugins/$gone is back"; exit 1; }
+done
+[ "$(jq -r '[.plugins[].name] | sort | join(" ")' "$root/.claude-plugin/marketplace.json")" = "junk-drawer junkd" ] &&
+    [ "$(jq -r '[.plugins[].id] | sort | join(" ")' "$root/kimi-marketplace.json")" = "junk-drawer junkd" ] &&
+    [ "$(jq -r '[.plugins[].name] | sort | join(" ")' "$root/.agents/plugins/marketplace.json")" = "junk-drawer junkd" ] ||
+    { echo "a marketplace lists more or less than junk-drawer and junkd"; exit 1; }
+for gone in handoff orch tldr ctx-limit ctx-tokens statusline; do
     jq -e --arg n "$gone" '[.plugins[] | select(.name == $n)] | length == 0' "$root/.claude-plugin/marketplace.json" >/dev/null &&
         jq -e --arg n "$gone" '[.plugins[] | select(.id == $n)] | length == 0' "$root/kimi-marketplace.json" >/dev/null &&
         jq -e --arg n "$gone" '[.plugins[] | select(.name == $n)] | length == 0' "$root/.agents/plugins/marketplace.json" >/dev/null ||
@@ -159,7 +122,7 @@ done
 
 # Every command is a skill of junkd's (/junkd:<name>); no plugin-root commands/ (it would add /junkd:init and a
 # second /junkd:orch from skills/orch/commands).
-for skill in junkd tldr handoff handon ahandoff orch orch-init; do
+for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline; do
     [ "$(awk -F': *' '$1 == "name" { print $2; exit }' "$junkd/skills/$skill/SKILL.md")" = "$skill" ] ||
         { echo "junkd: skills/$skill/SKILL.md is missing or not named $skill"; exit 1; }
 done
@@ -186,12 +149,16 @@ done
 schema_keys=$(rg -o "^  \{ key: '[A-Za-z_]+'" "$settings_ts" | rg -o "'[A-Za-z_]+'" | tr -d "'")
 [ "$schema_keys" = "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest")" ] ||
     { echo "settings.ts SCHEMA keys differ from the manifest's userConfig (or their order does)"; exit 1; }
-for group in handoff orch tldr; do
+for group in handoff orch tldr ctx statusline; do
     first=$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | rg "^${group}_" | head -1)
     [ "$first" = "${group}_enabled" ] || { echo "junkd: the $group group's first row is $first, not ${group}_enabled"; exit 1; }
 done
-[ "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | sed 's/_.*//' | uniq | tr '\n' ' ')" = "core handoff orch tldr " ] ||
-    { echo "junkd: the rows are not grouped core, handoff, orch, tldr in that order"; exit 1; }
+[ "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | sed 's/_.*//' | uniq | tr '\n' ' ')" = "core handoff orch tldr ctx statusline " ] ||
+    { echo "junkd: the rows are not grouped core, handoff, orch, tldr, ctx, statusline in that order"; exit 1; }
+# The manifest keeps type, title, description, default and a choice's options only: a min or max there is enforced
+# by the engine at load (a hand-edited value out of range stops the module), so the bounds live in code.
+jq -e '[.userConfig[] | keys[] | select(. != "type" and . != "title" and . != "description" and . != "default" and . != "options")] == []' "$junkd_manifest" >/dev/null ||
+    { echo "junkd: a userConfig row has a key beyond type, title, description, default and options"; exit 1; }
 
 # The flag files are the shell-side truth of a row a shell hook reads before the module runs: the module and the
 # script spell each alike under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/.
@@ -205,6 +172,28 @@ flag_pair orch-off orch.tsx "$junkd/skills/orch/scripts/orch-context.sh"
 flag_pair orch-rules-off orch.tsx "$junkd/skills/orch/scripts/orch-context.sh"
 flag_pair tldr-on tldr.tsx "$junkd/skills/tldr/bin/tldr-hook"
 flag_pair tldr-off tldr.tsx "$junkd/skills/tldr/bin/tldr-hook"
+# ctx-limit's files: the module writes <config dir>/junkd/ctx-limit-<name>, the CLI and the hook read $cfg/ctx-limit-<name>
+# with cfg the Claude Code config dir's junkd/ folder.
+rg -qF '`${await configDir($)}/junkd/ctx-limit-${name}`' "$junkd/hooks/ctx.ts" || { echo "junkd: hooks/ctx.ts does not spell <config dir>/junkd/ctx-limit-<name>"; exit 1; }
+for name in threshold action cmd; do
+    rg -qF "'$name'" "$junkd/hooks/ctx.ts" || { echo "junkd: hooks/ctx.ts does not name the ctx-limit-$name file"; exit 1; }
+    for script in ctx-limit ctx-limit-hook; do
+        rg -qF "\$cfg/ctx-limit-$name" "$junkd/skills/ctx-limit/bin/$script" || { echo "junkd: bin/$script does not spell \$cfg/ctx-limit-$name"; exit 1; }
+    done
+done
+for script in ctx-limit ctx-limit-hook; do
+    rg -qF 'if [ "$JD_HOST" = claude ]; then cfg="$JD_CFG/junkd"' "$junkd/skills/ctx-limit/bin/$script" ||
+        { echo "junkd: bin/$script does not keep its Claude Code files in \$JD_CFG/junkd"; exit 1; }
+done
+# The status line: the module compares and setup writes <config dir>/junkd/statusline.sh, and the renderer reads every
+# segment row of settings.ts from settings.json by its key.
+rg -qF '`${await configDir($)}/junkd/statusline.sh`' "$junkd/hooks/statusline.tsx" &&
+    rg -qF 'DEST="$CFG/junkd/statusline.sh"' "$junkd/skills/statusline/bin/statusline-setup" ||
+    { echo "junkd: hooks/statusline.tsx and bin/statusline-setup do not spell the same <config dir>/junkd/statusline.sh"; exit 1; }
+for key in $(jq -r '.userConfig | keys_unsorted[] | select(startswith("statusline_") and . != "statusline_enabled")' "$junkd_manifest"); do
+    rg -qF ".$key," "$junkd/skills/statusline/bin/statusline.sh" || rg -qF ".$key]" "$junkd/skills/statusline/bin/statusline.sh" ||
+        { echo "junkd: bin/statusline.sh does not read the $key row"; exit 1; }
+done
 # The SubagentStop records: the script writes them where the module reads them, and the guard's deny list holds them.
 rg -qF '$cfg/junkd/orch/_agents/$sid"' "$junkd/skills/orch/scripts/orch-agent-stop.sh" ||
     { echo "junkd: orch-agent-stop.sh does not write under \$cfg/junkd/orch/_agents/<session>"; exit 1; }
@@ -237,12 +226,22 @@ bash "$root/tests/opencode-commands.sh" >/dev/null 2>&1 || { echo "tests/opencod
 
 # host-lib has one real copy per skill that ships its helpers (an installer that drops symlinks keeps each skill
 # whole), and handon ships a real copy of handoff-load: the copies stay byte-identical to handoff's.
-for copy in tldr/bin/host-lib handon/bin/host-lib handon/bin/handoff-load; do
+for copy in tldr/bin/host-lib handon/bin/host-lib ctx-limit/bin/host-lib ctx-tokens/bin/host-lib handon/bin/handoff-load; do
     [ -f "$junkd/skills/$copy" ] && [ ! -L "$junkd/skills/$copy" ] || { echo "junkd: skills/$copy is not a real file"; exit 1; }
     cmp -s "$junkd/skills/handoff/bin/${copy##*/}" "$junkd/skills/$copy" ||
         { echo "junkd: skills/$copy differs from skills/handoff/bin/${copy##*/}"; exit 1; }
 done
 [ -x "$junkd/skills/handon/bin/handoff-load" ] || { echo "junkd: skills/handon/bin/handoff-load is not executable"; exit 1; }
+# The helpers of ctx-limit, ctx-tokens and statusline: real executables in their skill, reached from the plugin root
+# through bin -> skills/junkd/bin -> ../../<skill>/bin (the hooks and /junkd's module call them there).
+for pair in ctx-limit:ctx-limit ctx-limit:ctx-limit-hook ctx-tokens:ctx-tokens statusline:statusline.sh statusline:statusline-setup; do
+    skill=${pair%%:*} name=${pair#*:}
+    real="$junkd/skills/$skill/bin/$name"
+    [ -f "$real" ] && [ ! -L "$real" ] && [ -x "$real" ] || { echo "junkd: skills/$skill/bin/$name is not a real executable"; exit 1; }
+    [ -L "$junkd/skills/junkd/bin/$name" ] && [ "$(readlink "$junkd/skills/junkd/bin/$name")" = "../../$skill/bin/$name" ] ||
+        { echo "junkd: skills/junkd/bin/$name is not a link to ../../$skill/bin/$name"; exit 1; }
+    [ "$(cd -P "$junkd/bin" && pwd)/$name" -ef "$real" ] || { echo "junkd: bin/$name does not reach skills/$skill/bin/$name"; exit 1; }
+done
 
 # Codex refuses a hooks file with any top-level key but description and hooks, and hooks/hooks.json carries Claude
 # Code's modules: Codex reads its own file, named by its manifest, whose command reaches a real script (Codex drops
@@ -315,9 +314,9 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-# Eleven skills: one each for ctx-limit, ctx-tokens, junk-drawer and statusline, and junkd's seven (junkd, tldr,
-# handoff, handon, ahandoff, orch, orch-init). skills/junkd also holds the real home of the plugin-root bin/ and
-# scripts/ links, as the layout invariant above asks.
+# Eleven skills: junk-drawer's one and junkd's ten (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
+# ctx-limit, ctx-tokens, statusline). skills/junkd also holds the real home of the plugin-root bin/ and scripts/
+# links, as the layout invariant above asks.
 [ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 11 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
@@ -335,7 +334,7 @@ for skill_md in "$installed"/*/SKILL.md; do
     # nothing. A `../../bin/x` would also match this pattern, but the ../ check above
     # already exited by then. rg exit 1 (no matches at all) is a failure too: every
     # SKILL.md in this marketplace references at least one skill-local path.
-    refs=$(rg -o -e '\./(bin/[a-z-]+|commands/[a-z-]+\.md|roles/|[a-z-]+\.sh)' "$skill_md" | sort -u) \
+    refs=$(rg -o -e '\./(bin/[a-z-]+(\.sh)?|commands/[a-z-]+\.md|roles/|[a-z-]+\.sh)' "$skill_md" | sort -u) \
         || { echo "no skill-local refs extracted from $skill_md"; exit 1; }
     for ref in $refs; do
         [ -e "$skill_dir/$ref" ] || { echo "unresolved $ref in $skill_md"; exit 1; }
@@ -370,7 +369,7 @@ cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load
     { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
 
 # Every host map names all four hosts; handoff tells the resume command of each; tldr says OpenCode has no hook.
-for skill in handoff tldr orch orch-init; do
+for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline; do
     for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do
         rg -qF "$host" "$root/plugins/junkd/skills/$skill/SKILL.md" || { echo "junkd: skills/$skill/SKILL.md does not name $host"; exit 1; }
     done
@@ -382,7 +381,7 @@ rg -qF 'OpenCode has no hook' "$root/plugins/junkd/skills/tldr/SKILL.md" || { ec
 
 # The Kimi model followed whichever host line came first: handon, junkd and ahandoff put the non-Claude line before
 # the Claude Code one.
-for skill in handon junkd ahandoff; do
+for skill in handon junkd ahandoff ctx-limit ctx-tokens; do
     md="$root/plugins/junkd/skills/$skill/SKILL.md"
     other=$(rg -n -m1 '^- Codex, Kimi Code, OpenCode or any other host' "$md" | cut -d: -f1)
     claude_line=$(rg -n -m1 '^- Claude Code' "$md" | cut -d: -f1)
