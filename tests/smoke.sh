@@ -232,6 +232,8 @@ rg -q '^name: STE$' "$junkd/output-styles/STE.md" && rg -qF '"junkd:STE"' "$junk
 
 # Host detection and handoff ids: every helper lands in the detected host's data root, no signal exits 2.
 bash "$root/tests/hosts.sh" >/dev/null 2>&1 || { echo "tests/hosts.sh failed; run it alone for the reason"; exit 1; }
+# The OpenCode command wrappers: one per skill, descriptions cut on a word boundary.
+bash "$root/tests/opencode-commands.sh" >/dev/null 2>&1 || { echo "tests/opencode-commands.sh failed; run it alone for the reason"; exit 1; }
 
 # host-lib has one real copy per skill that ships its helpers (an installer that drops symlinks keeps each skill
 # whole), and handon ships a real copy of handoff-load: the copies stay byte-identical to handoff's.
