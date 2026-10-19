@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-tmp=$(mktemp -d)
+tmp=$(cd "$(mktemp -d)" && pwd -P) # the physical path: a TMPDIR ending in `/` gives mktemp a `//`
 trap 'rm -rf "$tmp"' EXIT
 
 for file in $(rg --files "$root/plugins" | rg '/(bin/|[^/]+\.sh$)'); do
@@ -77,6 +77,12 @@ stray=$(find "$root"/plugins -type f -name '*.sh' ! -path '*/skills/*')
 # host (tests/ctx.sh) and hold the renderer to the pre-move golden (tests/statusline.sh).
 bash "$root/tests/ctx.sh" >/dev/null 2>&1 || { echo "tests/ctx.sh failed; run it alone for the reason"; exit 1; }
 bash "$root/tests/statusline.sh" >/dev/null 2>&1 || { echo "tests/statusline.sh failed; run it alone for the reason"; exit 1; }
+# Again with a TMPDIR that ends in `/`, as stock macOS sets it: no path a test derives may carry a `//`.
+mkdir -p "$tmp/slash"
+for t in ctx statusline; do
+    TMPDIR="$tmp/slash/" bash "$root/tests/$t.sh" >/dev/null 2>&1 ||
+        { echo "tests/$t.sh failed with TMPDIR ending in /; run it alone with TMPDIR=\$TMPDIR/ for the reason"; exit 1; }
+done
 runtime="$tmp/runtime"
 claude_runtime="$tmp/claude-runtime"
 
