@@ -14,6 +14,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 | `/junkd:ctx-limit [<tokens> \| on \| off \| status \| action <m> \| cmd <shell>]` | A context-size limit a per-prompt hook enforces: block, warn, or run a command |
 | `/junkd:ctx-tokens` | How full the context is, from the session transcript |
 | `/junkd:statusline [on \| off \| status]` | The colored status line in settings.json, a switch per segment; no argument toggles its pane (Claude Code only) |
+| `/junkd:tools [agents \| tools \| mcp \| skills]` | Open or close the tools pane: this session's agents over the repo's worktrees, and the tools, MCP servers and skills it used (Claude Code only) |
 | `/junkd`, `/junkd:junkd` | Open or close the junkd set of panes (Claude Code only) |
 
 On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`, `$ctx-limit`… (the model sees them as `junkd:<name>`), on Kimi
@@ -77,12 +78,13 @@ closes them together:
 2. **handoff** — handoff's pane ([below](#handoff)).
 3. **orch** — orch's settings pane ([below](#orch)).
 4. **statusline** — the status line's pane ([below](#statusline)).
+5. **tools** — the tools pane ([below](#tools)), only while `tools_enabled` is on.
 
-All four are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
+All five are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
 already open on its own closes first and opens again behind junkd's tab, so its tab never comes first, and from
-then on it is the set's. `q`, a second `/junkd`, or closing junkd's tab by hand (`×`) closes all four, but only a
+then on it is the set's. `q`, a second `/junkd`, or closing junkd's tab by hand (`×`) closes them all, but only a
 feature pane that is still the set's: one you closed and opened again on your own (`/junkd:handoff panel`,
-`/junkd:orch panel`, `/junkd:ahandoff panel`, `/junkd:statusline`, the 🪃 click) stays.
+`/junkd:orch panel`, `/junkd:ahandoff panel`, `/junkd:statusline`, `/junkd:tools`, the 🪃 click) stays.
 
 Where the set sits depends on the layout. Only in the fullscreen layout (`"tui": "fullscreen"` in
 `settings.json`), from 110 terminal columns, it docks beside the transcript; narrower, and always on the main
@@ -97,14 +99,15 @@ a git checkout). The junkd pane has three sections, their titles in junk-drawer'
   (`$CLAUDE_CONFIG_DIR/settings.json`) says; the title names the file it writes. A plugin on in this project only
   is marked. Keys `1`–`9` flip one; the pane then says to run `/reload-plugins`. handoff, orch, tldr, ctx-limit and
   statusline are no plugins of their own anymore: each group's `enabled` row in Settings is their on/off.
-- **Settings** — the groups core, handoff, orch, tldr, ctx and statusline, in that order, each with its `main` rows and `enabled`
+- **Settings** — the groups core, handoff, orch, tldr, ctx, statusline and tools, in that order, each with its `main` rows and `enabled`
   first, with their current values. A letter flips a boolean; a number is typed and saved with `enter`, a choice
   (`orch_guard`, `core_output_style`, `ctx_action`) is picked with `tab` and `enter`. The group's own rules validate what it
   gets, and a refusal shows in the note line. Each row: the field, its title, the control on the right (a switch
   as an `on`/`off` pill and its letter, a choice as its options with the current one inverse, a number as a
-  field). `settings ▸` on handoff, orch and statusline opens that pane (handoff on its Settings tab), closes junkd
-  and the set's other feature panes (while they are still the set's), then asks again for the keys, so the feature
-  pane ends alone with them; it is yours from then on. core, tldr and ctx have no pane and no button.
+  field). `settings ▸` on handoff, orch, statusline and tools opens that pane (handoff on its Settings tab, tools on
+  its Agents tab), closes junkd and the set's other feature panes (while they are still the set's), then asks again
+  for the keys, so the feature pane ends alone with them; it is yours from then on. core, tldr and ctx have no pane
+  and no button.
 - **Commands** — the enabled plugins' slash commands with their one-line descriptions, as the engine lists them
   (`$.command.list()`, filtered to the plugins on in this session), junkd's `/junkd:*` among them.
 
@@ -123,7 +126,7 @@ a git checkout). The junkd pane has three sections, their titles in junk-drawer'
 
 Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/config` row `junkd.<group>_<field>`
 (Claude Code takes only identifier keys in a manifest's `userConfig`, so the group and the field are joined by
-`_`). Six groups, each feature group with its `enabled` row first:
+`_`). Seven groups, each feature group with its `enabled` row first:
 
 | Group | Rows | Details |
 |---|---|---|
@@ -133,12 +136,14 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
 | ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
 | statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
+| tools | `tools_enabled`, `tools_refresh`, `tools_agents_only` | [tools settings](#settings-6) |
 
 The `enabled` rows: `handoff_enabled` off is no auto handoff loop and no 🪃 segment (`/junkd:handoff`,
 `/junkd:handon` and the pane still work); `orch_enabled` off is no main-loop guard and no rule sheet at session
 start (`/junkd:orch` and its pane still work); `tldr_enabled` off keeps the per-turn terse hook silent
 (`/junkd:tldr N` still summarizes); `ctx_enabled` off (the default) is no context limit; `statusline_enabled` off
-takes junkd's line out of settings.json. Scope: user-global; project/session overrides: planned.
+takes junkd's line out of settings.json; `tools_enabled` off closes the tools pane, takes its tab out of the set and
+counts nothing. Scope: user-global; project/session overrides: planned.
 
 A shell hook runs before the hooks module at a session start and reads no plugin setting, so each shell hook reads
 its row from `settings.json` itself (`pluginConfigs`, the first entry whose key starts with `junkd@`, its
@@ -198,7 +203,9 @@ asynchronously and takes one object:
 - `get({ key })`, `set({ key, value, scope? })` — one row; `set` validates by the group's rules, writes
   `junkd.<key>` through `$.config`, applies it (flag files included) and resolves to the stored value.
 - `open({ pane, route? })` — toggle a pane: `junkd` (the whole set), `handoff` (`route` `auto`, `handoffs` or
-  `settings` opens on that tab, or switches to it while the pane is up), `orch`.
+  `settings` opens on that tab, or switches to it while the pane is up), `orch`, `tools` (`route` `agents`,
+  `tools`, `mcp` or `skills`, the same way). Each pane takes its own routes only: `open({ pane: 'handoff', route:
+  'mcp' })` is `junkd: no tab mcp`. While `tools_enabled` is off, `open({ pane: 'tools' })` rejects with the reason.
 - `handoffStatus()` — `{ armed, percent, phase }` of the auto handoff loop.
 - `orchGuardState()` — `{ active, model }`: whether the main-loop guard holds right now, and the model it judged.
 
@@ -975,10 +982,78 @@ The line is Claude Code only. Codex: the skill (`$statusline`) proposes the nati
 `config.toml`. Kimi Code: a fixed footer, themes only. OpenCode: no status line to configure (no `/statusline`
 wrapper either: `bin/opencode-commands.sh` skips the skill).
 
+## tools
+
+Claude Code only: a pane of the hooks module. `/junkd:tools` opens or closes it; `/junkd:tools agents`, `tools`,
+`mcp` or `skills` opens it on that tab, or switches to it while it is up. It is also the fifth tab of the
+`/junkd` set, `settings ▸` on the tools group opens it on its Agents tab, and another mod calls
+`$.junkd.open({ pane: 'tools', route })`. On Codex, Kimi Code and OpenCode the `tools` skill says in one line that
+the pane is a Claude Code mod and the host has none.
+
+The four tabs:
+
+1. **Agents** — a tree of this session's agents over the repo's git worktrees (`git worktree list --porcelain`).
+   The root is the main checkout with its branch; under it the other worktrees, each by its folder name and
+   branch (`detached`, `bare`). Each agent sits under the worktree its directory is in (the `cwd` its spawn gave
+   it, else the session's directory at the spawn); an agent in no worktree, or one spawned before the module
+   loaded, sits under the root. A row shows the status glyph (`●` running, `◐` waiting, `○` done, in the theme's
+   success, warning and inactive colours), the name, the agent type, the model it got and, once finished, `done`.
+   An agent the engine drops from its list after it ended stays, as done. Outside a repo the root is the
+   session's folder.
+2. **Tools** — one row per tool the model called: on the main loop (`main`), in subagents (`sub`), and `≈tokens`
+   of the results it read (characters ÷ 4). Most calls first. Every MCP tool folds into one `mcp (N servers)` row;
+   the MCP tab has them per server.
+3. **MCP** — one row per MCP server: calls, tools loaded/total and the schema `≈tokens` from the session's usage
+   summary (`$.session.usage({ breakdown: 'summary' })`, estimated locally), and the result `≈tokens`. `no MCP
+   server` when the session has none.
+4. **Skills** — one row per skill run: `via slash` (you typed `/<skill>`: a plugin's or your own skill or command)
+   or `via tool` (the model's `Skill` call), the count, and when it last ran (`3 m ago`). A typed run the model
+   also answers with a `Skill` call within 2 seconds counts once. Built-in commands, MCP prompts, another plugin's
+   `$.command.run` and the pane toggles are not counted.
+
+What is counted is the model's own calls (another plugin's `$.tool.call` is not); a refused call is not. The
+counters start with the session and start over at `/clear` and `/resume`; the folded nodes, the selection and the
+tab stay. The tree is read again every `tools_refresh` seconds while the pane is open, at every agent spawn, at
+every turn's end, and on `r`. The reading stops when the pane closes (`q`, its `✕`) or when its drawing fails.
+
+### Keys
+
+| Key | Does |
+|---|---|
+| `1`–`4` | Agents, Tools, MCP, Skills |
+| `↑` `↓`, `j` `k` | Move the selection along the tree's rows (the arrows move the focus ring, which is the selection) |
+| `enter` | Fold or unfold the selected node (a worktree, the root); the fold is kept per node across refreshes |
+| `r` | Read the agents, the worktrees and the MCP schemas again now |
+| `t` | Show this session's transcript: in Finder on macOS (`open -R`), its folder elsewhere (`xdg-open`); the outcome is a toast |
+| `q` | Close the pane |
+
+`space` does not fold: Claude Code presses a focused button with `enter` only, and a button's hotkey is one digit
+or one letter. The transcript is the `<session id>.jsonl` (else the newest `.jsonl`) in the project folder Claude
+Code keeps for the session's directory, `~/.claude/projects/<the directory, each character not a letter or digit
+a dash>/`; `$.session` names no transcript path.
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `tools_enabled` | boolean | `true` | Off: the pane closes, its tab leaves the `/junkd` set, `/junkd:tools` and `$.junkd.open({ pane: 'tools' })` say it is off, and nothing is counted (what was counted is dropped) |
+| `tools_refresh` | number | `60` | Seconds between two reads while the pane is open. Clamped to 10–600 (a value under 10 is 10, over 600 is 600); a value that is no number is refused |
+| `tools_agents_only` | boolean | `false` | The Agents tab leaves out the worktrees with no agent of this session (the root stays) |
+
+`tools_enabled` is the group's one row in the junkd pane. `tools_refresh` and `tools_agents_only` are `/config`
+rows only (`junkd.tools_refresh`, `junkd.tools_agents_only`), also read and written by `$.junkd.get/set`: the
+group has no settings tab of its own, so its `settings ▸` opens the tools pane on its Agents tab. A switch takes
+`true`, `'true'` or `'on'` as on, anything else as off, by `$.junkd.set` and by the `/config` menu alike. The
+manifest keeps `tools_refresh` to its type and default: Claude Code refuses a whole module whose stored value is
+out of a manifest range, so the bounds live in the module.
+
+Hosts: Claude Code only (a hooks-module mod). Codex, Kimi Code and OpenCode have the `tools` skill, which answers
+in one line that the pane is a Claude Code mod.
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
-  `tool.call`, the prompt hint line); it composes the feature files below.
+  `tool.call`, `command.run`, the prompt hint line); it composes the feature files below.
 - `hooks/settings.ts` — the mirror of the manifest's `userConfig` rows (checked against it by `tests/smoke.sh`);
   `hooks/dispatch.ts` from a row or a pane to its feature; `hooks/feature.ts` the shapes they share.
 - `hooks/core.ts` — the core rows: `core_output_style` and its flag file, `core_cache_check_sessions`.
@@ -991,9 +1066,11 @@ wrapper either: `bin/opencode-commands.sh` skips the skill).
 - `hooks/ctx.ts` — ctx: the rows, their files `ctx-limit-*`, `/junkd:ctx-limit`, the move of the old files.
 - `hooks/statusline.tsx`, `statusline-views.tsx` — statusline: the rows, `statusline-setup` on|off, the refresh at
   session start, `/junkd:statusline`, its pane.
+- `hooks/tools-pane.tsx`, `tools.ts`, `tools-views.tsx` — tools: the pane, its poll and the settings group; the
+  counters, the worktree parser and the agents tree; the four tabs.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
-  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`); the real helpers live inside their skill (`skills/handoff/bin`,
+  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`); the real helpers live inside their skill (`skills/handoff/bin`,
   `skills/orch/bin`, `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
   (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
   `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a
