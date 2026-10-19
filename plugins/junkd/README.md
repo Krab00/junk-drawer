@@ -88,7 +88,7 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 
 | Group | Rows | Details |
 |---|---|---|
-| core | `core_output_style` | [Output style](#output-style-ste) |
+| core | `core_output_style`, `core_cache_check_sessions` | [Output style](#output-style-ste), [prompt-cache check](#prompt-cache-check-claude-code-only) |
 | handoff | `handoff_enabled`, `handoff_threshold`, `handoff_checkEvery`, `handoff_autoOn`, `handoff_resumeAfterLimit`, `handoff_staleDays`, `handoff_segment` | [handoff settings](#settings-1) |
 | orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md` | [orch settings](#settings-2) |
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
@@ -189,6 +189,44 @@ the flag file only stands in where it names none. While it is off no stamp is wr
 the step at the next session start. The step needs `jq`; without it nothing is written and nothing is stamped.
 Removing the plugin stops the step too; a `junkd:STE` already in `settings.json` then names a style that is
 gone, so pick another with `/output-style`.
+
+## Prompt-cache check (Claude Code only)
+
+At every main session start (a new session, `/clear`, a resume; not a compaction, not a subagent) the hooks module
+(`hooks/cache.tsx`) runs `scripts/cache-check.sh <N> <project folder>` in the background. The project folder is the
+one the session's transcript is in, `~/.claude/projects/<project>/`. The script reads the usage lines of the newest
+N main transcripts there that hold a request (the new session's own file has none yet) and of their subagents
+(`<session>/subagents/agent-*.jsonl`). A message written as several streaming lines counts once (by its message
+id). It prints one suggestion line when a threshold is hit, else nothing:
+
+- **Subagent hit ratio under 60%, over at least 50 subagent requests.** The hit ratio is cache read / (cache read +
+  cache write + input). The line suggests to reuse implementers with `SendMessage` instead of spawning new ones.
+  Under 50 requests nothing is said: the first request of every agent is nearly all cache write and pulls the
+  ratio down by itself.
+- **Over 30% of main requests came 5–60 min after the previous one** (more than 300 s, at most 3600 s, in the same
+  session), counted over the main requests that follow one on the 5-minute cache TTL (a request that wrote 1-hour
+  cache has the long TTL already). The line says a 1-hour cache TTL would pay off. When both are hit, the subagent
+  line is the one shown.
+
+The line is drawn in a band above the prompt, bold and in the theme's warning colour, with a `✕` button that
+dismisses it; the next session start's check replaces it (or clears it, when that check finds nothing). A
+transcript over 50 MB is read from its last 50 MB only. The script caps itself at 3 s: it runs itself again in a
+process group of its own that a `perl` alarm kills whole (macOS has no `timeout`); a killed run prints nothing and
+exits 142. Without `jq` it prints nothing. A run that fails (a non-zero exit, a run that cannot start) goes to the
+debug log (`junkd cache check: …`) and draws nothing; nothing reaches the model.
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `core_cache_check_sessions` | number | `10` | How many of the project's newest sessions the check reads: a whole number 0–30; `0` turns the check off |
+
+It is a `main` row of the core group: the /junkd pane's Settings draws it as a number field, and `/config` has it
+as `junkd.core_cache_check_sessions`. A write (the pane, `/config`, `$.junkd.set`) of anything but a whole number
+0–30 is refused. Claude Code holds the stored option to the manifest's `min` and `max` before the module loads. A
+hand edit of `settings.json` to a value outside 0–30, or to a string, stops the module from loading. A fraction
+there is rounded.
+
+`tests/cache-check.sh` (run by `tests/smoke.sh`) covers the script over fixture transcripts: both lines, their
+bounds, the nothing cases, the one count per message id, the 50 MB tail read and the 3 s cap.
 
 ## handoff
 
@@ -763,7 +801,9 @@ run the shell hook and `tldr-flag` as before, and `tldr_enabled` does not apply 
   `tool.call`, the prompt hint line); it composes the feature files below.
 - `hooks/settings.ts` — the mirror of the manifest's `userConfig` rows (checked against it by `tests/smoke.sh`);
   `hooks/dispatch.ts` from a row or a pane to its feature; `hooks/feature.ts` the shapes they share.
-- `hooks/core.ts` — `core_output_style` and its flag file.
+- `hooks/core.ts` — the core rows: `core_output_style` and its flag file, `core_cache_check_sessions`.
+- `hooks/cache.tsx`, `cache-lib.ts` — the prompt-cache check at session start (`scripts/cache-check.sh`) and its
+  band above the prompt.
 - `hooks/handoff.tsx`, `handoff-lib.ts`, `handoff-ui.tsx`, `handoff-views.tsx` — handoff: the auto loop, the 🪃
   segment, its pane.
 - `hooks/orch.tsx`, `orch-lib.ts`, `orch-views.tsx` — orch: the main-loop guard, its pane.
@@ -771,10 +811,11 @@ run the shell hook and `tldr-flag` as before, and `tldr_enabled` does not apply 
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
   `tldr`); the real helpers live inside their skill (`skills/handoff/bin`, `skills/orch/bin`,
-  `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/junkd/scripts/setup.sh`).
+  `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/junkd/scripts/setup.sh`,
+  `skills/junkd/scripts/cache-check.sh`).
 - `bin/`, `scripts/`, `agents/` at the plugin root — links: `bin -> skills/junkd/bin` and `scripts ->
   skills/junkd/scripts` (each entry a link to its skill's real file), `agents -> skills/orch/roles`, as the
   layout invariant of `tests/smoke.sh` asks.
 - `output-styles/STE.md` — the `junkd:STE` output style. `docs/orch-guide.md` (and `.html`) — orch's long guide.
 - Tests: `hooks/*.test.ts(x)` (`claude plugin test plugins/junkd`), `tests/junkd.sh`, `tests/orch.sh`,
-  `tests/tldr.sh`, all run by `tests/smoke.sh`.
+  `tests/tldr.sh`, `tests/cache-check.sh`, all run by `tests/smoke.sh`.
