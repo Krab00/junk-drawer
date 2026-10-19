@@ -12,6 +12,11 @@
       "event": "UserPromptSubmit",
       "command": "bash ./skills/tldr/bin/tldr-hook",
       "timeout": 5
+    },
+    {
+      "event": "UserPromptSubmit",
+      "command": "bash ./skills/ctx-limit/bin/ctx-limit-hook",
+      "timeout": 10
     }
   ],
   "interface": {
