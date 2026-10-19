@@ -128,7 +128,7 @@ done
 
 # Every command is a skill of junkd's (/junkd:<name>); no plugin-root commands/ (it would add /junkd:init and a
 # second /junkd:orch from skills/orch/commands).
-for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline; do
+for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools; do
     [ "$(awk -F': *' '$1 == "name" { print $2; exit }' "$junkd/skills/$skill/SKILL.md")" = "$skill" ] ||
         { echo "junkd: skills/$skill/SKILL.md is missing or not named $skill"; exit 1; }
 done
@@ -155,16 +155,20 @@ done
 schema_keys=$(rg -o "^  \{ key: '[A-Za-z_]+'" "$settings_ts" | rg -o "'[A-Za-z_]+'" | tr -d "'")
 [ "$schema_keys" = "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest")" ] ||
     { echo "settings.ts SCHEMA keys differ from the manifest's userConfig (or their order does)"; exit 1; }
-for group in handoff orch tldr ctx statusline; do
+for group in handoff orch tldr ctx statusline tools; do
     first=$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | rg "^${group}_" | head -1)
     [ "$first" = "${group}_enabled" ] || { echo "junkd: the $group group's first row is $first, not ${group}_enabled"; exit 1; }
 done
-[ "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | sed 's/_.*//' | uniq | tr '\n' ' ')" = "core handoff orch tldr ctx statusline " ] ||
-    { echo "junkd: the rows are not grouped core, handoff, orch, tldr, ctx, statusline in that order"; exit 1; }
+[ "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | sed 's/_.*//' | uniq | tr '\n' ' ')" = "core handoff orch tldr ctx statusline tools " ] ||
+    { echo "junkd: the rows are not grouped core, handoff, orch, tldr, ctx, statusline, tools in that order"; exit 1; }
 # The manifest keeps type, title, description, default and a choice's options only: a min or max there is enforced
 # by the engine at load (a hand-edited value out of range stops the module), so the bounds live in code.
 jq -e '[.userConfig[] | keys[] | select(. != "type" and . != "title" and . != "description" and . != "default" and . != "options")] == []' "$junkd_manifest" >/dev/null ||
     { echo "junkd: a userConfig row has a key beyond type, title, description, default and options"; exit 1; }
+# tools_refresh is clamped in code (10-600): the manifest row keeps type and default only, since the engine refuses
+# the whole module when a stored value is out of a manifest range.
+jq -e '.userConfig.tools_refresh | keys == ["default", "description", "title", "type"]' "$junkd_manifest" >/dev/null ||
+    { echo "junkd: the tools_refresh row carries more than type, title, description and default"; exit 1; }
 
 # The flag files are the shell-side truth of a row a shell hook reads before the module runs: the module and the
 # script spell each alike under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/.
@@ -320,10 +324,10 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-# Eleven skills: junk-drawer's one and junkd's ten (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
-# ctx-limit, ctx-tokens, statusline). skills/junkd also holds the real home of the plugin-root bin/ and scripts/
+# Twelve skills: junk-drawer's one and junkd's eleven (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
+# ctx-limit, ctx-tokens, statusline, tools). skills/junkd also holds the real home of the plugin-root bin/ and scripts/
 # links, as the layout invariant above asks.
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 11 ]
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 12 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
@@ -332,9 +336,9 @@ for skill_md in "$installed"/*/SKILL.md; do
     if rg -q '\.\./' "$skill_md"; then
         echo "escapes skill dir with ../ : $skill_md"; exit 1
     fi
-    # junkd and ahandoff reference no skill-local path at all: their text is only the fallback for a host or session
-    # where the hooks module did not answer the command, and it runs nothing.
-    case "$(basename "$skill_dir")" in junkd | ahandoff) continue ;; esac
+    # junkd, ahandoff and tools reference no skill-local path at all: their text is only the fallback for a host or
+    # session where the hooks module did not answer the command, and it runs nothing.
+    case "$(basename "$skill_dir")" in junkd | ahandoff | tools) continue ;; esac
     # Every skill-local path it does reference must exist after the copy. No look-around
     # here -- ripgrep's default engine rejects it and would exit 2, silently checking
     # nothing. A `../../bin/x` would also match this pattern, but the ../ check above
@@ -375,7 +379,7 @@ cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load
     { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
 
 # Every host map names all four hosts; handoff tells the resume command of each; tldr says OpenCode has no hook.
-for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline; do
+for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools; do
     for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do
         rg -qF "$host" "$root/plugins/junkd/skills/$skill/SKILL.md" || { echo "junkd: skills/$skill/SKILL.md does not name $host"; exit 1; }
     done
@@ -385,9 +389,9 @@ for resume in '`/junkd:handon <id>`' '`$handon <id>`' '`/skill:handon <id>`' '`/
 done
 rg -qF 'OpenCode has no hook' "$root/plugins/junkd/skills/tldr/SKILL.md" || { echo "junkd: tldr/SKILL.md does not say OpenCode has no hook"; exit 1; }
 
-# The Kimi model followed whichever host line came first: handon, junkd and ahandoff put the non-Claude line before
-# the Claude Code one.
-for skill in handon junkd ahandoff ctx-limit ctx-tokens; do
+# The Kimi model followed whichever host line came first: handon, junkd, ahandoff, ctx-limit, ctx-tokens and tools put
+# the non-Claude line before the Claude Code one.
+for skill in handon junkd ahandoff ctx-limit ctx-tokens tools; do
     md="$root/plugins/junkd/skills/$skill/SKILL.md"
     other=$(rg -n -m1 '^- Codex, Kimi Code, OpenCode or any other host' "$md" | cut -d: -f1)
     claude_line=$(rg -n -m1 '^- Claude Code' "$md" | cut -d: -f1)
@@ -405,5 +409,13 @@ bash "$root/tests/claude-md.sh" >/dev/null 2>&1 || { echo "tests/claude-md.sh fa
 
 # The prompt-cache check: scripts/cache-check.sh over fixture transcripts in a temp project folder.
 bash "$root/tests/cache-check.sh" >/dev/null 2>&1 || { echo "tests/cache-check.sh failed; run it alone for the reason"; exit 1; }
+
+# Ported behaviour is written in junk-drawer's own words: the name of the code it was ported from appears in no file
+# of the repo (tracked or new; .git, the local plans and the orchestrator's store aside). The name is spelled here by
+# its character codes so this check does not hold it either.
+origin=$(printf '\156\165\162\163\141')
+if git -C "$root" grep -i -I -l --untracked -e "$origin" -- . ':!PLAN-*.md' ':!.orch' ':!.worktrees' >/dev/null; then
+    echo "the origin's name appears in: $(git -C "$root" grep -i -I -l --untracked -e "$origin" -- . ':!PLAN-*.md' ':!.orch' ':!.worktrees' | tr '\n' ' ')"; exit 1
+fi
 
 echo "smoke tests passed"
