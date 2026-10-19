@@ -106,6 +106,15 @@ probe "\$0 under .agents/skills" "$oc_h" "$oc_f" "$tmp/proj/.agents/skills" CLAU
 install_at "$tmp/proj2/.opencode"
 probe "\$0 under .opencode" "$oc_h" "$oc_f" "$tmp/proj2/.opencode/skills"
 
+# OpenCode runs no hook: `on` says it only records the flag; the hosts with a hook do not say so
+rm -rf "$H" && mkdir -p "$H"
+out=$("${noh[@]}" OPENCODE=1 "$repo/tldr/bin/tldr-flag" on) || fail "opencode on: exited non-zero"
+rg -qF 'OpenCode runs no hook' <<<"$out" || fail "opencode on: does not say OpenCode runs no hook, got: $out"
+for host in claude codex kimi; do
+    out=$("${noh[@]}" JUNK_DRAWER_RUNTIME=$host "$repo/tldr/bin/tldr-flag" on) || fail "$host on: exited non-zero"
+    [ "$out" = "TL;DR mode ON (all sessions with the plugin). Use tldr off to stop." ] || fail "$host on: got $out"
+done
+
 # ---------------------------------------------------------------- no signal: exit 2, the message, nothing written
 for helper in handoff/bin/handoff-path handoff/bin/handoff-load handon/bin/handoff-load "tldr/bin/tldr-flag on" \
     "tldr/bin/tldr-flag status" tldr/bin/tldr-hook; do
