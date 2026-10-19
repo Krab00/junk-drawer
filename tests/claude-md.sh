@@ -132,6 +132,11 @@ printf '## Orchestrator mode\n````\n```\n## Not a heading\n~~~\n````\n~~~\n## St
 run on
 [ "$rc" = 0 ] || fail "on, fenced section: exit $rc: $out"
 expect "$md" "${BLOCK}\n## Next\n" "on: a fenced heading ended the section, or a short or foreign run closed the fence"
+# a longer run of the other character (~~~~ in a ``` fence) does not close it
+reset
+printf '## Orchestrator mode\n```\n~~~~\n## In\n```\n## Next\n' > "$md"
+run on
+expect "$md" "${BLOCK}\n## Next\n" "on: ~~~~ closed a \`\`\` fence"
 # a fence line with an info string (```bash) opens a fence but never closes one
 reset
 printf '## Orchestrator mode\n```\n```bash\n## In\n```\n## Next\n' > "$md"
