@@ -132,7 +132,7 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 |---|---|---|
 | core | `core_output_style`, `core_cache_check_sessions` | [Output style](#output-style-ste), [prompt-cache check](#prompt-cache-check-claude-code-only) |
 | handoff | `handoff_enabled`, `handoff_threshold`, `handoff_checkEvery`, `handoff_autoOn`, `handoff_resumeAfterLimit`, `handoff_staleDays`, `handoff_segment` | [handoff settings](#settings-1) |
-| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md` | [orch settings](#settings-2) |
+| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md`, `orch_watchdog`, `orch_idle_stop`, `orch_idle_stop_minutes`, `orch_stall_minutes` | [orch settings](#settings-2), [watchdog settings](#settings-7) |
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
 | ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
 | statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
@@ -699,7 +699,7 @@ session folders can be removed by hand.
 
 #### Settings
 
-`/junkd:orch panel` toggles the pane: one Settings tab with the eight rows (`tab` moves, `enter` saves a
+`/junkd:orch panel` toggles the pane: one Settings tab with the twelve rows (`tab` moves, `enter` saves a
 field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes).
 The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and the first four and
 `orch_claude_md` in the /junkd pane.
@@ -714,6 +714,10 @@ The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and 
 | `orch_inject_rules` | boolean | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file `junkd/orch-rules-off` while off) |
 | `orch_rounds` | number | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
 | `orch_claude_md` | boolean | `false` | On: the `## Orchestrator mode` section of `~/.claude/CLAUDE.md` becomes the `junkd:orch` pointer block; off: the block is removed (the original section only from the backup). Runs at once and at every session start while `orch_enabled` is on; see [the CLAUDE.md pointer block](#the-claudemd-pointer-block-orch_claude_md) |
+| `orch_watchdog` | boolean | `true` | The [agent watchdog](#watchdog) as a whole; off (or `orch_enabled` off): no timer, no alarms |
+| `orch_idle_stop` | boolean | `true` | The watchdog stops idle leftovers; off: it reports them only |
+| `orch_idle_stop_minutes` | number | `10` | Idle minutes before a finished agent with no task in progress is stopped (1–120) |
+| `orch_stall_minutes` | number | `15` | Minutes without a tool call before a running agent counts as stalled; a reviewer gets 5 more (1–120) |
 
 Scope: user-global; project/session overrides: planned.
 
@@ -1050,6 +1054,97 @@ out of a manifest range, so the bounds live in the module.
 Hosts: Claude Code only (a hooks-module mod). Codex, Kimi Code and OpenCode have the `tools` skill, which answers
 in one line that the pane is a Claude Code mod.
 
+## watchdog
+
+A watchdog over the agents of this session, part of orch. It costs no tokens: on Claude Code it is engine hooks and
+a 30 s timer in the hooks module; on the other hosts it is the bash script `bin/orch-watch`. No model is in the
+loop, and it never respawns anything.
+
+### The rules
+
+The watchdog looks at each agent the main loop spawned. An agent spawned by another agent is its parent's
+business and is skipped, and the main loop itself is never watched or stopped.
+
+- **Stall**: the agent is `running`, no tool call of its own is in flight, and its last call ended longer ago than
+  its role's limit. A permission prompt (`waiting`, `◐` in the tools pane) is never a stall, and neither is a long
+  call such as `sleep 90` in Bash.
+- **Dead**: the agent was in the agent list at the last tick, it is gone now, and it left no SubagentStop record.
+  An agent that is gone with a record finished, even if its report was lost.
+- **Idle leftover**: the agent finished (it is done, or it has a stop record newer than its last move) and it is
+  still listed. Whether it is stopped depends on its role.
+
+| Role | Stall limit | Idle leftover |
+|---|---|---|
+| `implementer`, `lead-implementer` | `orch_stall_minutes` | Kept while its task is `in_progress` (a verify or fix round reuses it); stopped once the task is `done` or `blocked`, or after `orch_idle_stop_minutes` when the task is in no other state |
+| `verify-coordinator`, `test-planner`, `test-reviewer`, `ui-reviewer` | `orch_stall_minutes` + 5 | Stopped as soon as it reported: a reviewer is never messaged again |
+| `orch-ops`, any agent named `pr-…` or `gh-…` | `orch_stall_minutes` | Stopped as soon as it reported |
+| Any other agent | `orch_stall_minutes` | Stopped after `orch_idle_stop_minutes` |
+
+The task of an agent is the `T<n>` in its name, else the `T<n>` of its worktree path (`.worktrees/T<n>`). Its
+status is the `status:` line of the frontmatter of `.orch/tasks/T<n>.md`, read once per tick. An agent with no
+task has the idle rule alone. A task file that cannot be read keeps the last status, and an agent list that cannot
+be read keeps the last verdict: neither raises an alarm.
+
+Each alarm is raised once per agent and kind (stall, dead, stopped), and cleared when the agent moves again.
+`/clear` and `/resume` start the watchdog over. With `orch_enabled` or `orch_watchdog` off there is no timer and no
+alarm.
+
+### What it does (Claude Code)
+
+- **A stop** goes through the engine's `TaskStop` tool with the agent's id (the hooks API has no agent stop
+  operation). It shows a toast such as `⚠ stopped verify-T17: reported 12 min ago`. A stop that fails or is
+  refused is said once and not tried again. With `orch_idle_stop` off, the leftover is reported once instead.
+- **A death** shows a toast and the `⚠ 1 dead` segment under the prompt. It writes a `deadNote` into the agent's
+  record (`no SubagentStop record · last: <tool> <argument head>`), so SendMessage still reaches it by id or name.
+  At the orchestrator's next turn, one line rides along as context, once:
+  `watchdog: impl-T17 died (no stop record, last call Bash tests/smoke.sh 18 min ago); resume it with SendMessage or spawn a fresh agent on task/T17-…`.
+- **A stall** shows a toast, the `⚠ 1 stalled` segment and one line at the next turn:
+  `watchdog: impl-T19 idle 16 min, last call Edit …; ping it or stop it`. Nothing else happens.
+- The segment is red and hidden while nothing is wrong. A press opens the tools pane on its Agents tab, where each
+  agent row carries the watchdog's verdict: `⚠ stalled 16m`, `✝ dead`, `· idle 4m` or `· stopped`.
+- `/junkd:orch watchdog` runs a tick now, prints the verdict table (agent, role, status, idle, verdict) to the
+  transcript and shows the counts as a toast. `/junkd:orch watchdog off` and `on` flip `orch_watchdog`.
+
+Every stop, death, stall and reported leftover is also one JSON line `{t, agent, kind, note}` in the watchdog log:
+
+```
+${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/orch/watchdog/<session id>.log
+```
+
+### The other hosts: `bin/orch-watch`
+
+```
+orch-watch [--once] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
+```
+
+It reads the stop records of a session (`junkd/orch/_agents/<session>/*.json` as `scripts/orch-agent-stop.sh`
+writes them; the newest session folder unless `--session` names one). It finds the live agents in the process list:
+`claude`, `codex` and `kimi` processes whose working directory (`lsof`, else `pwdx`, else `/proc`) is a task
+worktree. A process whose directory cannot be read is listed by name only. It prints one table, agent, role,
+status, idle and verdict, by the rules above. `--once` prints it and exits 0; otherwise it prints one every
+`--interval` seconds (1–3600, default 60) until Ctrl-C. `--idle-minutes` defaults to the `orch_idle_stop_minutes`
+row of `settings.json`, else 10. Without `jq` it says so and exits 0.
+
+| Host | Watches with | Stops idle leftovers |
+|---|---|---|
+| Claude Code | the hooks module (and `bin/orch-watch` in a headless run) | Yes, through `TaskStop`, while `orch_idle_stop` is on |
+| Codex, Kimi Code, OpenCode | `bin/orch-watch` (the `orch` skill's `./bin/orch-watch`) | No: the host has no agent stop command, so the table only reports (`stop, report only`) |
+
+`--no-stop` says the same on any host. On Claude Code the plugin root's `bin/orch-watch` is the same script.
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `orch_watchdog` | boolean | `true` | The whole watchdog. Off: no timer, no alarms, no segment; `/junkd:orch watchdog` says it is off |
+| `orch_idle_stop` | boolean | `true` | Stop the idle leftovers the rules above name. Off: report them only (a toast and a log line, once) |
+| `orch_idle_stop_minutes` | number | `10` | Idle minutes before a finished agent with no task in progress is stopped. Clamped to 1–120 |
+| `orch_stall_minutes` | number | `15` | Minutes without a tool call before a running agent is stalled; a reviewer gets 5 more. Clamped to 1–120 |
+
+The four rows are in the orch pane (`/junkd:orch panel`) and in `/config` (`junkd.orch_watchdog`, …). A switch
+takes `true`, `'true'` or `'on'` as on. A minutes value is rounded and clamped in the module, and a value that is
+no number is refused; the manifest keeps the rows to their type and default.
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
@@ -1062,6 +1157,8 @@ in one line that the pane is a Claude Code mod.
 - `hooks/handoff.tsx`, `handoff-lib.ts`, `handoff-ui.tsx`, `handoff-views.tsx` — handoff: the auto loop, the 🪃
   segment, its pane.
 - `hooks/orch.tsx`, `orch-lib.ts`, `orch-views.tsx` — orch: the main-loop guard, its pane.
+- `hooks/watchdog.ts`, `watchdog.tsx` — the agent watchdog: the rules and the tick, `$`-free; the timer, the stops,
+  the ⚠ segment, the log and the line at the next turn.
 - `hooks/tldr.tsx` — tldr: the sentences default and the flag files `tldr-on`, `tldr-off`.
 - `hooks/ctx.ts` — ctx: the rows, their files `ctx-limit-*`, `/junkd:ctx-limit`, the move of the old files.
 - `hooks/statusline.tsx`, `statusline-views.tsx` — statusline: the rows, `statusline-setup` on|off, the refresh at
@@ -1071,7 +1168,7 @@ in one line that the pane is a Claude Code mod.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
   `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`); the real helpers live inside their skill (`skills/handoff/bin`,
-  `skills/orch/bin`, `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
+  `skills/orch/bin` (with `orch-watch`), `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
   (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
   `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a
   real copy in each skill that sources it (handoff, handon, tldr, ctx-limit, ctx-tokens).
@@ -1081,4 +1178,4 @@ in one line that the pane is a Claude Code mod.
 - `output-styles/STE.md` — the `junkd:STE` output style. `docs/orch-guide.md` (and `.html`) — orch's long guide.
 - Tests: `hooks/*.test.ts(x)` (`claude plugin test plugins/junkd`), `tests/junkd.sh`, `tests/orch.sh`,
   `tests/tldr.sh`, `tests/cache-check.sh`, `tests/ctx.sh`, `tests/statusline.sh` (its golden line in
-  `tests/statusline/`), all run by `tests/smoke.sh`.
+  `tests/statusline/`), `tests/orch-watch.sh`, all run by `tests/smoke.sh`.
