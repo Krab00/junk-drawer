@@ -1396,7 +1396,7 @@ test('a narrow pane (under 22 columns) draws every row within it; control charac
   await $.tool.call(mainCall('Skill', { skill: 'sk\rill' }))
   await tools($)
   await rec.clock.settle()
-  for (const cols of [12, 21])
+  for (const cols of [6, 8, 12, 21]) // at 6 and 8 the guide itself is cut
     await onPane($, async ui => {
       for (const route of ['agents', 'tools', 'mcp', 'skills'] as const) {
         await ui.press({ key: `tab-${route}` })
