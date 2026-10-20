@@ -237,11 +237,14 @@ doctor_real="$junkd/skills/junkd/bin/junkd-doctor"
 [ -f "$doctor_real" ] && [ ! -L "$doctor_real" ] && [ -x "$doctor_real" ] && [ "$junkd/bin/junkd-doctor" -ef "$doctor_real" ] ||
     { echo "junkd: skills/junkd/bin/junkd-doctor is not a real executable reached through bin/"; exit 1; }
 bash "$root/tests/doctor.sh" >/dev/null 2>&1 || { echo "tests/doctor.sh failed; run it alone for the reason"; exit 1; }
-# Both READMEs tell the directory-marketplace install and its three liveness signs.
+# Both READMEs tell the directory-marketplace install and its three liveness signs, inside that section (from its
+# heading to the next heading).
 for readme in "$root/README.md" "$junkd/README.md"; do
-    for want in '### Develop from a checkout' '/plugin marketplace add /abs/path/to/junk-drawer' '/plugin install junkd@junk-drawer' \
+    section=$(awk '/^### Develop from a checkout$/ { on = 1; next } on && /^#/ { exit } on' "$readme")
+    [ -n "$section" ] || { echo "junkd: $readme has no '### Develop from a checkout' section"; exit 1; }
+    for want in '/plugin marketplace add /abs/path/to/junk-drawer' '/plugin install junkd@junk-drawer' \
         '/reload-plugins' '`✚ junkd`' '`junkd:implementer`' '/junkd/orch/_agents/<session>/' 'junkd-doctor'; do
-        rg -qF -- "$want" "$readme" || { echo "junkd: $readme has no '$want' (Develop from a checkout)"; exit 1; }
+        rg -qF -- "$want" <<<"$section" || { echo "junkd: Develop from a checkout in $readme has no '$want'"; exit 1; }
     done
 done
 # The OpenCode command wrappers: one per skill, descriptions cut on a word boundary.
