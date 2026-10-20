@@ -15,7 +15,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 | `/junkd:ctx-tokens` | How full the context is, from the session transcript |
 | `/junkd:statusline [on \| off \| status]` | The colored status line in settings.json, a switch per segment; no argument toggles its pane (Claude Code only) |
 | `/junkd:tools [agents \| tools \| mcp \| skills]` | Open or close the tools pane: this session's agents over the repo's worktrees, and the tools, MCP servers and skills it used (Claude Code only) |
-| `/junkd`, `/junkd:junkd` | Open or close the junkd set of panes (Claude Code only) |
+| `/junkd:junkd` (`/junkd` where the host resolves it) | Open or close the junkd set of panes (Claude Code only) |
 
 On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`, `$ctx-limit`… (the model sees them as `junkd:<name>`), on Kimi
 Code as `/skill:<name>`, on OpenCode through the `skill` tool or the `/<name>` wrappers `bin/opencode-commands.sh`
@@ -71,7 +71,7 @@ copy wins).
 
 ## The /junkd frame (Claude Code only)
 
-`/junkd`, `/junkd:junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs and
+`/junkd:junkd` (`/junkd` where the host resolves a bare name to the skill), or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs and
 closes them together:
 
 1. **junkd** — focused, the frame below.
@@ -82,7 +82,7 @@ closes them together:
 
 All five are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
 already open on its own closes first and opens again behind junkd's tab, so its tab never comes first, and from
-then on it is the set's. `q`, a second `/junkd`, or closing junkd's tab by hand (`×`) closes them all, but only a
+then on it is the set's. `q`, a second `/junkd:junkd`, or closing junkd's tab by hand (`×`) closes them all, but only a
 feature pane that is still the set's: one you closed and opened again on your own (`/junkd:handoff panel`,
 `/junkd:orch panel`, `/junkd:ahandoff panel`, `/junkd:statusline`, `/junkd:tools`, the 🪃 click) stays.
 
