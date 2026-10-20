@@ -1255,7 +1255,7 @@ the enforcement is the spec (`commands/orch.md` §7 and §8), the context line b
 |---|---|
 | `lesson add [--scope local\|repo\|global] [--stack <tags>] --to <target> --from T<id> "<text>"` | Appends the block (scope `local`, stack the repo's by default) and prints its id, `local:L4` |
 | `lesson list [--pending] [--scope <s>] [--json]` | The table id · scope · stack · to · from · first sentence; `--json` for scripts |
-| `lesson promote <id> [--to <target>] [--yes]` | To its `to` (or `--to`): `repo`/`global` moves it one store up (renumbered, `scope` rewritten) and deletes it below; `check` appends the text to `standing_checks_extra` in `.orch/config.md` only with `--yes` (without it: the proposed line, exit 3); `test`/`smoke` prints the fix-round line and marks it `to: test·handed`; `role` writes a task `T<next>.md` into the backlog when this repo is junk-drawer (elsewhere it prints the text to paste and writes nothing); `drop` deletes |
+| `lesson promote <id> [--to <target>] [--yes]` | To its `to` (or `--to`): `repo`/`global` moves it one store up (renumbered, `scope` rewritten) and deletes it below; `check` appends the text to `standing_checks_extra` in `.orch/config.md` only with `--yes` (without it: the proposed line, exit 3), and only when that file has a frontmatter block (`---` … `---`) to hold the key (else exit 2, nothing changed, the lesson kept); `test`/`smoke` prints the fix-round line and marks it `to: test·handed`; `role` writes a task `T<next>.md` into the backlog when this repo is junk-drawer (elsewhere it prints the text to paste and writes nothing); `drop` deletes |
 | `lesson up <id>` | One store up, the `to` kept |
 | `lesson drop <id>` | Deletes it |
 | `lesson prune [--months N] [--yes]` | Lists the lessons older than N months (default 6) whose stack is not this repo's; `--yes` drops them |
@@ -1278,7 +1278,7 @@ can commit to the repo writes its `lessons.md`), and the block lands in the main
   and global stores are yours;
 - a body line that opens a heading (`#`…`######` and a space) or a fence (```` ``` ````, `~~~`) is dropped, so a
   lesson cannot close the fence or pose as a new section;
-- at most 40 lessons and 4096 bytes of them are printed; the rest is one line, `… N more, see /junkd:lessons`.
+- at most 40 lessons and 4096 bytes (bytes, not characters: multibyte text counts in full) of them are printed; the rest is one line, `… N more, see /junkd:lessons`.
 
 The injection needs `orch_enabled`, `orch_inject_rules` and `orch_lessons` on (each read from `settings.json`, else
 from its flag file: `junkd/orch-off`, `junkd/orch-rules-off`, `junkd/orch-lessons-off`).
