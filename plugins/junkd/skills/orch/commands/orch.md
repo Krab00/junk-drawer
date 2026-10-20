@@ -44,6 +44,12 @@ without the `orch_` prefix. Use them for the whole run:
   implementer only while its context is under `<n>`k tokens; above it, a fresh implementer.
 - `inject_rules` — read by the SessionStart hook; nothing to do here.
 
+**Session env:** the orchestrator session runs with `ENABLE_STOP_REVIEW=0` (recommended, set by the
+user where the session starts, never from a hook). It turns off only the Stop-time diff review of the
+`security-guidance` plugin: that review runs in whichever agent stops, sees a diff other agents move
+between its turns, and its findings never reach you. Its commit/push review stays on, in the agent that
+commits. The check that gates `done` is the `security` standing check (§4).
+
 The config's `capabilities` block **gates** which checks run (§4/§6). A capability the
 project doesn't declare is silently skipped — never invent a check for a layer that doesn't
 exist. The mechanics live in three zero-dep scripts you drive (never hand-edit frontmatter
@@ -163,7 +169,8 @@ Per task:
 Spawn one `verify-coordinator` per task (parallel in `batch`). Hand it: task id, the
 implementer's `branch`, the verify slot (`orch-worktree slot <id>`), the task file path, the
 current lessons, the `ui_review` setting (§0), the **config capabilities** (run commands, ports, health paths, test commands),
-and — on a re-verify round (§5) — **only the failing criteria**. It owns the verify env end to
+and — on a re-verify round (§5) — **only the failing criteria** (the `security` check still runs in
+full). It owns the verify env end to
 end: builds the worktree, boots the declared servers, spawns `test-planner` → `ui-reviewer` →
 `test-reviewer`, runs the inline checks, writes the `## Verification — <branch>` table into the
 task file + screenshots into `<tasks_dir>/<ID>.evidence/`, tears the env down, and returns ONE
@@ -184,6 +191,20 @@ tell it which apply; never ask for a check on an undeclared layer):
   screen/flow/state criteria, a screenshot per criterion, every state
   (default/empty/loading/error/no-permission), never on the implementer's word. With
   `ui_review=false` no `ui-reviewer` runs: those criteria are `PM-REVIEW` rows for a human.
+- **`security` declared** (`capabilities.security: { severity: <low|medium|high> }`) → the
+  coordinator spawns ONE fresh security reviewer, no new agent type: a general-purpose subagent on
+  `model: sonnet`, or `model: opus` when a path in `git diff --name-only <base>...<branch>` matches
+  `auth|login|session|token|secret|upload|exec|spawn|sql|query` (case-insensitive). It runs the
+  built-in `security-review` skill against `git diff <base>...<branch>` in the verify worktree;
+  scope: the changed files plus what they call. Every finding at or above `severity` is its own
+  `FAIL` row naming `file:line` and the class (injection, XSS, SSRF, IDOR, auth bypass, secret,
+  deserialization, path traversal, …). Findings below `severity` are notes under the table, never
+  rows. No finding at or above it → one `PASS` row `security: no findings ≥ <severity>`. A reviewer
+  that cannot run (the skill is missing on the host) → one `PM-REVIEW` row with the reason, never a
+  silent skip. It runs on **every** round, re-verify rounds too: a fix round changes the diff.
+  `security` absent from the config → no reviewer and no security row at all. A `severity` that is
+  missing or not one of `low`, `medium`, `high` is read as `high`, with the note
+  `security: severity <value> read as high` under the table.
 - Plus every entry in the config's `standing_checks_extra` (project lessons already promoted).
 
 ### 5. Resolve (round strategy)

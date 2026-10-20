@@ -24,6 +24,9 @@ Gather, quietly:
 - **Test runners** — per package: the `test` script, else the runner in use (jest / vitest /
   mocha / pytest / `go test` / `cargo test`). A layer with **no** runner is recorded as absent,
   never forced to grow one.
+- **Security surface** — does the repo have a **web** app, an **api**, or any file whose name matches
+  `auth|login|session|token|secret|upload|exec|spawn|sql|query` (case-insensitive, `git ls-files`)?
+  Any one of the three → propose the `security` block (step 3); none → leave it out.
 
 ## 2. Pick the backend (ask — this is a real choice)
 
@@ -41,7 +44,11 @@ Show the four options and ask which fits; default to `adhoc` if the user just wa
 Show the user the file you're about to write and confirm the run/test commands + ports you
 detected (these are the ones that most often need a human correction). Omit any capability the
 project doesn't have — **do not** write a `web`/`api`/`tests` block for a layer that isn't there;
-`/junkd:orch` gates its checks on exactly what's declared here.
+`/junkd:orch` gates its checks on exactly what's declared here. The same holds for `security`: propose
+it with `severity: high` only when the scan found its surface (step 1), and say which hit (the web app,
+the api, or the file names); the user may lower it to `medium` or `low`. Declared, it makes every verify
+round run the built-in `security-review` skill over the task diff (`capabilities.security`, see
+`/junkd:orch` §4); without it no security check runs.
 
 ```markdown
 ---
@@ -53,6 +60,7 @@ capabilities:
   web:  { run: "<dev-server cmd>", port_base: 5180, health: "/" }        # omit if no web app
   api:  { run: "<dev-server cmd>", port_base: 3180, health: "/health" }  # omit if no api
   tests: { <pkg>: "<test cmd>" }   # use key `root` for a repo-level suite; omit absent runners
+  security: { severity: high }     # only with a web app, an api, or a security-named file; omit otherwise
 standing_checks_extra: []          # project lessons promoted to standing checks (starts empty)
 github: { label: "orch" }          # github-issues backend only; drop otherwise
 ---
