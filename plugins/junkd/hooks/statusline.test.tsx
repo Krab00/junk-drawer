@@ -5,7 +5,12 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { SETTLE_MS, SETTLE_TRIES, VERIFY_MS, configNote, pluginKey } from './statusline'
+import { configNote, pluginKey } from './statusline'
+
+// Pinned here, not imported: a change of the module's waits is a change of behaviour the tests must notice.
+const SETTLE_MS = 100 // one look at the host's copy every 100 ms ...
+const SETTLE_TRIES = 50 // ... 50 times: the wait ends after 5 s
+const VERIFY_MS = 3000 // the second look at session start, 3 s later
 import { FIELDS, SEGMENTS, plain } from './statusline-views'
 
 const HOME = '/home/u'
@@ -726,6 +731,13 @@ test('a host copy that says statusLine null and a file with none agree: no wait 
   rec.order.length = 0
   await set($, 'statusline_enabled', false)
   expect(rec.order).toEqual(['setup off', 'config.set junkd.statusline_enabled'])
+})
+test('the host\'s copy and the file hold different statusLine objects: the wait goes on until they are the same', W, async ($, on) => {
+  // junkd's command without --config is installed; the start rewrites it to WIRED, and the host still holds the old object
+  const rec = world(on, { copy: SCRIPT, settings: { statusLine: { type: 'command', command: COPY } }, hostLag: 2 })
+  await start($)
+  expect(lineIn(rec)?.command).toBe(WIRED)
+  expect(rec.order).toEqual(['setup on', 'sleep 100', 'sleep 100', 'sleep 3000'])
 })
 test('a host that already holds the file is not waited for: no sleep', W, async ($, on) => {
   const rec = world(on, { copy: SCRIPT })
