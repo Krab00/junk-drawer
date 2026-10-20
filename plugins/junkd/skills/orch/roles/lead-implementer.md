@@ -52,6 +52,7 @@ their own build/lint, and report.
 Merge each sub-branch into the task branch in a stable order (contract owner / backend first,
 then frontend, then tests): `git checkout <branch> && git merge --no-ff <branch>-be` (etc.).
 - Disjoint slices → clean merges.
+- Before the report line, `git status` is clean and `git branch --contains HEAD` names the task branch.
 - A trivial structural conflict in a shared registration file you split → keep **both** sides'
   entries.
 - **Any non-trivial conflict (slices touched the same logic)** → the cut was wrong: **stop, leave

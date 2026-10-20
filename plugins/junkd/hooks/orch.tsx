@@ -12,6 +12,7 @@ import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 import { toolsSpawned } from './tools-pane'
 import { dashboardAgentStop, dashboardClose, dashboardOpen, dashboardRetime, dashboardSpawned } from './dashboard.tsx'
 import { watchSpawned, watchStopped, watchdogApplied, watchdogReport } from './watchdog.tsx'
+import { lessonsApplied, lessonsRunStart } from './lessons.tsx'
 
 type $ = EngineInterface
 
@@ -152,10 +153,10 @@ function redraw($: $) {
   return $.ui.invalidate('ui.render')
 }
 
-// enabled off and inject_rules off are the flag files scripts/orch-context.sh falls back to when settings.json holds
-// no value it can read (a shell hook reads no `$.config`): ${CLAUDE_CONFIG_DIR}/junkd/orch-off and
-// .../junkd/orch-rules-off, each written at every change of its row and at session start.
-const FLAGS = { enabled: 'orch-off', inject_rules: 'orch-rules-off' } as const
+// enabled off, inject_rules off and lessons off are the flag files scripts/orch-context.sh falls back to when
+// settings.json holds no value it can read (a shell hook reads no `$.config`): ${CLAUDE_CONFIG_DIR}/junkd/orch-off,
+// .../junkd/orch-rules-off and .../junkd/orch-lessons-off, each written at every change of its row and at session start.
+const FLAGS = { enabled: 'orch-off', inject_rules: 'orch-rules-off', lessons: 'orch-lessons-off' } as const
 async function writeFlag($: $, key: keyof typeof FLAGS): Promise<void> {
   const flag = `${await configDir($)}/junkd/${FLAGS[key]}`
   // Something that is no file under the flag's name (a directory) is not ours: the hook reads only a file (`-f`), so
@@ -188,10 +189,11 @@ async function runClaudeMd($: $): Promise<void> {
 // the menu's write reaches the hook.
 async function apply($: $, key: OrchField, value: OrchGuard | number | boolean): Promise<void> {
   ;(O as Record<string, unknown>)[key] = value
-  if (key === 'enabled' || key === 'inject_rules') await writeFlag($, key)
+  if (key === 'enabled' || key === 'inject_rules' || key === 'lessons') await writeFlag($, key)
   if (key === 'claude_md') await runClaudeMd($)
   if (key === 'dashboard_refresh') dashboardRetime($)
   await watchdogApplied($) // the watchdog's timer follows enabled and watchdog
+  if (key === 'enabled' || key === 'lessons') await lessonsApplied($) // the tab, the segment and the dialog follow them
   redraw($)
 }
 
@@ -267,7 +269,7 @@ export async function orchHide($: $, input: HideInput = {}): Promise<void> {
 }
 // Each flag on its own: one that fails leaves the other written.
 export async function orchStart($: $): Promise<void> {
-  await Promise.all([writeFlag($, 'enabled').catch(() => undefined), writeFlag($, 'inject_rules').catch(() => undefined)])
+  await Promise.all([writeFlag($, 'enabled').catch(() => undefined), writeFlag($, 'inject_rules').catch(() => undefined), writeFlag($, 'lessons').catch(() => undefined)])
 }
 // Inactive while orch is disabled; the model is read either way (only the fable guard's read toasts).
 export async function orchGuardState($: $): Promise<{ active: boolean; model: string }> {
@@ -350,7 +352,10 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
       return text ? { text } : {}
     }
     if (/^watchdog(\s|$)/.test(e.args.trim())) return orchWatchdog($, e.args.trim().slice('watchdog'.length).trim())
-    if (e.args.trim() !== 'panel') return next(e)
+    if (e.args.trim() !== 'panel') {
+      await lessonsRunStart($) // a run: lessons pending open the dialog before the skill selects a task
+      return next(e)
+    }
     await togglePane($)
     return {}
   })

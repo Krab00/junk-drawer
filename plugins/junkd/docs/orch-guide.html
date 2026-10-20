@@ -238,7 +238,7 @@
       <tr>
         <td><strong>No memory</strong></td>
         <td>The loop repeats on task 7 the mistake it made on task 2. Nothing learned in one task informs the next.</td>
-        <td>A <strong>retro step</strong> appends a lesson to <code>_lessons.md</code> at every resolve. Those lessons feed the next task's plan and verification. A pattern recurring across ≥2 tasks is proposed for promotion into a permanent standing check.</td>
+        <td>A <strong>retro step</strong> adds a lesson to <code>_lessons.md</code> when a resolve had a signal (a fix round, a surviving mutant, a verify FAIL). Those lessons feed the next task's plan and verification. A pattern recurring across ≥2 tasks is proposed for promotion into a permanent standing check.</td>
       </tr>
       <tr>
         <td><strong>Tokens burned on unreachable goals</strong></td>
@@ -288,7 +288,7 @@
                   └───────────┬───────────┘        final round FRESH impl. + diff + why
                               │                     still failing after R → blocked + escalate
                     ┌─────────▼──────────┐
-                    │  6. RETRO          │  append lesson → _lessons.md
+                    │  6. RETRO          │  lesson add on a signal → _lessons.md
                     └─────────┬──────────┘
                               │
                     ┌─────────▼──────────┐
@@ -311,7 +311,7 @@
         <li><strong>Still failing after round R</strong> → the task is <code>blocked</code>, the escalation reason is appended, and the loop moves on.</li>
       </ul>
     </li>
-    <li><strong>Retro.</strong> Every resolve appends a lesson to <code>_lessons.md</code> — see <a href="#s5">§5</a>.</li>
+    <li><strong>Retro.</strong> A resolve with a signal adds a lesson to <code>_lessons.md</code> — see <a href="#s5">§5</a>.</li>
     <li><strong>Draft PR + iterate.</strong> In <code>chain</code>/<code>all</code> the next task branches off the one just finished; in <code>batch</code> verdicts are consumed as coordinators finish. At end of run <code>orch-sync push</code> reflects statuses to the backend, and the run prints its <code>BACKLOG:</code> line.</li>
   </ol>
 
@@ -369,7 +369,7 @@
   <h2 id="s5">5. Learning — the retro / <code>_lessons.md</code> <a class="anchor" href="#s5">#</a></h2>
   <p><code>orch</code> learns <em>within a run</em> and, with your approval, <em>across runs</em>.</p>
   <ul>
-    <li><strong>The retro step.</strong> At <strong>every</strong> task resolve — especially after FAIL rounds or a <code>blocked</code> — the orchestrator appends 2–3 sentences to <code>&lt;tasks_dir&gt;/_lessons.md</code>: <em>what failed, why, and what check would have caught it.</em></li>
+    <li><strong>The retro step.</strong> At a task resolve that had a <strong>signal</strong> — a fix round, a surviving mutant, a PM-REVIEW that found a bug, a dead or stalled agent, a verify FAIL — the orchestrator adds a lesson with <code>orch-state lesson add</code>, 2–3 sentences, plus a promotion target; a clean round-0 PASS writes nothing: <em>what failed, why, and what check would have caught it.</em></li>
     <li><strong>Fed forward immediately.</strong> Those lessons are handed into the next task's plan (step 3) and into the next <code>verify-coordinator</code> spawn (step 4). So a mistake made on task 2 informs task 3 in the same run.</li>
     <li><strong>Promotion to a standing check.</strong> When the <strong>same pattern recurs across ≥2 tasks</strong>, the orchestrator proposes promoting it into <code>standing_checks_extra</code> in the config — where it becomes a permanent, always-on check for every future task. This <strong>asks you first; the loop never edits the config silently.</strong></li>
     <li><strong>Rules need checks.</strong> A rule written in <code>CLAUDE.md</code> (&ldquo;never&rdquo;, &ldquo;always&rdquo;, &ldquo;must&rdquo;, &ldquo;only&rdquo;, a &ldquo;Binding rules&rdquo; section) holds only on the prompt until a tool checks it. <code>/junkd:orch-init</code> scans every <code>CLAUDE.md</code>/<code>AGENTS.md</code> and proposes, per rule, a <code>standing_checks_extra</code> row with a concrete recipe (grep / test / curl), a pointer to the test that already pins it, or &ldquo;stays prose&rdquo;. You confirm each row; re-runs propose only new rules. The starter <code>TEST-POLICY.md</code> it offers makes this a standing rule: a task that adds a binding rule adds its check in the same branch. The retro shortcut: a lesson that names a rule already in <code>CLAUDE.md</code> is proposed for promotion at once (&ldquo;rule exists in CLAUDE.md &sect;X, no check&rdquo;), without waiting for a second task.</li>
