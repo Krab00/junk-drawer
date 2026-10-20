@@ -134,6 +134,26 @@ for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tok
 done
 [ ! -e "$junkd/commands" ] || { echo "junkd: a plugin-root commands/ is back"; exit 1; }
 
+# T23: binding rules of CLAUDE.md become standing checks. init.md carries the "Binding rules -> checks" step (heading and
+# item patterns, the three outcomes, confirm before write, re-run diff, the policy offered only when absent); orch-init's
+# host notes name it; the starter TEST-POLICY.md is a real file of the orch skill with seven numbered rules, the seventh
+# the binding-rule check; orch.md's retro keeps the "rule exists, no check" shortcut.
+orch_skills="$junkd/skills"
+init_md="$orch_skills/orch/commands/init.md"
+for needle in '## 5. Binding rules → checks' '/binding|non-negotiable|never|must|invariant/i' '`never`, `always`, `must` or `only`' \
+    '**row**' '**covered by test' 'stays prose' 'write only the rows the user' 'Re-runs diff against the existing rows' \
+    'When `.orch/TEST-POLICY.md` does not exist' 'leave it alone and do not offer'; do
+    rg -qF -- "$needle" "$init_md" || { echo "junkd: orch/commands/init.md lacks: $needle"; exit 1; }
+done
+rg -qF 'Binding rules → checks' "$orch_skills/orch-init/SKILL.md" || { echo "junkd: orch-init/SKILL.md host notes do not mention the Binding rules step"; exit 1; }
+policy="$orch_skills/orch/templates/TEST-POLICY.md"
+[ -f "$policy" ] && [ ! -L "$policy" ] || { echo "junkd: orch/templates/TEST-POLICY.md is not a real file"; exit 1; }
+[ "$(rg -c '^[1-9]\. \*\*' "$policy")" = 7 ] || { echo "junkd: TEST-POLICY.md does not carry seven numbered rules"; exit 1; }
+rg -q '^7\. \*\*Every binding rule of CLAUDE\.md has a test or a `standing_checks_extra` row' "$policy" ||
+    { echo "junkd: TEST-POLICY.md rule 7 is not the binding-rule check"; exit 1; }
+rg -qF 'rule exists in CLAUDE.md §X, no check' "$orch_skills/orch/commands/orch.md" || { echo "junkd: orch.md retro lacks the rule-exists shortcut"; exit 1; }
+rg -qF 'Rules need checks' "$junkd/docs/orch-guide.md" || { echo "junkd: docs/orch-guide.md lacks Rules need checks"; exit 1; }
+
 # $.junkd.schema() is a mirror of the manifest's userConfig (a hooks module cannot import JSON): every row's key,
 # type, title and default appear together on one SCHEMA line of settings.ts, a choice row's options too, the group
 # and field are the key split at its first `_`, and the mirror holds the manifest's rows in the manifest's order.

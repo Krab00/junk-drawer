@@ -1,7 +1,7 @@
 ---
 description: "Scan this repo and generate .orch/config.md — the adapter /junkd:orch reads for every project fact (task backend, branch naming, dev-server run commands, ports, test runners). Run once before /junkd:orch."
 argument-hint: "(no arguments)"
-allowed-tools: Bash(git:*), Bash(cat:*), Bash(ls:*), Bash(test:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Read, Write, Glob
+allowed-tools: Bash(git:*), Bash(cat:*), Bash(ls:*), Bash(test:*), Bash(cp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Read, Write, Glob, Grep
 ---
 
 # /junkd:orch-init — generate the project config for `/junkd:orch`
@@ -72,3 +72,32 @@ After the user confirms:
    store is fine), then tell the user how to start: `/junkd:orch <free text>` for an adhoc task, or
    `/junkd:orch batch` once tasks exist. If `.orch/config.md` already exists, show the diff and
    ask before overwriting — never clobber a hand-tuned config silently.
+
+## 5. Binding rules → checks
+
+A rule written into CLAUDE.md holds only on the prompt until a tool checks it. This step turns each
+written rule into a row of `standing_checks_extra`, a pointer to a test that already pins it, or an
+explicit "prose". Run it after the config is written (§4), before the "how to start" message.
+
+1. **Find the candidates.** Read every `CLAUDE.md` and `AGENTS.md` in the repo (root and per package).
+   A candidate is (a) any rule in a section whose heading matches
+   `/binding|non-negotiable|never|must|invariant/i`, or (b) any list item anywhere that contains
+   `never`, `always`, `must` or `only`. Keep the file, the heading and the rule text for each.
+2. **Pick one outcome per candidate:**
+   - **row**: a `standing_checks_extra` row with a concrete tool recipe: a `grep`/`rg` over the source
+     (what must or must not match, in which paths), a test command, or a `curl` against the dev server.
+     The recipe states the expected result, so the verify-coordinator can run it and show the output.
+   - **covered by test `<path>`**: a test already pins the rule. Grep the test tree for the rule's key
+     nouns and name the file (and test) that asserts it. No row is written.
+   - **not tool-checkable, stays prose**: no tool can decide it (taste, architecture intent, naming).
+     No row is written.
+3. **Show the table** (`rule | source | outcome | row or test path`) and **write only the rows the user
+   confirms**. A row is never added silently; a declined row stays in the table as prose.
+4. **Re-runs diff against the existing rows.** When `.orch/config.md` already has `standing_checks_extra`
+   rows, match each candidate to them (same source rule or same recipe) and to tests already named in
+   an earlier table; propose only candidates that are new. If nothing is new, say so and write nothing.
+5. **Offer the starter test policy.** When `.orch/TEST-POLICY.md` does not exist, offer to copy the orch
+   skill's `templates/TEST-POLICY.md` there (`${CLAUDE_PLUGIN_ROOT}/skills/orch/templates/TEST-POLICY.md`
+   on Claude Code, the sibling `orch` skill's `./templates/TEST-POLICY.md` elsewhere). Its seventh rule
+   is this step: every binding rule has a test or a row. Copy only after the user agrees; when the file
+   exists, leave it alone and do not offer.

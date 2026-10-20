@@ -208,6 +208,14 @@ exist.
   orchestrator proposes promoting it into `standing_checks_extra` in the config — where it becomes a
   permanent, always-on check for every future task. This **asks you first; the loop never edits the
   config silently.**
+- **Rules need checks.** A rule written in `CLAUDE.md` ("never", "always", "must", "only", a
+  "Binding rules" section) holds only on the prompt until a tool checks it. `/junkd:orch-init` scans
+  every `CLAUDE.md`/`AGENTS.md` and proposes, per rule, a `standing_checks_extra` row with a concrete
+  recipe (grep / test / curl), a pointer to the test that already pins it, or "stays prose". You confirm
+  each row; re-runs propose only new rules. The starter `TEST-POLICY.md` it offers makes this a
+  standing rule: a task that adds a binding rule adds its check in the same branch. The retro
+  shortcut: a lesson that names a rule already in `CLAUDE.md` is proposed for promotion at once
+  ("rule exists in CLAUDE.md §X, no check"), without waiting for a second task.
 
 This is the missing feedback loop in naive agent runs: without it, the same class of bug gets
 re-litigated task after task.
