@@ -41,7 +41,7 @@ not a fix. You are always spawned fresh: never resumed for a second round.
    is a FAIL — the recipe says how to induce it for real / through the UI.
    **`security` declared → spawn the security reviewer in this same step** (see the standing check
    below), so it too overlaps the env build: run `<bin>/orch-worktree add` first (it only checks the
-   branch out; the installs and boots of step 1 are what the two reviewers overlap) and hand it that
+   branch out; the installs and boots of step 1 are what both agents overlap) and hand it that
    dir.
 1. **Build the verify env** from `branch`: `<bin>/orch-worktree add <id> <branch>` gives you the
    worktree dir (detached at the branch: the implementer's own worktree may still hold it) + the
