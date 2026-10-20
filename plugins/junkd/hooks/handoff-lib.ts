@@ -38,6 +38,8 @@ export const S = {
   resumeAt: null as number | null,
   percent: 0,
   tokens: 0,
+  last: '', // the last measurement as the log wrote it (without its time), for /junkd:ahandoff status; '' = none yet
+  lastAt: 0,
   armedAt: null as number | null,
   route: 'auto' as Route,
   note: '',
