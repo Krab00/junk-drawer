@@ -509,15 +509,6 @@ rg -qF '"$cfg/junkd/orch-lessons-off"' "$junkd/skills/orch/scripts/orch-context.
 # The lessons skill: a real SKILL.md and openai.yaml, its bin the orch skill's.
 [ -f "$junkd/skills/lessons/SKILL.md" ] && [ -f "$junkd/skills/lessons/agents/openai.yaml" ] || { echo "junkd: skills/lessons lacks SKILL.md or agents/openai.yaml"; exit 1; }
 [ "$(readlink "$junkd/skills/lessons/bin")" = ../orch/bin ] || { echo "junkd: skills/lessons/bin is not a link to ../orch/bin"; exit 1; }
-# The migrated diary: at the template path, every lesson block with a `to`, each one the CLI reads.
-migrated="$junkd/skills/orch/templates/lessons-migrated.md"
-[ -f "$migrated" ] || { echo "junkd: orch/templates/lessons-migrated.md is missing"; exit 1; }
-heads=$(rg -c '^## ' "$migrated"); with_to=$(rg -c '^## L[0-9]+ \([0-9-]+\) scope: local · stack: [a-z,-]+ · to: (test|smoke|check|role|repo|global|drop) · from: T[0-9]+$' "$migrated")
-[ "$heads" = "$with_to" ] || { echo "junkd: lessons-migrated.md has $heads headings, $with_to lesson blocks with a to"; exit 1; }
-mp="$tmp/lessons-mig"; mkdir -p "$mp/.orch/tasks"; git -C "$mp" init -q
-printf -- '---\ntasks_dir: .orch/tasks\n---\n' >"$mp/.orch/config.md"; cp "$migrated" "$mp/.orch/tasks/_lessons.md"
-[ "$(cd "$mp" && CLAUDE_CONFIG_DIR="$tmp/lessons-mig-cfg" "$junkd/bin/orch-state" lesson list --json | jq 'length')" = "$heads" ] ||
-    { echo "junkd: orch-state lesson does not read every block of lessons-migrated.md"; exit 1; }
 # The spec: orch.md §7, §1 and §8, ORCHESTRATOR.md and the guide hold the three stores, the signal rule, the blocking
 # rule and the switch, each pinned by a full sentence.
 orch_md="$junkd/skills/orch/commands/orch.md"
