@@ -456,7 +456,7 @@ if rg -q $'\r' .orch/tasks/CR.md; then fail "set on CRLF: CR bytes remain"; fi
 
 # list: header + one row per task file; `_`-files hidden; a file without frontmatter is `invalid`
 list=$("$bin/orch-state" list)
-[ "$(printf '%s\n' "$list" | head -1 | awk '{print $1, $2, $3}')" = "ID STATUS DEPS" ] || fail "list: no header"
+[ "$(printf '%s\n' "$list" | head -1 | awk '{print $1, $2, $3, $4}')" = "ID STATUS ! DEPS" ] || fail "list: no header: $(printf '%s\n' "$list" | head -1)"
 rg -q '^T-1[[:space:]]+in_progress[[:space:]]+\[\]' <<<"$list" || fail "list: T-1 row wrong: $list"
 rg -q '^x_y[[:space:]]+todo' <<<"$list" || fail "list: x_y (inner underscore) missing"
 rg -q '^CR[[:space:]]+done' <<<"$list" || fail "list: CR row missing"
@@ -472,6 +472,40 @@ printf -- '---\nid: D2\nstatus: "blocked"   # quoted\ndeps:\n  - T-1\n  - CR\n--
 list=$("$bin/orch-state" list)
 rg -q '^D1[[:space:]]+todo[[:space:]]+\[T-1, CR\]$' <<<"$list" || fail "list: flow deps wrong"
 rg -q '^D2[[:space:]]+blocked[[:space:]]+\[T-1, CR\]$' <<<"$list" || fail "list: block deps / quoted status wrong"
+
+# critical: `!` between status and deps only for critical: true (True, TRUE, double or single quotes, an unclosed quote, trailing
+# blanks, an unquoted value with a space or tab # comment, CRLF, the first of two critical lines); false, a missing key, other
+# spellings, an indented key, a longer key, a space before the colon, a block list, a line after the frontmatter and an invalid
+# file (no opening --- at all, or a key line before the first ---) get none
+printf -- '---\nid: K1\nstatus: todo\ncritical: true\ndeps: [T-1]\n---\n' > .orch/tasks/K1.md
+printf -- '---\nid: K2\nstatus: todo\ncritical: True\n---\n' > .orch/tasks/K2.md
+printf -- '---\nid: K3\nstatus: todo\ncritical: TRUE\n---\n' > .orch/tasks/K3.md
+printf -- '---\nid: K4\nstatus: todo\ncritical: "true"   # quoted\n---\n' > .orch/tasks/K4.md
+printf -- '---\nid: K5\nstatus: todo\ncritical: false\n---\n' > .orch/tasks/K5.md
+printf -- '---\nid: K6\nstatus: todo\ncritical: yes\n---\n' > .orch/tasks/K6.md
+printf -- '---\nid: K7\nstatus: todo\ncritical: truely\n---\n' > .orch/tasks/K7.md
+printf -- '---\r\nid: K8\r\nstatus: todo\r\ncritical: true\r\n---\r\n' > .orch/tasks/K8.md
+printf -- '---\nid: KA\nstatus: todo\ncritical: true  # note\n---\n' > .orch/tasks/KA.md
+printf -- '---\nid: KB\nstatus: todo\n  critical: true\n---\n' > .orch/tasks/KB.md
+printf -- "---\nid: KC\nstatus: todo\ncritical: 'true'\n---\n" > .orch/tasks/KC.md
+printf -- '---\nid: KD\nstatus: todo\ncritical:   true   \n---\n' > .orch/tasks/KD.md
+printf -- '---\nid: KE\nstatus: todo\ncritical: "true\n---\n' > .orch/tasks/KE.md
+printf -- '---\nid: KF\nstatus: todo\ncriticality: true\n---\n' > .orch/tasks/KF.md
+printf -- '---\nid: KG\nstatus: todo\ncritical:\n  - true\n---\n' > .orch/tasks/KG.md
+printf -- '---\nid: KH\nstatus: todo\ncritical: true\ncritical: false\n---\n' > .orch/tasks/KH.md
+printf -- '---\nid: KI\nstatus: todo\ncritical : true\n---\n' > .orch/tasks/KI.md
+printf -- '---\nid: KJ\nstatus: todo\ncritical: true\t# tab note\n---\n' > .orch/tasks/KJ.md
+printf -- 'critical: true\n' > .orch/tasks/K9.md
+printf -- 'id: KK\ncritical: true\n---\n' > .orch/tasks/KK.md
+printf -- '---\nid: K0\nstatus: todo\n---\ncritical: true\n' > .orch/tasks/K0.md
+list=$("$bin/orch-state" list)
+for k in K1 K2 K3 K4 K8 KA KC KD KE KH KJ; do rg -q "^$k[[:space:]]+todo[[:space:]]+![[:space:]]" <<<"$list" || fail "list: $k (critical) has no ! marker: $list"; done
+rg -q '^K1[[:space:]]+todo[[:space:]]+![[:space:]]+\[T-1\]$' <<<"$list" || fail "list: K1 deps not after the marker: $list"
+rg -q '^K9[[:space:]]+invalid[[:space:]]*$' <<<"$list" || fail "list: K9 (invalid) row wrong: $list"
+rg -q '^KK[[:space:]]+invalid[[:space:]]*$' <<<"$list" || fail "list: KK (no opening ---) row wrong: $list"
+[ "$(rg -c '!' <<<"$list")" = 12 ] || fail "list: expected the header + 11 critical rows with !, got: $list"
+for k in K5 K6 K7 K9 KK K0 KB KF KG KI T-1 D1 D2 CR; do if rg -q "^$k[[:space:]].*!" <<<"$list"; then fail "list: $k is not critical but has !"; fi; done
+rm -f .orch/tasks/K?.md
 
 # reset-stale: in_progress -> todo; blocked only with --blocked; `_` files untouched
 "$bin/orch-state" reset-stale >/dev/null

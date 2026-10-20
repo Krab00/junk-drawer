@@ -130,12 +130,22 @@ Per picked task, read `<tasks_dir>/<ID>.md` and settle the acceptance criteria O
    reason `needs-criteria` + a concrete question to the task file, report it under
    `BACKLOG: BLOCKED`. **Never implement on vibes.**
 
+Then settle the task's **`critical:`** frontmatter key (`true|false`; a missing key means `false`)
+in the same pass. Set `critical: true` when the task file or its description names auth, money,
+deletion, migration, concurrency, or a shared resource (port, lock, file, queue), or when the user
+says so; a key already written in the task file stays as written. Write it into the frontmatter
+yourself (`orch-state` only reads it; `orch-state list` marks a critical task with `!`). An
+interactive run shows it with the frozen criteria and gets approval for both before implementing.
+A critical task gets one `test-planner` Break row per break kind in the verify leg instead of one.
+
 ### 3. Plan & delegate
 
 Per task:
 1. Write a SHORT implementation plan (files to touch, contracts, any prototype/spec to follow).
    Keep it in your context — hand it straight to the implementer, don't push it to the backend.
-2. **Include the current lessons** (`<tasks_dir>/_lessons.md`, §7) in the plan you hand over.
+2. **Include the current lessons** (`<tasks_dir>/_lessons.md`, §7) in the plan you hand over, and
+   say when the task is `critical: true`: the verify leg then tries every break kind (concurrency,
+   ordering, replay, interrupted flow, resource exhaustion, privilege edge) against the change.
 3. Choose the implementer by whether the work splits — your judgment:
    - **`lead-implementer`** when the plan decomposes into **≥2 non-trivial file-disjoint slices**
      (parallelism beats the contract-freeze + merge overhead), or when `--deep` is passed. It
