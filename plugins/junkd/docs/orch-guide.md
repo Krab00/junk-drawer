@@ -192,6 +192,25 @@ exist.
 | **Every path from `test-planner`'s matrix** — happy + each edge (empty/loading/error/no-permission/boundary), each induced for real | always (scaled to declared layers) | The branches a lucky random run skips are actually hit. A state that genuinely can't be reached this run is a visible FAIL/PM-REVIEW row with a reason — never a silently missing line. |
 | **Everything in `standing_checks_extra`** | project config | Project-specific lessons already promoted to permanent checks (see [§5](#5-learning--the-retro--_lessonsmd)). |
 
+### Break rows
+
+The matrix asks whether each path works; it never asks what happens when two of them happen at
+once, in the wrong order, twice, or half way. So after the matrix `test-planner` writes a **Break**
+section from the same diff, over six kinds: **concurrency** (two of the same request at once against
+one resource: one wins, no double effect, no 500), **ordering** (steps out of order or repeated: a
+clean 4xx/409, state unchanged), **replay** (the identical request again after success: idempotent
+or a named conflict), **interrupted flow** (a kill between two writes of one operation: no
+half-written state on restart), **resource exhaustion** (the queue, slot, quota or disk full: a named
+error, never a hang) and **privilege edge** (the other principal who owns something tries the
+operation: denied). A standard task gets ONE row, the cheapest way to break the change. A task with
+`critical: true` in its frontmatter gets a row per kind, and a kind that does not apply is written
+`n/a: <why>`, never dropped; the section ends with `BREAK <id>: <n> rows (<critical|standard>)`. The
+freeze ladder sets `critical: true` when the task names auth, money, deletion, migration,
+concurrency or a shared resource (port, lock, file, queue), or when you say so, and an interactive
+run shows it with the criteria for approval. `verify-coordinator` executes every Break row for real
+(two parallel `curl`s, a repeated step, a kill between writes), never by reading the code; a row it
+cannot induce this run is a `PM-REVIEW` with the reason.
+
 ---
 
 ## 5. Learning — the retro / `_lessons.md`
@@ -316,6 +335,7 @@ deps: [TASK-120]        # this task is eligible only once every dep is done
 source: adhoc           # adhoc | github#45 | linear:ABC-12
 source_updated_at:      # stamped on pull; push compares it (drift guard)
 criteria_source: derived # verbatim | derived
+critical: false         # true: every break kind gets a Break row (set by the freeze ladder)
 ---
 ## Description
 <what the task is — describe the desired behaviour>
@@ -377,7 +397,7 @@ error-prone steps that shouldn't be an LLM's job. Keeping them out of the model'
 frontmatter never drifts and ports never collide.
 
 - **`orch-state`** — the canonical task-store CRUD and the *only* writer of status:
-  `list` (id/status/deps table) · `set <id> <status>` · `reset-stale [--blocked]` (`in_progress`, with `--blocked` also `blocked` →
+  `list` (id/status/`!`/deps table; `!` marks a `critical: true` task) · `set <id> <status>` · `reset-stale [--blocked]` (`in_progress`, with `--blocked` also `blocked` →
   `todo`) · `new <id> [title]` (skeleton task file).
 - **`orch-worktree`** — per-task git worktrees under `.worktrees/` plus **stable port slots**
   (`port = capability port_base + slot`): `add <id> <branch> [base]` · `remove <id>` · `slot <id>`.
