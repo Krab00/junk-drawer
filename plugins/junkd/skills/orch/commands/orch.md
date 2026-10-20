@@ -190,7 +190,9 @@ tell it which apply; never ask for a check on an undeclared layer):
   rows. No finding at or above it → one `PASS` row `security: no findings ≥ <severity>`. A reviewer
   that cannot run (the skill is missing on the host) → one `PM-REVIEW` row with the reason, never a
   silent skip. It runs on **every** round, re-verify rounds too: a fix round changes the diff.
-  `security` absent from the config → no reviewer and no security row at all.
+  `security` absent from the config → no reviewer and no security row at all. A `severity` that is
+  missing or not one of `low`, `medium`, `high` is read as `high`, with the note
+  `security: severity <value> read as high` under the table.
 - Plus every entry in the config's `standing_checks_extra` (project lessons already promoted).
 
 ### 5. Resolve (round strategy)

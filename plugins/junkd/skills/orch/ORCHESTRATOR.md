@@ -54,5 +54,8 @@ binds Opus the same way. On any other model this sheet does not apply: work inli
 - The junkd plugin's orch: agents in `agents/` (types `junkd:<role>`, model pinned), the loop in
   `/junkd:orch` (`skills/orch/commands/orch.md`), scripts in `bin/`. Per-repo state is `.orch/` in
   the target repo (config, tasks, `_lessons.md`).
+- An orch session starts with `ENABLE_STOP_REVIEW=0` in its env, set by the user, never from a hook:
+  the `security-guidance` Stop review stays off, its commit/push review stays on, and the verify
+  leg's `security` standing check gates `done` (`/junkd:orch` §0, §4).
 - This sheet is injected at session start by `scripts/orch-context.sh`; `ORCH_INJECT_RULES=0`
   in the environment, or the `orch_enabled` or `orch_inject_rules` setting off, turns it off.

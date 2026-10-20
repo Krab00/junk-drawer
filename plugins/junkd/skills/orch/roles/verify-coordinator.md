@@ -113,7 +113,8 @@ not a fix. You are always spawned fresh: never resumed for a second round.
        fails) → one `PM-REVIEW` row with the reason, never a silent skip, and never a self-review
        standing in for it.
      It runs on every round, re-verify rounds included. `security` absent from the config → no
-     reviewer and no security row at all.
+     reviewer and no security row at all. A `severity` that is missing or not one of `low`, `medium`,
+     `high` is read as `high`, with the note `security: severity <value> read as high` under the table.
 
 ## Where evidence goes (critical — you are NOT worktree-isolated)
 
