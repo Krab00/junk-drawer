@@ -354,7 +354,7 @@ for script in ctx-limit ctx-limit-hook; do
 done
 # The status line: the module compares and setup writes <config dir>/junkd/statusline.sh, and the renderer reads every
 # segment row of settings.ts from settings.json by its key.
-rg -qF '`${await configDir($)}/junkd/statusline.sh`' "$junkd/hooks/statusline.tsx" &&
+rg -qF '`${cfg}/junkd/statusline.sh`' "$junkd/hooks/statusline.tsx" &&
     rg -qF 'DEST="$CFG/junkd/statusline.sh"' "$junkd/skills/statusline/bin/statusline-setup" ||
     { echo "junkd: hooks/statusline.tsx and bin/statusline-setup do not spell the same <config dir>/junkd/statusline.sh"; exit 1; }
 for key in $(jq -r '.userConfig | keys_unsorted[] | select(startswith("statusline_") and . != "statusline_enabled")' "$junkd_manifest"); do

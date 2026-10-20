@@ -59,7 +59,9 @@ A directory-source plugin loads in place from `/abs/path/to/junk-drawer/plugins/
 the next session start or `/reload-plugins`, and switching the checkout's branch changes what runs. Where
 `junk-drawer` was added from GitHub before, the `marketplace add` re-points it at the folder (the plugins already
 installed from it follow), and `claude plugin update junkd@junk-drawer` records the checkout's version. The
-`--plugin-dir` flag is not needed.
+`--plugin-dir` flag is not needed. A `--plugin-dir` session next to an installed copy keeps its rows under
+`junkd@inline`, the installed one under `junkd@junk-drawer`: the status line reads the entry its command names (see
+[statusline](#which-pluginconfigs-entry-the-key)); the pane warns when both exist.
 
 The install is live when:
 
@@ -1072,7 +1074,7 @@ A colored status line for Claude Code. Segments, separated by a dim `│`:
 The status line is on by default: the first session start with junkd copies `bin/statusline.sh` to
 `~/.claude/junkd/statusline.sh` and points `statusLine` in `~/.claude/settings.json` at that absolute path (a
 plugin path is a versioned cache, and `${CLAUDE_PLUGIN_ROOT}` does not resolve in settings.json). It does so only
-where settings.json has no `statusLine` or one that is junkd's. A `statusLine` of your own is never replaced:
+where settings.json has no `statusLine` (or `null`) or one that is junkd's. A `statusLine` of your own is never replaced:
 turning the row on refuses with the reason (`bin/statusline-setup on --force` from the skill folder replaces it),
 and `off` leaves it alone. At every session start, while the row is on, a copy that differs from the plugin's (a
 plugin update) is copied again. Every write backs settings.json up to `settings.json.bak`, goes through a symlink
@@ -1090,9 +1092,33 @@ to the real file (temp + `mv`), and never touches a settings.json that does not 
 | `statusline_effort` | boolean | `true` | Draw the effort level |
 | `statusline_limits` | boolean | `true` | Draw the 5h and weekly rate limits |
 
-The renderer reads the segment rows from settings.json itself at every draw (`pluginConfigs`, the first entry
-whose key starts with `junkd@`, its `options.statusline_<segment>`): a missing key, a settings.json that does not
-parse, or no `jq` draws the segment. A segment off takes out exactly it and its separator.
+The renderer reads the segment rows from settings.json itself at every draw (`pluginConfigs`, one entry's
+`options.statusline_<segment>`): a missing key or entry, a settings.json that does not parse, or no `jq` draws the
+segment. A segment off takes out exactly it and its separator.
+
+#### Which `pluginConfigs` entry (the key)
+
+Claude Code stores a plugin's rows under `pluginConfigs["<plugin>@<source>"]`: `junkd@inline` for a session started
+with `--plugin-dir`, `junkd@<marketplace>` (for example `junkd@junk-drawer`) for an installed copy. Both can sit in
+one settings.json, and each session writes its toggles to its own entry. The wired command therefore names the entry:
+
+```
+statusLine.command = ~/.claude/junkd/statusline.sh --config junkd@inline
+```
+
+The renderer reads exactly that entry (no `--config`, the old behaviour: the first `junkd@` entry in the file, which
+is the installed copy's whenever both exist, so a `--plugin-dir` session's toggles never reached the line). The
+module derives its key from the plugin's folder (`<config>/plugins/cache/<marketplace>/junkd/<version>` is
+`junkd@<marketplace>`, any other folder is `junkd@inline`; the engine does not hand a module its own key), and
+`statusline-setup on --config <key>` (every `on`, and at session start whenever the command differs, the script is
+stale, or `statusLine` is missing or `null`) rewrites the script and the command. Two sessions with different keys
+re-point the line at each session start: the one started last wins. The statusline pane shows the key
+(`config: pluginConfigs junkd@inline`) and warns `two junkd configs: <key> wins` when another `junkd@` entry exists
+in the file or the wired command reads a different one.
+
+The `wired` switch in the pane shows the real `statusLine` in the user's settings.json (junkd's command, with or
+without `--config`), not the `statusline_enabled` row: the row can be on while the line is gone, and a press then
+wires it, a press while it is wired takes it out. `"statusLine": null` counts as none.
 
 The junkd pane shows `statusline_enabled`; its `settings ▸` opens the statusline pane: the enabled switch (`a`), one
 switch per segment (`b`–`g`), and a preview of the line for your choice (the renderer run on a sample session:

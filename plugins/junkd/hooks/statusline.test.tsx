@@ -5,6 +5,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { configNote, pluginKey } from './statusline'
 import { FIELDS, SEGMENTS, plain } from './statusline-views'
 
 const HOME = '/home/u'
@@ -17,11 +18,17 @@ const FALSE_SPELLINGS = [false, 'false', 'off', 'maybe', 1, 0] as const
 // What the renderer prints for the preview: colours, the dim │, a newline.
 const LINE = '\x1b[36mctx 139k free / 61k used (30%)\x1b[0m\x1b[2m │ \x1b[0m\x1b[1;34mpreview\x1b[0m\n'
 const SHOWN = 'ctx 139k free / 61k used (30%) │ preview'
+const KEY = 'junkd@inline' // the pluginConfigs key of a --plugin-dir session: the test plugin's root is no cache folder
+const WIRED = `${COPY} --config ${KEY}` // the statusLine command statusline-setup on --config <KEY> writes
+const wiredSettings = { statusLine: { type: 'command', command: WIRED } }
 
 type Run = { argv: string[]; stdin?: string; env?: Record<string, string> }
 // The world's knobs: `setup` answers statusline-setup (by mode: exit code and stdout, or `throw`); `preview` the
-// renderer's stdout and exit; `copy` the installed copy (undefined: none); `script` the plugin's own renderer.
+// renderer's stdout and exit; `copy` the installed copy (undefined: none); `script` the plugin's own renderer;
+// `settings` the user's settings.json as an object (default: the line wired to WIRED when a copy is installed, else
+// no file); statusline-setup on and off edit it as the script does.
 type Opts = {
+  settings?: Record<string, unknown>
   env?: Record<string, string>
   setup?: Partial<Record<'on' | 'off' | 'status', { exitCode?: number; stdout?: string; stderr?: string } | 'throw'>>
   preview?: { stdout: string; exitCode?: number }
@@ -42,6 +49,14 @@ function world(on: On, o: Opts = {}) {
   }
   const cfg = o.env?.CLAUDE_CONFIG_DIR ?? CFG
   if (o.copy !== undefined) rec.files.set(`${cfg}/junkd/statusline.sh`, o.copy)
+  const settingsPath = `${cfg}/settings.json`
+  const initial = o.settings ?? (o.copy !== undefined ? wiredSettings : undefined)
+  if (initial !== undefined) rec.files.set(settingsPath, JSON.stringify(initial))
+  const edit = (change: (s: Record<string, unknown>) => void) => {
+    const s = JSON.parse(rec.files.get(settingsPath) ?? '{}') as Record<string, unknown>
+    change(s)
+    rec.files.set(settingsPath, JSON.stringify(s))
+  }
   const result = (exitCode = 0, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
   on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
@@ -74,8 +89,15 @@ function world(on: On, o: Opts = {}) {
       const a = o.setup?.[mode]
       if (a === 'throw') throw new Error('spawn EACCES')
       const ok = (a?.exitCode ?? 0) === 0
-      if (ok && mode === 'on') rec.files.set(`${cfg}/junkd/statusline.sh`, o.script ?? SCRIPT)
-      if (ok && mode === 'off') rec.files.delete(`${cfg}/junkd/statusline.sh`)
+      if (ok && mode === 'on') {
+        rec.files.set(`${cfg}/junkd/statusline.sh`, o.script ?? SCRIPT)
+        const key = e.argv[2] === '--config' ? e.argv[3] : undefined
+        edit(s => { s.statusLine = { type: 'command', command: key ? `${cfg}/junkd/statusline.sh --config ${key}` : `${cfg}/junkd/statusline.sh` } })
+      }
+      if (ok && mode === 'off') {
+        rec.files.delete(`${cfg}/junkd/statusline.sh`)
+        edit(s => { delete s.statusLine })
+      }
       return result(a?.exitCode ?? 0, a?.stdout ?? (a ? '' : mode === 'status' ? 'on\n' : `statusline: ${mode}\n`), a?.stderr ?? '')
     }
     if (bin.endsWith('/bin/statusline.sh')) return result(o.preview?.exitCode ?? 0, o.preview?.stdout ?? LINE)
@@ -447,4 +469,139 @@ test('/junkd:statusline with another argument: a usage toast, nothing run or wri
   expect(rec.toasts.at(-1)).toBe('✗ usage: /junkd:statusline [on | off | status]')
   expect(setups(rec)).toEqual([])
   expect(rec.config).toEqual([])
+})
+
+// ------------------------------------------------------------------ T29: the key the line reads (--config <key>)
+
+test('pluginKey: a cache folder is junkd@<marketplace>, any other directory is junkd@inline', () => {
+  expect(pluginKey('/home/u/.claude/plugins/cache/junk-drawer/junkd/0.11.2')).toBe('junkd@junk-drawer')
+  expect(pluginKey('/home/u/.claude/plugins/cache/junk-drawer/junkd/0.11.2/')).toBe('junkd@junk-drawer')
+  expect(pluginKey('/x/cfg/plugins/cache/other-mkt/junkd/1.0.0')).toBe('junkd@other-mkt')
+  expect(pluginKey('/home/u/work/junk-drawer/plugins/junkd')).toBe('junkd@inline')
+  expect(pluginKey('/home/u/.claude/plugins/cache/junk-drawer/other/0.1.0')).toBe('junkd@inline') // another plugin's folder
+  expect(pluginKey('/home/u/.claude/plugins/cache/junk-drawer/junkd')).toBe('junkd@inline') // no version folder
+})
+test('"wired on" names the key: the menu, set and /junkd:statusline on pass --config; off passes none', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, settings: {} })
+  await start($)
+  expect(setups(rec).map(r => r.argv.slice(1)), 'session start with the row off runs nothing').toEqual([])
+  await menu($, 'statusline_enabled', true)
+  await set($, 'statusline_enabled', false)
+  await set($, 'statusline_enabled', true)
+  await command($, 'off')
+  await command($, 'on')
+  expect(setups(rec).map(r => r.argv.slice(1))).toEqual([['on', '--config', KEY], ['off'], ['on', '--config', KEY], ['off'], ['on', '--config', KEY]])
+  expect(JSON.parse(rec.files.get(`${CFG}/settings.json`)!)).toEqual(wiredSettings)
+})
+test('session start: the first wiring names the key, and the settings.json command ends with it', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  expect(setups(rec).map(r => r.argv.slice(1))).toEqual([['on', '--config', KEY]])
+  expect(JSON.parse(rec.files.get(`${CFG}/settings.json`)!).statusLine.command).toBe(WIRED)
+})
+const OLD_COMMAND = [
+  ['no statusLine at all', {}],
+  ['a null statusLine (the host leaves that when the line is removed)', { statusLine: null }],
+  ['the copy with no --config (wired before the key existed)', { statusLine: { type: 'command', command: COPY } }],
+  ['the copy wired for another key (the marketplace session wired it)', { statusLine: { type: 'command', command: `${COPY} --config junkd@junk-drawer` } }],
+  ['the legacy path (statusline-setup moves it)', { statusLine: { type: 'command', command: `${CFG}/junk-drawer-statusline.sh` } }],
+] as const
+for (const [what, settings] of OLD_COMMAND) {
+  test(`session start with the current copy runs statusline-setup on when settings.json has ${what}`, W, async ($, on) => {
+    const rec = world(on, { copy: SCRIPT, settings })
+    await start($)
+    expect(setups(rec).map(r => r.argv.slice(1))).toEqual([['on', '--config', KEY]])
+    expect(JSON.parse(rec.files.get(`${CFG}/settings.json`)!).statusLine.command).toBe(WIRED)
+  })
+}
+for (const settings of [{ statusLine: { type: 'command', command: '/my/line.sh' } }, { statusLine: { type: 'static', text: 'hi' } }, { statusLine: 'text' }]) {
+  test(`session start leaves a statusLine of the person's own alone when the copy is current: ${JSON.stringify(settings)}`, W, async ($, on) => {
+    const rec = world(on, { copy: SCRIPT, settings })
+    await start($)
+    expect(setups(rec)).toEqual([])
+  })
+}
+test('session start rewrites a stale script even when the command is right', W, async ($, on) => {
+  const rec = world(on, { copy: '# older\n', settings: wiredSettings })
+  await start($)
+  expect(setups(rec).map(r => r.argv.slice(1))).toEqual([['on', '--config', KEY]])
+  expect(rec.files.get(COPY)).toBe(SCRIPT)
+})
+test('the preview runs the renderer with --config <key>, so it draws what the line draws', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await command($, '')
+  await mount($)
+  expect(previews(rec).map(r => r.argv.slice(1))).toEqual([['--config', KEY]])
+})
+
+test('configNote: one junkd config is no warning; a second names the one the line reads', () => {
+  const configs = (...keys: string[]) => ({ pluginConfigs: Object.fromEntries(keys.map(k => [k, { options: {} }])) })
+  const line = (command: string) => ({ statusLine: { type: 'command', command } })
+  expect(configNote({ ...configs(KEY), ...line(WIRED) }, KEY, CFG)).toEqual({ key: KEY, warn: '' })
+  expect(configNote(undefined, KEY, CFG)).toEqual({ key: KEY, warn: '' })
+  expect(configNote({ pluginConfigs: { 'other@x': { options: {} } } }, KEY, CFG)).toEqual({ key: KEY, warn: '' })
+  // two entries, the line reads ours
+  expect(configNote({ ...configs('junkd@junk-drawer', KEY), ...line(WIRED) }, KEY, CFG)).toEqual({ key: KEY, warn: `two junkd configs: ${KEY} wins` })
+  // two entries, the line reads the other one
+  expect(configNote({ ...configs(KEY, 'junkd@junk-drawer'), ...line(`${COPY} --config junkd@junk-drawer`) }, KEY, CFG).warn).toBe(`two junkd configs: junkd@junk-drawer wins (this session writes ${KEY})`)
+  // a command with no --config reads the first junkd@ entry in the file
+  expect(configNote({ ...configs('junkd@junk-drawer', KEY), ...line(COPY) }, KEY, CFG).warn).toBe(`two junkd configs: junkd@junk-drawer wins (this session writes ${KEY})`)
+  // a line that is not junkd's: the line reads nothing of ours, this session's key counts
+  expect(configNote({ ...configs('junkd@junk-drawer'), ...line('/my/line.sh --config junkd@junk-drawer') }, KEY, CFG).warn).toBe(`two junkd configs: ${KEY} wins`)
+  // the other config alone (this session's entry not stored yet) is already a second one
+  expect(configNote({ ...configs('junkd@junk-drawer'), ...line(WIRED) }, KEY, CFG).warn).toBe(`two junkd configs: ${KEY} wins`)
+})
+test('the pane shows the key it is wired for, and the two-configs warning only when another junkd@ entry exists', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, settings: { ...wiredSettings, pluginConfigs: { [KEY]: { options: {} } } } })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  expect((await pane.find({ key: 'config-key' }))?.text).toBe(`config: pluginConfigs ${KEY}`)
+  expect(await pane.find({ key: 'config-warn' })).toBeUndefined()
+  rec.files.set(`${CFG}/settings.json`, JSON.stringify({ ...wiredSettings, pluginConfigs: { 'junkd@junk-drawer': { options: {} }, [KEY]: { options: {} } } }))
+  await pane.press({ key: 'set:model' })
+  expect((await pane.find({ key: 'config-warn' }))?.text).toBe(`✗ two junkd configs: ${KEY} wins`)
+})
+
+// ------------------------------------------------------------------ T29: "wired" is the settings.json statusLine, not the option
+
+test('wired: the option on with no statusLine shows off; a press writes the statusLine and shows on', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, settings: {}, setup: {} })
+  rec.o.setup = { on: { exitCode: 1, stdout: 'held\n' } } // session start cannot wire it: the line stays missing
+  await start($)
+  rec.o.setup = {}
+  expect(await get($, 'statusline_enabled')).toBe(true)
+  await command($, '')
+  const pane = await mount($)
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' off ')
+  expect((await pane.find({ type: 'Button', key: 'set:enabled' }))?.text).toBe('on')
+  await pane.press({ key: 'set:enabled' })
+  expect(setups(rec).at(-1)!.argv.slice(1)).toEqual(['on', '--config', KEY])
+  expect(JSON.parse(rec.files.get(`${CFG}/settings.json`)!).statusLine.command).toBe(WIRED)
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' on ')
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ enabled on')
+  expect(await get($, 'statusline_enabled')).toBe(true)
+})
+test('wired: with the statusLine there, a press removes it and shows off', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, settings: { ...wiredSettings, theme: 'dark' } })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' on ')
+  await pane.press({ key: 'set:enabled' })
+  expect(setups(rec).at(-1)!.argv.slice(1)).toEqual(['off'])
+  expect(JSON.parse(rec.files.get(`${CFG}/settings.json`)!)).toEqual({ theme: 'dark' })
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' off ')
+  expect(await get($, 'statusline_enabled')).toBe(false)
+  await pane.press({ key: 'set:enabled' })
+  expect(setups(rec).at(-1)!.argv.slice(1)).toEqual(['on', '--config', KEY])
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' on ')
+})
+test('wired: a statusLine of the person\'s own is not "wired" (off) even with the option on', W, async ($, on) => {
+  world(on, { copy: SCRIPT, settings: { statusLine: { type: 'command', command: '/my/line.sh' } } })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' off ')
 })
