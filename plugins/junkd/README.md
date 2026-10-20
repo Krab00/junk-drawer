@@ -15,7 +15,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 | `/junkd:ctx-tokens` | How full the context is, from the session transcript |
 | `/junkd:statusline [on \| off \| status]` | The colored status line in settings.json, a switch per segment; no argument toggles its pane (Claude Code only) |
 | `/junkd:tools [agents \| tools \| mcp \| skills]` | Open or close the tools pane: this session's agents over the repo's worktrees, and the tools, MCP servers and skills it used (Claude Code only) |
-| `/junkd`, `/junkd:junkd` | Open or close the junkd set of panes (Claude Code only) |
+| `/junkd:explain <topic>` | Explain a topic from the repo in the format that fits: a slider page for parameters, a Mermaid diagram for structure or flow, STE text otherwise |
 | `/junkd:junkd` (`/junkd` where the host resolves it) | Open or close the junkd set of panes (Claude Code only) |
 
 On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`, `$ctx-limit`… (the model sees them as `junkd:<name>`), on Kimi
