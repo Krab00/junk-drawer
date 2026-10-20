@@ -476,7 +476,7 @@ rg -q '^D2[[:space:]]+blocked[[:space:]]+\[T-1, CR\]$' <<<"$list" || fail "list:
 # critical: `!` between status and deps only for critical: true (True, TRUE, double or single quotes, an unclosed quote, trailing
 # blanks, an unquoted value with a space or tab # comment, CRLF, the first of two critical lines); false, a missing key, other
 # spellings, an indented key, a longer key, a space before the colon, a block list, a line after the frontmatter and an invalid
-# file get none
+# file (no opening --- at all, or a key line before the first ---) get none
 printf -- '---\nid: K1\nstatus: todo\ncritical: true\ndeps: [T-1]\n---\n' > .orch/tasks/K1.md
 printf -- '---\nid: K2\nstatus: todo\ncritical: True\n---\n' > .orch/tasks/K2.md
 printf -- '---\nid: K3\nstatus: todo\ncritical: TRUE\n---\n' > .orch/tasks/K3.md
@@ -496,13 +496,15 @@ printf -- '---\nid: KH\nstatus: todo\ncritical: true\ncritical: false\n---\n' > 
 printf -- '---\nid: KI\nstatus: todo\ncritical : true\n---\n' > .orch/tasks/KI.md
 printf -- '---\nid: KJ\nstatus: todo\ncritical: true\t# tab note\n---\n' > .orch/tasks/KJ.md
 printf -- 'critical: true\n' > .orch/tasks/K9.md
+printf -- 'id: KK\ncritical: true\n---\n' > .orch/tasks/KK.md
 printf -- '---\nid: K0\nstatus: todo\n---\ncritical: true\n' > .orch/tasks/K0.md
 list=$("$bin/orch-state" list)
 for k in K1 K2 K3 K4 K8 KA KC KD KE KH KJ; do rg -q "^$k[[:space:]]+todo[[:space:]]+![[:space:]]" <<<"$list" || fail "list: $k (critical) has no ! marker: $list"; done
 rg -q '^K1[[:space:]]+todo[[:space:]]+![[:space:]]+\[T-1\]$' <<<"$list" || fail "list: K1 deps not after the marker: $list"
 rg -q '^K9[[:space:]]+invalid[[:space:]]*$' <<<"$list" || fail "list: K9 (invalid) row wrong: $list"
+rg -q '^KK[[:space:]]+invalid[[:space:]]*$' <<<"$list" || fail "list: KK (no opening ---) row wrong: $list"
 [ "$(rg -c '!' <<<"$list")" = 12 ] || fail "list: expected the header + 11 critical rows with !, got: $list"
-for k in K5 K6 K7 K9 K0 KB KF KG KI T-1 D1 D2 CR; do if rg -q "^$k[[:space:]].*!" <<<"$list"; then fail "list: $k is not critical but has !"; fi; done
+for k in K5 K6 K7 K9 KK K0 KB KF KG KI T-1 D1 D2 CR; do if rg -q "^$k[[:space:]].*!" <<<"$list"; then fail "list: $k is not critical but has !"; fi; done
 rm -f .orch/tasks/K?.md
 
 # reset-stale: in_progress -> todo; blocked only with --blocked; `_` files untouched
