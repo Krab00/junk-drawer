@@ -12,6 +12,7 @@ import {
 } from './lessons.ts'
 import { rowText } from './lessons-views'
 import { coerce } from './orch-lib'
+import parity from './lessons-parity.ts'
 
 const head = (id: string, scope: string, to: string, more = '') => `## ${id} (2026-10-20) scope: ${scope} · stack: shell · to: ${to}${more}`
 
@@ -28,6 +29,14 @@ test('parseLessons: one lesson per L<n> heading, its fields and body; CRLF as LF
   expect(parseLessons('## L2 (20261020) scope: repo\nx\n', 'repo')).toEqual([]) // not the heading's shape
   // a handed test keeps its whole target (· inside a field is no separator)
   expect(parseLessons(`${head('L4', 'local', 'test·handed', ' · from: T1')}\nx\n`, 'local')[0]!.to).toBe('test·handed')
+})
+
+// The same store text and the same expected lessons as tests/lessons.sh feeds bin/orch-state (`lesson list --json`): the
+// two parsers cannot drift apart without one of the two tests failing. The text has CRLF, a blank line and a tab and
+// double blanks inside a body, a lone CR (also in front of a `## `), headings of another shape, a bad date, an empty
+// stack, a block without `to` and a body line with colons.
+test('parseLessons gives the shared fixture\'s lessons, the very JSON bin/orch-state lesson list --json gives (tests/lessons.sh)', () => {
+  expect(parseLessons(parity.store, parity.scope as 'repo')).toEqual(parity.lessons)
 })
 
 test('isPending: resting where `to` points is not pending; below it, any other target, a handed test or no `to` is', () => {

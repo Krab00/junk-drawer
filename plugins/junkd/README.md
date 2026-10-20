@@ -529,8 +529,10 @@ for the whole run).
    builds, middle rounds re-run the same implementer on only the failing criteria, the **final
    round hands a FRESH implementer the diff + a why-it-keeps-failing analysis**; still failing →
    `blocked` and escalated.
-5. **Retro:** every resolve appends a lesson to `_lessons.md`; a pattern recurring across ≥2 tasks
-   is proposed for promotion into `standing_checks_extra` (asks you — never edits config silently).
+5. **Retro:** a resolve with a signal (a fix round, a surviving mutant, a PM-REVIEW that found a bug,
+   a dead or stalled agent, a verify FAIL) adds a lesson to `_lessons.md`; a clean round-0 PASS adds
+   none. A lesson is promoted toward a test, a standing check, a role file or a wider store, and
+   `standing_checks_extra` is never edited without your yes (see `## lessons`).
 
 The base branch is untouchable throughout: all work lands on task branches in worktrees, only draft
 PRs are opened, and **humans merge**.

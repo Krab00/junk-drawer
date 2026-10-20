@@ -200,7 +200,7 @@ tell it which apply; never ask for a check on an undeclared layer):
     + a short analysis of *why the previous attempts keep failing* (a new pair of eyes).
   - **Still failing after round R** → append the escalation reason + remaining FAILs to the task
     file, `orch-state set <id> blocked`, move on.
-- **Retro (§7)** at every resolve.
+- **Retro (§7)**: a lesson on a signal, none on a clean round-0 PASS.
 
 ### 6. Iterate
 

@@ -549,6 +549,16 @@ function world(on: On) {
 }
 
 const start = ($: Engine) => $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+// What session start itself ran, asserted and then cleared, so a test that counts the guard's calls starts at 0: the
+// flag files removed (the lessons switch's `orch-lessons-off` among them), the statusline set up, and the lessons loop
+// asking for the repo of the session's cwd.
+function startedRuns(rec: ReturnType<typeof world>) {
+  const rm = rec.runs.filter(r => r[0] === 'rm').map(r => r[3])
+  expect(rm).toContain('/fake/claude/junkd/orch-lessons-off')
+  expect(rec.runs.filter(r => r[0] === 'git')).toEqual([['git', '-C', '/tmp', 'rev-parse', '--show-toplevel']])
+  expect(rec.runs.length).toBe(rm.length + 2) // the removals, the statusline setup, that one repo lookup: nothing else
+  rec.runs.splice(0)
+}
 const run = ($: Engine, command: string, args: string) =>
   $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
 const orchCmd = ($: Engine, args: string) => run($, 'junkd:orch', args)
@@ -646,7 +656,7 @@ test('AC8: the live model decides, so a /model switch counts at once; a subagent
 test("the task store: the session cwd's git toplevel is the repo whose .orch/ the main loop reads and writes; cached per cwd", async ($, on) => {
   const rec = world(on)
   await start($)
-  rec.runs.splice(0) // the lessons loop's own reads at session start; this test counts the guard's
+  startedRuns(rec)
   const read = (file_path: string) => $.tool.call({ tool: 'Read', file_path })
   const write = (file_path: string) => $.tool.call({ tool: 'Write', file_path, content: 'x' })
   const gitRuns = () => rec.runs.filter(r => r[0] === 'git')
@@ -685,7 +695,7 @@ test("the task store: the session cwd's git toplevel is the repo whose .orch/ th
 test('the task store: no cwd (empty, or session.cwd failing) is no repo, and git is never asked about it', async ($, on) => {
   const rec = world(on)
   await start($)
-  rec.runs.splice(0) // the lessons loop's own reads at session start; this test counts the guard's
+  startedRuns(rec)
   rec.files['/work/app/.orch/config.md'] = '---\n---\n'
   rec.git[''] = '/work/app' // what a `git -C ''` (git's own cwd) would answer
   const read = () => $.tool.call({ tool: 'Read', file_path: '/work/app/.orch/config.md' })
