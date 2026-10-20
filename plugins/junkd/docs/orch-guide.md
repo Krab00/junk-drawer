@@ -438,7 +438,7 @@ calibration values that must never be guessed, etc.
 | `branch_prefix` | Per-task branch name = `<branch_prefix><id>-<slug>`. |
 | `capabilities.web` / `.api` | `run` (dev-server command), `port_base`, `health` path. **Omit the whole block if the layer doesn't exist** — its standing checks are then skipped. |
 | `capabilities.tests` | Test command map (`{ pkg: "cmd" }`); use `root` for a repo-level suite. |
-| `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row. Absent → no security check (see [§4](#4-standing-checks-gated-by-capabilities)). |
+| `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row; a missing or other value is read as `high`, with a note under the table. Absent → no security check (see [§4](#4-standing-checks-gated-by-capabilities)). |
 | `standing_checks_extra` | Project-specific checks promoted from `_lessons.md` (starts empty). |
 | `github.label` | Only for the `github-issues` backend — the label to pull. |
 | *(prose below the frontmatter)* | Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed. |
