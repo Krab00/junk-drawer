@@ -128,7 +128,7 @@ done
 
 # Every command is a skill of junkd's (/junkd:<name>); no plugin-root commands/ (it would add /junkd:init and a
 # second /junkd:orch from skills/orch/commands).
-for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools; do
+for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools direction; do
     [ "$(awk -F': *' '$1 == "name" { print $2; exit }' "$junkd/skills/$skill/SKILL.md")" = "$skill" ] ||
         { echo "junkd: skills/$skill/SKILL.md is missing or not named $skill"; exit 1; }
 done
@@ -169,6 +169,104 @@ rg -q '^7\. \*\*Every binding rule of CLAUDE\.md has a test or a `standing_check
     { echo "junkd: TEST-POLICY.md rule 7 is not the binding-rule check"; exit 1; }
 rg -qF 'Shortcut: when a lesson names a rule already written in a `CLAUDE.md`/`AGENTS.md`, do not wait for the recurrence: propose the promotion at once and say so ("rule exists in CLAUDE.md §X, no check").' "$orch_skills/orch/commands/orch.md" || { echo "junkd: orch.md retro lacks the rule-exists shortcut"; exit 1; }
 rg -qF 'Rules need checks' "$junkd/docs/orch-guide.md" || { echo "junkd: docs/orch-guide.md lacks Rules need checks"; exit 1; }
+
+# T25: /junkd:direction, the spec drift scorecard. The skill ships SKILL.md, its spec commands/direction.md and its Codex
+# metadata as real files; the spec keeps every rule the task names, each pinned as a whole sentence; init.md proposes
+# the specs: key; orch.md runs the check at the end of an all/--single-pr run (§6) and quotes its line (§8); the
+# manifests name it; both READMEs give its command on every host.
+direction="$junkd/skills/direction"
+for f in SKILL.md commands/direction.md agents/openai.yaml; do
+    [ -f "$direction/$f" ] && [ ! -L "$direction/$f" ] || { echo "junkd: skills/direction/$f is not a real file"; exit 1; }
+done
+direction_md="$direction/commands/direction.md"
+# in_section <file> <heading line> <needle>: the needle sits between that heading and the next heading of its level
+# (a line in a fenced block is no heading).
+in_section() {
+    awk -v h="$2" -v n="$3" '
+        /^```/ { fence = !fence }
+        $0 == h && !fence { on = 1; lvl = index($0, " "); next }
+        on && !fence && /^#+ / && index($0, " ") <= lvl { on = 0 }
+        on && index($0, n) { found = 1 }
+        END { exit !found }' "$1"
+}
+while IFS='|' read -r heading needle; do
+    in_section "$direction_md" "$heading" "$needle" || { echo "junkd: direction.md section '$heading' lacks: $needle"; exit 1; }
+done <<'EOF'
+## 1. Config: the `specs:` key|No `specs:` key, or an empty list → print `direction: .orch/config.md has no specs: key; add specs: [<path or glob>...] and run again.` and stop.
+## 1. Config: the `specs:` key|Print that one line and nothing else: no scan, no agent, no report.
+## 1. Config: the `specs:` key|No config → print `direction: no .orch/config.md; run /junkd:orch-init first.` and stop.
+## 2. The range: `--since` and `--head`|1. the `head:` sha of the newest report in `.orch/direction/`, when that sha is an ancestor of `<head>`;
+## 2. The range: `--since` and `--head`|2. the base commit of the run: inside an orch run, the commit the run's base branch pointed at when the run started;
+## 2. The range: `--since` and `--head`|Resolve both to full shas before the passes start; the report names both ends and how `<since>` was chosen.
+## 2. The range: `--since` and `--head`|When `<head>` is not the checked-out commit, every pass reads the code at `<head>` through `git show <head>:<path>` and `git grep -n <pattern> <head> --`, never by a checkout.
+## 3. One pass per spec file|Spawn one read-only agent per spec file, all in parallel. On Claude Code it is a fresh `Explore`-class agent with `model: sonnet`; never `junkd:implementer` or another role that writes.
+## 3. One pass per spec file|Brief each one with: the spec file's path, the repo root, `<since>` and `<head>`, the output of `git log --oneline <since>..<head>`, the done tasks (id, title, task file path), and these rules:
+## 3. One pass per spec file|- The row quotes the requirement's sentence **verbatim** (the first sentence that states the claim), with its place in the file: the heading text or the item number.
+## 3. One pass per spec file|- UNVERIFIABLE is for prose with no checkable claim, never for "did not look".
+## 3. One pass per spec file|A claim the agent could not find evidence for after searching is `MISSING`.
+## 3. One pass per spec file|- Evidence is one or more of: `path:line` at `<head>`, a test name (`path::test name`), a task id. `MET`, `PARTIAL` and `CONTRADICTED` rows carry at least one; `MISSING` rows name where the agent looked.
+## 3. One pass per spec file|- The agent reads and runs read-only commands only (`git log`, `git show`, `git grep`, file reads). It edits nothing, creates nothing and runs no test that writes.
+## 3. One pass per spec file|| # | Requirement | Verdict | Evidence | Reasoning |
+## 4. One pass for undocumented work|Brief it with `git diff --stat <since>..<head>`, the done tasks, and the merged requirement rows (their evidence column above all).
+## 4. One pass for undocumented work|It finds **undocumented work**: a change in the range that no spec row claims, neither in its evidence nor in its sentence. One row each:
+## 5. The report|Write `.orch/direction/<YYYY-MM-DD>-<short-sha>.md` (today's date, the short sha of `<head>`); create the folder when it is missing.
+## 5. The report|A report of the same name already exists → add `-2`, `-3`… before `.md`; never overwrite a report.
+## 5. The report|Nothing is written anywhere else.
+## 5. The report|- `<total>` counts every requirement row except `UNVERIFIABLE`: a sentence with no checkable claim is neither met nor missed.
+## 5. The report|- Every `MISSING`, `CONTRADICTED` and undocumented row is one decision, one checkbox, with the two options "change code" and "update spec".
+## 5. The report|`PARTIAL` and `UNVERIFIABLE` rows are no decision; the scorecard shows them.
+## 5. The report|The last line of the reply is `DIRECTION: <met>/<total> MET — <n> decisions in <path>`, with the counts of the "All" row and the report's path.
+## 5. The report|| Spec | MET | PARTIAL | MISSING | CONTRADICTED | UNVERIFIABLE | MET % |
+## 6. Decisions: nothing happens without the user|Inside an orch run, do not ask: leave every decision open and let the run's summary quote the `DIRECTION:` line.
+## 6. Decisions: nothing happens without the user|No task is created without the user's confirmation.
+## 6. Decisions: nothing happens without the user|- **change code**, confirmed: create one task with `${CLAUDE_PLUGIN_ROOT}/bin/orch-state new DIR-<n> "<short title>"` (`<n>` the next free number among the `DIR-` ids).
+## 6. Decisions: nothing happens without the user|- `## Acceptance criteria`: `- [ ] AC1: <spec path> (<place>) holds: "<the spec sentence, verbatim>" (modality: <test|api|ui|data>)`.
+## 6. Decisions: nothing happens without the user|- **update spec**, confirmed: mark it `- [x] D1 — … → update spec`. The check does not edit the spec; the human does.
+## 6. Decisions: nothing happens without the user|- **declined or left open**: the checkbox stays empty and no task is created.
+EOF
+for verdict in MET PARTIAL MISSING CONTRADICTED UNVERIFIABLE; do
+    in_section "$direction_md" '## 3. One pass per spec file' "  - \`$verdict\`: " || { echo "junkd: direction.md section 3 does not define $verdict"; exit 1; }
+done
+rg -qF 'The only file it writes is the report under `.orch/direction/`; a task file is written only after the user confirms a "change code" decision (§6).' "$direction_md" ||
+    { echo "junkd: direction.md lacks the read-only rule"; exit 1; }
+rg -qF -e '- Claude Code: `${CLAUDE_PLUGIN_ROOT}/bin/orch-state` as the spec spells it. Each pass is a fresh `Explore` agent with `model: sonnet`, never `junkd:implementer` or another junkd role.' "$direction/SKILL.md" ||
+    { echo "junkd: direction/SKILL.md lacks the Claude Code Explore/sonnet line"; exit 1; }
+rg -qF 'The command is `/junkd:direction` on Claude Code, `$direction` on Codex, `/skill:direction` on Kimi Code and `/direction` on OpenCode' "$direction/SKILL.md" ||
+    { echo "junkd: direction/SKILL.md lacks the command of every host"; exit 1; }
+for needle in '- **Spec files** — the requirement documents `/junkd:direction` scores the code against. Candidates:' \
+    '`PRD*` and `SPEC*` at the root, the `specs/` folder, `docs/ARCHITECTURE*` and `docs/PLAN*`.' \
+    'Propose the ones found as the `specs:` list (a folder as `specs/*.md`); the user confirms or edits it.' \
+    'None found → write no `specs:` key and say nothing about it.'; do
+    in_section "$init_md" '## 1. Scan the repo (read, don'"'"'t guess)' "$needle" || { echo "junkd: init.md §1 lacks: $needle"; exit 1; }
+done
+in_section "$init_md" '## 3. Propose the filled config, confirm the commands' 'specs: [PRD.md, specs/*.md]        # spec files /junkd:direction checks; omit when none were found' ||
+    { echo "junkd: init.md §3 template lacks the specs: line"; exit 1; }
+orch_md="$orch_skills/orch/commands/orch.md"
+in_section "$orch_md" '### 6. Iterate' '- **Direction check, `all` or `--single-pr` only, end of run:** when `.orch/config.md` declares `specs:`, run the direction check (`/junkd:direction`; `$direction` on Codex, `/skill:direction` on Kimi Code, `/direction` on OpenCode) after the last task resolves and before the PR step and the push,' ||
+    { echo "junkd: orch.md §6 lacks the end-of-run direction check gated on specs:"; exit 1; }
+in_section "$orch_md" '### 6. Iterate' '`batch`, `chain` and single-task runs do not run it unless the user asks.' ||
+    { echo "junkd: orch.md §6 does not keep batch/chain/single runs out of the direction check"; exit 1; }
+in_section "$orch_md" '## 8. Final summary' 'When §6 ran the direction check, quote its `DIRECTION:` line verbatim in the summary, above the `BACKLOG:` line.' ||
+    { echo "junkd: orch.md §8 does not quote the DIRECTION: line"; exit 1; }
+# §6: the direction bullet comes before the single-PR bullet and the push.
+dir_line=$(rg -n -m1 -F -e '- **Direction check, `all` or `--single-pr` only' "$orch_md" | cut -d: -f1)
+pr_line=$(rg -n -m1 -F -e '- **`--single-pr` only, end of run:**' "$orch_md" | cut -d: -f1)
+push_line=$(rg -n -m1 -F -e '- **End of run (all modes):** `orch-sync push`' "$orch_md" | cut -d: -f1)
+[ -n "$dir_line" ] && [ -n "$pr_line" ] && [ -n "$push_line" ] && [ "$dir_line" -lt "$pr_line" ] && [ "$pr_line" -lt "$push_line" ] ||
+    { echo "junkd: orch.md §6 does not run the direction check before the PR step and the push"; exit 1; }
+rg -qF '/junkd:direction scores the code against the spec files the config names' "$junkd_manifest" || { echo "junkd: the Claude manifest does not name /junkd:direction"; exit 1; }
+for f in .kimi-plugin/plugin.json .codex-plugin/plugin.json; do
+    rg -qF 'score the code against the spec files,' "$junkd/$f" || { echo "junkd: $f does not name the direction check"; exit 1; }
+done
+for readme in "$root/README.md" "$junkd/README.md"; do
+    for cmd in '`/junkd:direction`' '`$direction`' '`/skill:direction`' '`/direction`'; do
+        rg -qF -- "$cmd" "$readme" || { echo "junkd: $readme does not list $cmd"; exit 1; }
+    done
+done
+in_section "$junkd/README.md" '## direction' 'line of the reply is `DIRECTION: <met>/<total> MET — <n> decisions in <path>`.' ||
+    { echo "junkd: README's direction section lacks the DIRECTION: line"; exit 1; }
+rg -qF '### The direction check: the sum of the tasks against the specs' "$junkd/docs/orch-guide.md" || { echo "junkd: docs/orch-guide.md lacks the direction check"; exit 1; }
+rg -qF 'all thirteen skills' "$root/README.md" || { echo "junkd: README.md does not count thirteen skills"; exit 1; }
 
 # $.junkd.schema() is a mirror of the manifest's userConfig (a hooks module cannot import JSON): every row's key,
 # type, title and default appear together on one SCHEMA line of settings.ts, a choice row's options too, the group
@@ -360,10 +458,13 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-# Twelve skills: junk-drawer's one and junkd's eleven (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
-# ctx-limit, ctx-tokens, statusline, tools). skills/junkd also holds the real home of the plugin-root bin/ and scripts/
-# links, as the layout invariant above asks.
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 12 ]
+# Thirteen skills: junk-drawer's one and junkd's twelve (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
+# ctx-limit, ctx-tokens, statusline, tools, direction). skills/junkd also holds the real home of the plugin-root bin/
+# and scripts/ links, as the layout invariant above asks.
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 13 ] || { echo "the skills-only install holds $(ls -1 "$installed" | wc -l | tr -d ' ') skills, expected 13"; exit 1; }
+for f in SKILL.md commands/direction.md agents/openai.yaml; do
+    [ -f "$installed/direction/$f" ] || { echo "the skills-only install of direction lacks $f"; exit 1; }
+done
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
@@ -415,7 +516,7 @@ cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load
     { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
 
 # Every host map names all four hosts; handoff tells the resume command of each; tldr says OpenCode has no hook.
-for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools; do
+for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools direction; do
     for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do
         rg -qF "$host" "$root/plugins/junkd/skills/$skill/SKILL.md" || { echo "junkd: skills/$skill/SKILL.md does not name $host"; exit 1; }
     done
@@ -427,7 +528,7 @@ rg -qF 'OpenCode has no hook' "$root/plugins/junkd/skills/tldr/SKILL.md" || { ec
 
 # The Kimi model followed whichever host line came first: handon, junkd, ahandoff, ctx-limit, ctx-tokens and tools put
 # the non-Claude line before the Claude Code one.
-for skill in handon junkd ahandoff ctx-limit ctx-tokens tools; do
+for skill in handon junkd ahandoff ctx-limit ctx-tokens tools direction; do
     md="$root/plugins/junkd/skills/$skill/SKILL.md"
     other=$(rg -n -m1 '^- Codex, Kimi Code, OpenCode or any other host' "$md" | cut -d: -f1)
     claude_line=$(rg -n -m1 '^- Claude Code' "$md" | cut -d: -f1)

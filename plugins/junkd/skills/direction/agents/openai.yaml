@@ -1,0 +1,4 @@
+interface:
+  display_name: "Direction Check"
+  short_description: "Score the code against the project's spec files and list the drift"
+  default_prompt: "Use $direction to compare the code with the spec files of .orch/config.md."
