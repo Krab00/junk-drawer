@@ -56,11 +56,11 @@ export const CLAMPED: ReadonlySet<string> = new Set(['idle_stop_minutes', 'stall
 const clampTo = (key: OrchNumberField, n: number) => Math.min(ORCH_RANGE[key][1], Math.max(ORCH_RANGE[key][0], Math.round(n)))
 export type OrchValues = {
   enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number; claude_md: boolean
-  watchdog: boolean; idle_stop: boolean; idle_stop_minutes: number; stall_minutes: number
+  watchdog: boolean; idle_stop: boolean; idle_stop_minutes: number; stall_minutes: number; lessons: boolean
 } & DashValues
 export const O: OrchValues = {
   enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false,
-  watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, ...DASH_DEFAULTS,
+  watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, lessons: true, ...DASH_DEFAULTS,
 }
 
 // A raw value (typed in the pane, handed to $.junkd.set, or written in the /config menu) to the field's kind;
@@ -101,6 +101,7 @@ export function applyOrchSettings(v: Record<string, unknown>): void {
   O.claude_md = v.claude_md === true
   O.watchdog = v.watchdog === undefined ? true : v.watchdog === true
   O.idle_stop = v.idle_stop === undefined ? true : v.idle_stop === true
+  O.lessons = v.lessons === undefined ? true : v.lessons === true
   for (const key of ['implementer_ctx_k', 'rounds', 'idle_stop_minutes', 'stall_minutes'] as const) {
     const x = v[key]
     const n = Math.round(typeof x === 'number' ? x : typeof x === 'string' && x.trim() ? Number(x) : NaN)

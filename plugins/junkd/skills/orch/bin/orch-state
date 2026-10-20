@@ -14,10 +14,21 @@
 #   orch-state id <id>              # print <id> if it is a valid task id, else fail (orch-worktree uses it)
 #   orch-state root                 # print the project root the scripts use (see _root)
 #   orch-state settings             # the user settings /junkd:orch runs with, one key=value per line:
-#                                   # enabled, rounds, ui_review, implementer_ctx_k, inject_rules. Read from
+#                                   # enabled, rounds, ui_review, implementer_ctx_k, inject_rules, lessons. Read from
 #                                   # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json pluginConfigs["junkd@<marketplace>"]
 #                                   # .options.orch_<key> (the first junkd@ key), clamped as the hooks module does; the
 #                                   # defaults when jq is missing or the file is absent or does not parse. Needs no config.
+#   orch-state lesson add [--scope local|repo|global] [--stack <tags>] --to <target> --from T<id> "<text>"
+#                                   # append a lesson (scope local, stack this repo's by default); prints its id
+#   orch-state lesson list [--pending] [--scope <s>] [--json]
+#   orch-state lesson promote <id> [--to test|smoke|check|role|repo|global|drop] [--yes]
+#                                   # repo|global: one store up; check: into standing_checks_extra (only with --yes,
+#                                   # else the proposed line and exit 3); test|smoke: the fix-round line, `to` handed;
+#                                   # role: a T<next>.md in junk-drawer's backlog (elsewhere: the text to paste)
+#   orch-state lesson up <id> | drop <id> | prune [--months N] [--yes]
+#   orch-state lesson pending       # the count of pending lessons of the three stores; exit 1 when > 0
+#   orch-state lesson inject        # the lessons whose stack meets this repo's (and `any`), as context text
+#                                   # <id> is L<n> or <scope>:L<n>. Needs no config (the local store does).
 set -euo pipefail
 
 # A task id names a file in tasks/, a worktree in .worktrees/ and part of a branch: one plain word.
@@ -44,9 +55,10 @@ _settings() {
     (if length == 1 then .[0] else error end).pluginConfigs
     | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
     | "enabled=\(sw("orch_enabled"))", "rounds=\(num("orch_rounds"; 1; 10; 3))", "ui_review=\(sw("orch_ui_review"))",
-      "implementer_ctx_k=\(num("orch_implementer_ctx_k"; 50; 1000; 400))", "inject_rules=\(sw("orch_inject_rules"))"
+      "implementer_ctx_k=\(num("orch_implementer_ctx_k"; 50; 1000; 400))", "inject_rules=\(sw("orch_inject_rules"))",
+      "lessons=\(sw("orch_lessons"))"
   ' "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/settings.json" 2>/dev/null) ||
-    out=$'enabled=true\nrounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'
+    out=$'enabled=true\nrounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true\nlessons=true'
   echo "$out"
 }
 
@@ -73,7 +85,8 @@ esac
 root=$(_root)
 config="$root/.orch/config.md"
 [ -f "$config" ] || config="$root/.claude/orch.config.md"
-[ -f "$config" ] || { echo "orch: no config ($root/.orch/config.md) - run orch-init" >&2; exit 2; }
+# `lesson` runs without a config too: the repo and global stores need none.
+[ -f "$config" ] || [ "${1:-}" = lesson ] || { echo "orch: no config ($root/.orch/config.md) - run orch-init" >&2; exit 2; }
 
 # _fm_get <file> <key> -> value of a top-level (column 0) key of the first --- block. CRLF tolerated;
 # one pair of quotes stripped; a ` # comment` stripped outside quotes; a block list (`key:` then
@@ -117,8 +130,11 @@ _tasks_dir() {
   case "$real/" in "$top/.orch/"?*) ;; *) echo "orch: tasks_dir '$td' must be a folder under .orch/ (it lands at $real)" >&2; exit 2 ;; esac
   echo "$root/$td"
 }
-tasks_dir=$(_fm_get "$config" tasks_dir)
-tasks_dir=$(_tasks_dir "${tasks_dir:-.orch/tasks}")
+tasks_dir=""
+if [ -f "$config" ]; then
+  tasks_dir=$(_fm_get "$config" tasks_dir)
+  tasks_dir=$(_tasks_dir "${tasks_dir:-.orch/tasks}")
+fi
 file_for(){ echo "$tasks_dir/$1.md"; }
 
 # _task_files -> the task files of tasks_dir: *.md minus the `_`-prefixed ones (_lessons.md).
@@ -131,12 +147,421 @@ _task_files() {
   done
 }
 
+# ------------------------------------------------------------------ lessons (orch-state lesson ...)
+# Three stores, one direction of promotion: local <tasks_dir>/_lessons.md (needs the config), repo <root>/lessons.md,
+# global ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/lessons.md. One block per lesson, from its heading to the next `## `:
+#   ## L<n> (<YYYY-MM-DD>) scope: local|repo|global · stack: <tags> · to: <target> · from: T<id>
+#   <2-3 sentences>
+# A `## ` heading of another shape (the old diary's `## T8 (...)`) is no lesson: left alone, counted by `list`.
+# A lesson is pending unless its `to` is a store (repo, global) it has reached. Every write is a temp file and an mv,
+# a CRLF file is written back LF, and a file that cannot be written stops the command with nothing changed.
+L_STACKS=" node python shell tsx-mods go rust any "
+L_TARGETS=" test smoke check role repo global drop "
+
+_l_die() { echo "orch: lesson: $2" >&2; exit "$1"; }
+_l_today() { echo "${ORCH_LESSON_TODAY:-$(date +%Y-%m-%d)}"; }
+_l_global() { echo "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/junkd/lessons.md"; }
+_l_file() {
+  case "$1" in
+    local) [ -n "$tasks_dir" ] && echo "$tasks_dir/_lessons.md" ;;
+    repo) echo "$root/lessons.md" ;;
+    global) _l_global ;;
+  esac
+}
+_l_up() { case "$1" in local) echo repo ;; repo) echo global ;; esac; }
+_l_rank() { case "$1" in local) echo 0 ;; repo) echo 1 ;; global) echo 2 ;; *) echo -1 ;; esac; }
+
+# _l_stacks: this repo's stack tags, comma separated (`any` when nothing matches). Its files are git's (tracked and
+# untracked, ignores applied), else a find that skips .git, node_modules and .worktrees.
+_l_stacks() {
+  local files f out=""
+  files=$(git -C "$root" ls-files -co --exclude-standard 2>/dev/null) ||
+    files=$(cd "$root" && find . -maxdepth 6 \( -name .git -o -name node_modules -o -name .worktrees \) -prune -o -print 2>/dev/null | sed 's|^\./||') || true
+  grep -Eq '(^|/)package\.json$' <<<"$files" && out="$out,node"
+  grep -Eq '(^|/)(pyproject\.toml|requirements[^/]*\.txt)$' <<<"$files" && out="$out,python"
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$root/$f" ] || continue
+    grep -Eq '^#!.*[/ ]bash([[:space:]]|$)' <<<"$(head -n 1 "$root/$f" 2>/dev/null)" && { out="$out,shell"; break; }
+  done < <(grep -E '(^|/)bin/[^/]+$' <<<"$files")
+  grep -Eq '(^|/)hooks/[^/]+\.tsx$' <<<"$files" && out="$out,tsx-mods"
+  grep -Eq '(^|/)go\.mod$' <<<"$files" && out="$out,go"
+  grep -Eq '(^|/)Cargo\.toml$' <<<"$files" && out="$out,rust"
+  out=${out#,}
+  echo "${out:-any}"
+}
+
+# _l_rows: one TSV row per lesson of the stores that exist: scope id date stack to from pending match text.
+# `match` is 1 when the lesson's stack meets this repo's (or is `any`). L_WARN=1: the headings that are no lesson are
+# said on stderr, per file.
+_l_rows() {
+  local scope file stacks
+  stacks=${L_REPO_STACKS:-$(_l_stacks)}
+  for scope in local repo global; do
+    file=$(_l_file "$scope") || true
+    [ -n "$file" ] && [ -f "$file" ] || continue
+    awk -v scope="$scope" -v repo="$stacks" -v warn="${L_WARN:-}" -v fname="$file" '
+      function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+      function rank(s) { return s == "local" ? 0 : s == "repo" ? 1 : s == "global" ? 2 : -1 }
+      function meets(st,   n, a, i) {
+        n = split(st, a, /[ ,]+/)
+        for (i = 1; i <= n; i++) if (a[i] == "any" || index("," repo ",", "," a[i] ",")) return 1
+        return 0
+      }
+      function flush(  t, pend) {
+        if (id == "") return
+        t = trim(text); gsub(/\t/, " ", t)
+        pend = !((to == "repo" || to == "global") && rank(scope) >= rank(to))
+        print scope "\t" id "\t" date "\t" stack "\t" to "\t" from "\t" pend "\t" meets(stack) "\t" t
+        id = ""
+      }
+      { sub(/\r$/, "") }
+      /^## / {
+        flush()
+        if (match($0, /^## L[0-9]+ \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\)/)) {
+          head = substr($0, 4, RLENGTH - 3); sp = index(head, " ")
+          id = substr(head, 1, sp - 1); date = substr(head, sp + 2, 10)
+          rest = substr($0, RLENGTH + 1); stack = "any"; to = ""; from = ""; text = ""
+          n = split(rest, parts, / · /)
+          for (i = 1; i <= n; i++) {
+            p = trim(parts[i]); c = index(p, ":"); if (!c) continue
+            k = trim(substr(p, 1, c - 1)); v = trim(substr(p, c + 1))
+            if (k == "stack" && v != "") stack = v
+            else if (k == "to") to = v
+            else if (k == "from") from = v
+          }
+        } else other++
+        next
+      }
+      id != "" { text = text " " $0 }
+      END { flush(); if (warn && other) printf "orch: lesson: %s: %d `## ` heading(s) not in the L<n> format, left out\n", fname, other > "/dev/stderr" }
+    ' "$file"
+  done
+}
+
+# _l_find <ref>: L_SCOPE, L_ID, L_FILE of `L3` (the one store that has it) or `<scope>:L3`.
+_l_find() {
+  local ref="$1" want="" id hits
+  case "$ref" in *:*) want=${ref%%:*}; id=${ref#*:} ;; *) id=$ref ;; esac
+  [[ "$id" =~ ^L[0-9]+$ ]] || _l_die 1 "bad lesson id '$ref' (L<n>, or local:L<n>, repo:L<n>, global:L<n>)"
+  [ -z "$want" ] || [ "$(_l_rank "$want")" -ge 0 ] || _l_die 1 "bad scope '$want' in '$ref' (local, repo or global)"
+  hits=$(_l_rows | awk -F'\t' -v id="$id" -v want="$want" '$2 == id && (want == "" || $1 == want) { print $1 }')
+  [ -n "$hits" ] || _l_die 1 "no lesson $ref"
+  [ "$(wc -l <<<"$hits" | tr -d ' ')" = 1 ] || _l_die 1 "$id is in more than one store: say which ($(sed "s/\$/:$id/" <<<"$hits" | tr '\n' ' ' | sed 's/ $//'))"
+  L_SCOPE=$hits L_ID=$id L_FILE=$(_l_file "$hits")
+}
+# _l_field <n>: field n of the found lesson's row (4 stack, 5 to, 6 from, 3 date, 9 text).
+_l_field() { _l_rows | awk -F'\t' -v s="$L_SCOPE" -v id="$L_ID" -v n="$1" '$1 == s && $2 == id && !done { print $n; done = 1 }'; }
+
+# _l_writable <file>: the file (or, when missing, the folder it goes in) can be written; else a stop, nothing changed.
+_l_writable() {
+  local dir
+  dir=$(dirname "$1")
+  if [ -e "$1" ]; then [ -w "$1" ] && [ -w "$dir" ] || _l_die 2 "$1 is not writable; nothing changed"
+  else mkdir -p "$dir" 2>/dev/null && [ -w "$dir" ] || _l_die 2 "$dir is not writable; nothing changed"; fi
+}
+# _l_put <file> <tmp>: the tmp file becomes the file.
+_l_put() { mv -f "$2" "$1" || { rm -f "$2"; _l_die 2 "could not write $1"; }; }
+# _l_cut <file> <id> > out: the file without the lesson's block (CRLF read as LF).
+_l_cut() {
+  awk -v id="$2" '{ sub(/\r$/, "") } /^## / { inb = index($0, "## " id " (") == 1 } !inb { print }' "$1"
+}
+# _l_next <file>: the next free L<n> of a file (L1 for a missing one).
+_l_next() {
+  local n=0
+  [ -f "$1" ] && n=$(awk '{ sub(/\r$/, "") } match($0, /^## L[0-9]+ /) { v = substr($0, 5, RLENGTH - 5) + 0; if (v > m) m = v } END { print m + 0 }' "$1")
+  echo "L$((n + 1))"
+}
+# _l_append <file> <block> <tmp>: the file (LF), one blank line, the block. A new repo or global file starts with a title.
+_l_append() {
+  if [ -f "$1" ]; then
+    awk '{ sub(/\r$/, ""); print }' "$1" >"$3"
+    [ ! -s "$3" ] || [ -z "$(tail -n 1 "$3")" ] || echo >>"$3"
+  else
+    printf '# Lessons\n\nLessons of junkd orch runs (orch-state lesson): one block per lesson, injected into orch sessions by stack.\n\n' >"$3"
+  fi
+  printf '%s\n' "$2" >>"$3"
+}
+# _l_header <id> <date> <scope> <stack> <to> <from>
+_l_header() {
+  local h="## $1 ($2) scope: $3 · stack: $4 · to: $5"
+  [ -z "$6" ] || h="$h · from: $6"
+  echo "$h"
+}
+# _l_body: the found lesson's block minus its heading, trailing blank lines dropped.
+_l_body() {
+  awk -v id="$L_ID" '{ sub(/\r$/, "") } /^## / { if (inb) exit; inb = index($0, "## " id " (") == 1; next } inb { print }' "$L_FILE" |
+    awk '{ a[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print a[i] }'
+}
+
+# _l_move <to-scope> <to-field>: the found lesson into the store above, renumbered, scope (and to) rewritten; then
+# out of the store below. Both files are checked writable before either is touched.
+_l_move() {
+  local up="$1" to="$2" dest id block t1 t2
+  dest=$(_l_file "$up")
+  _l_writable "$dest"; _l_writable "$L_FILE"
+  id=$(_l_next "$dest")
+  block="$(_l_header "$id" "$(_l_field 3)" "$up" "$(_l_field 4)" "$to" "$(_l_field 6)")
+$(_l_body)"
+  t1=$(mktemp) t2=$(mktemp)
+  _l_append "$dest" "$block" "$t1"
+  _l_cut "$L_FILE" "$L_ID" >"$t2"
+  _l_put "$dest" "$t1"
+  _l_put "$L_FILE" "$t2"
+  echo "$L_SCOPE:$L_ID -> $up:$id"
+}
+_l_drop() {
+  local t
+  _l_writable "$L_FILE"
+  t=$(mktemp)
+  _l_cut "$L_FILE" "$L_ID" >"$t"
+  _l_put "$L_FILE" "$t"
+}
+# _l_retarget <to>: the found lesson's heading with another `to`, in place.
+_l_retarget() {
+  local t head
+  _l_writable "$L_FILE"
+  head=$(_l_header "$L_ID" "$(_l_field 3)" "$L_SCOPE" "$(_l_field 4)" "$1" "$(_l_field 6)")
+  t=$(mktemp)
+  HEAD="$head" awk -v id="$L_ID" '{ sub(/\r$/, "") } /^## / && index($0, "## " id " (") == 1 { print ENVIRON["HEAD"]; next } { print }' "$L_FILE" >"$t"
+  _l_put "$L_FILE" "$t"
+}
+# _l_check_line <text> <config> > out: the config with the text appended to standing_checks_extra (the frontmatter's
+# flow list `[]`/`[a]`, or its block list; added before the closing --- when the key is missing).
+_l_check_line() {
+  ITEM="$1" awk '
+    function q(s,  i, c, o) { o = ""; for (i = 1; i <= length(s); i++) { c = substr(s, i, 1); if (c == "\\" || c == "\"") o = o "\\"; o = o c } return "\"" o "\"" }
+    { sub(/\r$/, "") }
+    NR == 1 && /^---[ \t]*$/ { fm = 1; print; next }
+    fm && inlist && !/^[ \t]+(-|[^ \t])/ { print "  - " q(ENVIRON["ITEM"]); inlist = 0; done = 1 }
+    fm && /^---[ \t]*$/ { if (!done) { print "standing_checks_extra:"; print "  - " q(ENVIRON["ITEM"]) } fm = 0; done = 1; print; next }
+    fm && /^standing_checks_extra:/ {
+      v = substr($0, 23); gsub(/^[ \t]+|[ \t]+$/, "", v); sub(/[ \t]+#.*$/, "", v)
+      if (v == "" ) { print; inlist = 1; next }
+      if (v == "[]") { print "standing_checks_extra:"; print "  - " q(ENVIRON["ITEM"]); done = 1; next }
+      if (v ~ /\]$/) { i = match($0, /\][ \t]*(#.*)?$/); print substr($0, 1, i - 1) (v == "[]" ? "" : ", ") q(ENVIRON["ITEM"]) "]"; done = 1; next }
+    }
+    { print }
+  ' "$2"
+}
+# _l_quote <text>: the text as a YAML double-quoted string.
+_l_quote() {
+  ITEM="$1" awk 'BEGIN { s = ENVIRON["ITEM"]; o = ""; for (i = 1; i <= length(s); i++) { c = substr(s, i, 1); if (c == "\\" || c == "\"") o = o "\\"; o = o c } print "\"" o "\"" }'
+}
+_l_is_junk_drawer() {
+  jq -e '.name == "junk-drawer"' "$root/.claude-plugin/marketplace.json" >/dev/null 2>&1 && [ -d "$root/plugins/junkd/skills/orch/roles" ]
+}
+
+_lesson() {
+  local sub="${1:-}" reads=" list pending inject help  "
+  shift || true
+  if ! command -v jq >/dev/null 2>&1; then
+    case "$reads" in *" $sub "*) echo "orch: lesson: jq is not installed; nothing read" >&2; exit 0 ;; esac
+    case "$sub" in prune) case " $* " in *" --yes "*) ;; *) echo "orch: lesson: jq is not installed; nothing read" >&2; exit 0 ;; esac ;; esac
+    _l_die 2 "jq is not installed; nothing written"
+  fi
+  L_REPO_STACKS=$(_l_stacks)
+  case "$sub" in
+    add)
+      local scope=local stack="" to="" from="" text="" tag
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --scope) scope="${2:-}"; shift 2 || shift ;;
+          --stack) stack="${2:-}"; shift 2 || shift ;;
+          --to) to="${2:-}"; shift 2 || shift ;;
+          --from) from="${2:-}"; shift 2 || shift ;;
+          --*) _l_die 1 "add: unknown flag '$1'" ;;
+          *) [ -z "$text" ] || _l_die 1 "add: one text, quoted"; text="$1"; shift ;;
+        esac
+      done
+      [ "$(_l_rank "$scope")" -ge 0 ] || _l_die 1 "add: bad scope '$scope' (local, repo or global)"
+      case "$L_TARGETS" in *" $to "*) ;; *) _l_die 1 "add: --to is one of$L_TARGETS" ;; esac
+      [[ "$from" =~ ^T[A-Za-z0-9._-]*$ && "$from" != *..* ]] || _l_die 1 "add: --from T<id> is required ('$from')"
+      text=$(tr -d '\r' <<<"$text")
+      [ -n "$(tr -d ' \n\t' <<<"$text")" ] || _l_die 1 "add: the text is empty"
+      ! grep -q '^## ' <<<"$text" || _l_die 1 "add: a line of the text starts with '## ', which would end the block"
+      stack=${stack// /}
+      [ -n "$stack" ] || stack=$L_REPO_STACKS
+      for tag in ${stack//,/ }; do case "$L_STACKS" in *" $tag "*) ;; *) _l_die 1 "add: bad stack '$tag' (one of$L_STACKS)" ;; esac; done
+      local file id t
+      file=$(_l_file "$scope") || true
+      [ -n "$file" ] || _l_die 2 "add: no .orch/ here, so no local store: use --scope repo or --scope global"
+      _l_writable "$file"
+      id=$(_l_next "$file")
+      t=$(mktemp)
+      _l_append "$file" "$(_l_header "$id" "$(_l_today)" "$scope" "$stack" "$to" "$from")
+$text" "$t"
+      _l_put "$file" "$t"
+      echo "$scope:$id"
+      ;;
+    list)
+      local pending="" scope="" json=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --pending) pending=1 ;;
+          --json) json=1 ;;
+          --scope) scope="${2:-}"; [ "$(_l_rank "$scope")" -ge 0 ] || _l_die 1 "list: bad scope '$scope'"; shift ;;
+          *) _l_die 1 "list: unknown argument '$1'" ;;
+        esac
+        shift
+      done
+      local rows
+      rows=$(L_WARN=1 _l_rows | awk -F'\t' -v p="$pending" -v s="$scope" '(p == "" || $7 == 1) && (s == "" || $1 == s)')
+      if [ -n "$json" ]; then
+        jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {ref: "\(.[0]):\(.[1])", scope: .[0], id: .[1], date: .[2],
+          stack: (.[3] | split(",") | map(gsub("^ +| +$"; ""))), to: .[4], from: .[5], pending: (.[6] == "1"), matches: (.[7] == "1"), text: .[8]})' <<<"$rows"
+      else
+        printf '%-5s %-7s %-16s %-13s %-8s %s\n' ID SCOPE STACK TO FROM TEXT
+        [ -z "$rows" ] || awk -F'\t' '{
+          t = $9; c = index(t ". ", ". "); if (c) t = substr(t, 1, c)
+          if (length(t) > 90) t = substr(t, 1, 89) "…"
+          printf "%-5s %-7s %-16s %-13s %-8s %s\n", $2, $1, $4, ($5 == "" ? "?" : $5), $6, t
+        }' <<<"$rows"
+      fi
+      ;;
+    pending)
+      [ $# -eq 0 ] || _l_die 1 "pending takes no argument"
+      local n
+      n=$(_l_rows | awk -F'\t' '$7 == 1' | wc -l | tr -d ' ')
+      echo "$n"
+      [ "$n" = 0 ]
+      ;;
+    inject)
+      [ $# -eq 0 ] || _l_die 1 "inject takes no argument"
+      local rows stacks=$L_REPO_STACKS scope
+      rows=$(_l_rows | awk -F'\t' '$8 == 1 { print $1 "\t" $2 }')
+      [ -n "$rows" ] || exit 0
+      echo "# Lessons for this repo (stack: $stacks; junkd orch, orch-state lesson)"
+      for scope in local repo global; do
+        while IFS=$'\t' read -r s id; do
+          [ "$s" = "$scope" ] || continue
+          L_SCOPE=$s L_ID=$id L_FILE=$(_l_file "$s")
+          echo
+          awk -v id="$id" '{ sub(/\r$/, "") } /^## / { if (inb) exit; inb = index($0, "## " id " (") == 1 } inb { print }' "$L_FILE" |
+            awk '{ a[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print a[i] }'
+        done <<<"$rows"
+      done
+      ;;
+    drop)
+      [ $# -eq 1 ] || _l_die 1 "usage: orch-state lesson drop <id>"
+      _l_find "$1"
+      _l_drop
+      echo "dropped $L_SCOPE:$L_ID"
+      ;;
+    up)
+      [ $# -eq 1 ] || _l_die 1 "usage: orch-state lesson up <id>"
+      _l_find "$1"
+      local up
+      up=$(_l_up "$L_SCOPE")
+      [ -n "$up" ] || _l_die 1 "$L_SCOPE:$L_ID is in the global store already: there is no store above"
+      _l_move "$up" "$(_l_field 5)"
+      ;;
+    promote)
+      local ref="" to="" yes=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --to) to="${2:-}"; shift 2 || shift ;;
+          --yes) yes=1; shift ;;
+          --*) _l_die 1 "promote: unknown flag '$1'" ;;
+          *) [ -z "$ref" ] || _l_die 1 "promote: one id"; ref="$1"; shift ;;
+        esac
+      done
+      [ -n "$ref" ] || _l_die 1 "usage: orch-state lesson promote <id> [--to <target>] [--yes]"
+      _l_find "$ref"
+      local cur from text
+      cur=$(_l_field 5) from=$(_l_field 6) text=$(_l_field 9)
+      if [ -z "$to" ]; then
+        case "$cur" in *·handed) _l_die 1 "$L_SCOPE:$L_ID is handed already ($cur): lesson drop $L_SCOPE:$L_ID once the test is on the branch" ;; esac
+        [ -n "$cur" ] || _l_die 1 "$L_SCOPE:$L_ID has no to: pass --to <target>"
+        to=$cur
+      fi
+      case "$L_TARGETS" in *" $to "*) ;; *) _l_die 1 "promote: --to is one of$L_TARGETS" ;; esac
+      case "$to" in
+        repo|global)
+          [ "$(_l_rank "$L_SCOPE")" -lt "$(_l_rank "$to")" ] || _l_die 1 "$L_SCOPE:$L_ID is in the $L_SCOPE store, not below $to"
+          _l_move "$(_l_up "$L_SCOPE")" "$to"
+          ;;
+        drop)
+          _l_drop
+          echo "dropped $L_SCOPE:$L_ID"
+          ;;
+        test|smoke)
+          local what="a test"
+          [ "$to" = smoke ] && what="a check in tests/smoke.sh"
+          _l_retarget "${to}·handed"
+          echo "hand to the implementer of ${from:-its task} as a fix round: add $what: $text"
+          echo "then: orch-state lesson drop $L_SCOPE:$L_ID once it is on the branch"
+          ;;
+        check)
+          [ -n "$tasks_dir" ] && [ -f "$config" ] || _l_die 2 "promote --to check: no .orch/config.md here"
+          if [ -z "$yes" ]; then
+            echo "proposed: standing_checks_extra += $(_l_quote "$text")"
+            echo "in $config; ask the person, then run again with --yes"
+            exit 3
+          fi
+          _l_writable "$config"
+          local t
+          t=$(mktemp)
+          _l_check_line "$text" "$config" >"$t"
+          _l_put "$config" "$t"
+          _l_drop
+          echo "standing_checks_extra += $L_SCOPE:$L_ID ($config); dropped $L_SCOPE:$L_ID"
+          ;;
+        role)
+          if ! _l_is_junk_drawer; then
+            echo "the role files live in junk-drawer: paste this into a task of its backlog, then lesson drop $L_SCOPE:$L_ID"
+            echo "role lesson ($L_SCOPE:$L_ID, from ${from:-?}): $text"
+            exit 0
+          fi
+          [ -n "$tasks_dir" ] || _l_die 2 "promote --to role: no .orch/ here, so no backlog"
+          local n f title
+          n=$(find "$tasks_dir" -maxdepth 1 -name 'T*.md' 2>/dev/null | sed -n 's|.*/T\([0-9][0-9]*\)\.md$|\1|p' | sort -n | tail -n 1)
+          f="$tasks_dir/T$(( ${n:-0} + 1 )).md"
+          _l_writable "$f"; _l_writable "$L_FILE"
+          title=$(ITEM="$text" awk 'BEGIN { t = ENVIRON["ITEM"]; c = index(t ". ", ". "); if (c) t = substr(t, 1, c - 1); if (length(t) > 70) t = substr(t, 1, 69) "…"; gsub(/"/, "'\''", t); print t }')
+          {
+            printf -- '---\nid: T%s\ntitle: "role: %s"\nstatus: todo\ndeps: []\nsource: adhoc\nsource_updated_at: %s\ncriteria_source: derived\n---\n' "$(( ${n:-0} + 1 ))" "$title" "$(_l_today)"
+            printf '## Description\nA lesson of %s (%s, %s) for the agents: make the role files (`plugins/junkd/skills/orch/roles/*.md`) say it.\n\n' "${from:-?}" "$L_SCOPE:$L_ID" "$(_l_field 3)"
+            _l_body
+            printf '\n## Acceptance criteria\n- [ ] AC1: the role file that owns the behaviour states the rule in one sentence, and tests/smoke.sh greps that sentence (modality: test)\n'
+          } >"$f"
+          _l_drop
+          echo "created $f; dropped $L_SCOPE:$L_ID"
+          ;;
+      esac
+      ;;
+    prune)
+      local months=6 yes=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --months) months="${2:-}"; [[ "$months" =~ ^[0-9]+$ ]] || _l_die 1 "prune: --months takes a whole number"; shift 2 ;;
+          --yes) yes=1; shift ;;
+          *) _l_die 1 "prune: unknown argument '$1'" ;;
+        esac
+      done
+      local cutoff old ref
+      cutoff=$(awk -v d="$(_l_today)" -v n="$months" 'BEGIN { y = substr(d, 1, 4) + 0; m = substr(d, 6, 2) + 0; k = y * 12 + m - 1 - n; printf "%04d-%02d-%s\n", int(k / 12), k % 12 + 1, substr(d, 9, 2) }')
+      old=$(_l_rows | awk -F'\t' -v c="$cutoff" '$3 < c && $8 == 0 { print $1 ":" $2 "\t" $3 "\t" $4 "\t" $9 }')
+      [ -n "$old" ] || { echo "nothing to prune (older than $cutoff, stack not this repo's: $L_REPO_STACKS)"; exit 0; }
+      awk -F'\t' '{ t = $4; if (length(t) > 70) t = substr(t, 1, 69) "…"; printf "%-10s %s %-12s %s\n", $1, $2, $3, t }' <<<"$old"
+      if [ -z "$yes" ]; then echo "run again with --yes to drop them"; exit 0; fi
+      while IFS=$'\t' read -r ref _; do
+        _l_find "$ref"; _l_drop; echo "dropped $ref"
+      done <<<"$old"
+      ;;
+    ""|-h|--help|help)
+      echo "usage: orch-state lesson add|list|promote|up|drop|prune|pending|inject (see orch-state help)"
+      ;;
+    *) _l_die 1 "unknown command '$sub'" ;;
+  esac
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   cfg)
     _fm_get "$config" "${1:?usage: orch-state cfg <key>}"
     ;;
   tasks-dir) echo "$tasks_dir" ;;
+  lesson) _lesson "$@" ;;
   list)
     printf '%-18s %-13s %s\n' ID STATUS DEPS
     while IFS= read -r f; do

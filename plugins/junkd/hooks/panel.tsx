@@ -1,5 +1,5 @@
-// The /junkd frame: /junkd, ✚ junkd and q open and close junkd, handoff, orch, statusline and tools together as tabs
-// (tools only while tools_enabled is on); the junkd pane has the marketplace's plugins (on/off at user scope), every
+// The /junkd frame: /junkd, ✚ junkd and q open and close junkd, handoff, orch, statusline, tools and lessons together as
+// tabs (tools only while tools_enabled is on, lessons while orch_enabled and orch_lessons are); the junkd pane has the marketplace's plugins (on/off at user scope), every
 // settings group of this plugin (core, handoff, orch, tldr, ctx, statusline, tools) and the commands. The drawing is
 // junkd-views.tsx, fed closures over `$`.
 // - Plugins: the marketplace's plugins, each on or off in the user's settings.json; junkd is this pane. handoff,
@@ -17,16 +17,17 @@ import { SET_OWNER, type $ } from './feature'
 import { panelView, type Command, type Els, type Field, type PluginRow, type Section } from './junkd-views'
 import { GROUPS, isKey, keyOf, rowsOf } from './settings'
 import { T as Tools } from './tools'
+import { O as Orch } from './orch-lib'
 
 type Json = Record<string, any>
 
 const PANE = 'junkd'
 const MARKETPLACE = 'junk-drawer'
 // The groups with a pane of their own, which `settings ▸` opens; the feature panes of the set, in tab order.
-const SET: readonly FeaturePane[] = ['handoff', 'orch', 'statusline', 'tools']
+const SET: readonly FeaturePane[] = ['handoff', 'orch', 'statusline', 'tools', 'lessons']
 const hasPane = (group: string): group is FeaturePane => (SET as readonly string[]).includes(group)
-// The feature panes the set opens now: tools only while tools_enabled is on.
-const opensNow = (): FeaturePane[] => SET.filter(p => p !== 'tools' || Tools.enabled)
+// The feature panes the set opens now: tools only while tools_enabled is on, lessons while orch and orch_lessons are.
+const opensNow = (): FeaturePane[] => SET.filter(p => (p !== 'tools' || Tools.enabled) && (p !== 'lessons' || (Orch.enabled && Orch.lessons)))
 
 let isOpen = false
 let isChanged = false

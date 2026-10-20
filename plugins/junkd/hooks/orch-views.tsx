@@ -37,6 +37,7 @@ const HINTS: Record<OrchField, string> = {
   idle_stop: 'stop a finished agent nobody needs; off: report it',
   idle_stop_minutes: 'idle minutes of a finished agent before a stop',
   stall_minutes: 'minutes without a tool call (reviewers +5)',
+  lessons: 'lessons by stack at start, 📒 and the lessons tab; the run waits on pending ones',
 }
 
 // The engine empties a field on Enter and only puts `value` back when it changed, so every Enter draws the field
