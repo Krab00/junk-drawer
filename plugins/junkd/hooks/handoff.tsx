@@ -298,7 +298,6 @@ async function arm($: $) {
   S.armed = true
   S.phase = 'idle'
   S.calls = 0
-  S.asks = 0
   S.armedAt = Date.now()
   await persist($)
   await sync($)
@@ -310,7 +309,6 @@ async function disarm($: $) {
   cancelResume()
   S.phase = 'idle'
   S.written = null
-  S.asks = 0
   S.fresh = false
   S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
   S.armedAt = null
