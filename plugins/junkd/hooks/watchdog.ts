@@ -30,7 +30,7 @@ export type WatchSettings = { on: boolean; idleStop: boolean; idleStopMinutes: n
 // `junkd:verify-coordinator`, `orch:implementer` -> the part after the last `:`.
 export const baseType = (type: string) => type.slice(type.lastIndexOf(':') + 1)
 const IMPLEMENTERS = new Set(['implementer', 'lead-implementer'])
-const REVIEWERS = new Set(['verify-coordinator', 'test-planner', 'test-reviewer', 'ui-reviewer'])
+const REVIEWERS = new Set(['verify-coordinator', 'test-planner', 'ui-reviewer'])
 
 // Who is stopped when: the reviewers, the orch-ops helpers and any `pr-`/`gh-` agent at once; the implementers by
 // their task; the rest by the idle minutes.

@@ -147,7 +147,7 @@ deletion, migration, concurrency, or a shared resource (port, lock, file, queue)
 says so; a key already written in the task file stays as written. Write it into the frontmatter
 yourself (`orch-state` only reads it; `orch-state list` marks a critical task with `!`). An
 interactive run shows it with the frozen criteria and gets approval for both before implementing.
-A critical task gets one `test-planner` Break row per break kind in the verify leg instead of one.
+A critical task gets one Break row per break kind in the verify leg instead of one; the coordinator spawns `test-planner` for it (§4).
 
 ### 3. Plan & delegate
 
@@ -176,17 +176,21 @@ implementer's `branch`, the verify slot (`orch-worktree slot <id>`), the task fi
 current lessons, the `ui_review` setting (§0), the **config capabilities** (run commands, ports, health paths, test commands),
 and — on a re-verify round (§5) — **only the failing criteria** (the `security` check still runs in
 full). It owns the verify env end to
-end: builds the worktree, boots the declared servers, spawns `test-planner` → `ui-reviewer` →
-`test-reviewer`, runs the inline checks, writes the `## Verification — <branch>` table into the
+end: builds the worktree, boots the declared servers, derives the test matrix from the diff itself, spawns
+`ui-reviewer`, audits the shipped tests itself, runs the inline checks, writes the `## Verification — <branch>` table into the
 task file + screenshots into `<tasks_dir>/<ID>.evidence/`, tears the env down, and returns ONE
 merged verdict table plus a `FAILING:` list. You consume the verdict; you drive no tool yourself.
+
+The coordinator spawns `test-planner` only for a task with `critical: true`, or when you ask for one in its
+brief; every other task gets a matrix the coordinator derives itself. There is no separate test reviewer.
 
 **Capability-gated standing checks** (the coordinator runs the ones the config declares —
 tell it which apply; never ask for a check on an undeclared layer):
 
 - **`tests` declared** → the changed package's suite must be green with the change covered; when
-  tests were added/touched, an independent `test-reviewer` audit (`GAPS` = FAIL), and the
-  coordinator independently mutant-checks every new guard/boundary to a RED kill (survivor = FAIL).
+  tests were added/touched, the coordinator's own test-quality audit (real assertions, modified behaviour
+  re-pinned, ≥ 5 own mutants from the diff's branches; `GAPS` = FAIL), and it independently mutant-checks
+  every new guard/boundary to a RED kill (survivor = FAIL).
 - **`api` declared** → every touched write-endpoint, given an empty / partial / wrong-type body,
   returns a clean **4xx naming the field, never a 500**. Happy-path-only is not a pass.
 - **`web` + `api` declared** → **data provenance** (a fresh account created THIS run with random
@@ -221,7 +225,7 @@ tell it which apply; never ask for a check on an undeclared layer):
     --title "<ID>: <title>" --body "<summary; link the task file; derived-criteria note if any>"
   ```
   Record the PR URL in the task file's verification section. Never merge, never mark ready.
-- **FAIL** (any failing criterion, incl. a UI FAIL, red suite, or `test-reviewer` GAPS) → loop,
+- **FAIL** (any failing criterion, incl. a UI FAIL, red suite, or test-quality GAPS) → loop,
   handing back only the coordinator's `FAILING:` criteria, capped at R rounds (`--rounds R`, else
   the `rounds` setting):
   - **Round 1** — the implementer's first build.

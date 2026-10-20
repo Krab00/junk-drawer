@@ -312,10 +312,10 @@ test('SendMessage: reviewers are always fresh, an implementer over the cap is re
   }
   expect(orchGuard(send, st({ agent: { type: 'junkd:implementer-x' } }), on_)).toBeUndefined() // no reviewer by its name
   expect(orchGuard(send, st({ agent: { type: 'junkd:ui-reviewer-x' } }), on_)).toBeUndefined()
-  // test-planner and test-reviewer are reviewers too, bare and junkd:-prefixed; their names inside another type are not
-  for (const type of ['test-planner', 'junkd:test-planner', 'test-reviewer', 'junkd:test-reviewer'])
+  // test-planner is a reviewer too, bare and junkd:-prefixed; its name inside another type are not
+  for (const type of ['test-planner', 'junkd:test-planner'])
     expect(orchGuard(send, st({ agent: { type } }), on_), type).toMatch(new RegExp(`^${PREFIX.replace(/[()]/g, '\\$&')} ${type.replace(/^junkd:/, '')} is a reviewer, and reviewers are always fresh`))
-  for (const type of ['junkd:implementer', 'implementer', 'junkd:test-reviewer-x', 'test-plannerx', 'xtest-planner', 'junkd:test-runner', 'other:test-reviewer', 'orch:test-reviewer'])
+  for (const type of ['junkd:implementer', 'implementer', 'junkd:test-planner-x', 'test-plannerx', 'xtest-planner', 'junkd:test-runner', 'other:test-planner', 'orch:test-planner'])
     expect(orchGuard(send, st({ agent: { type } }), on_), type).toBeUndefined()
   expect(orchGuard(send, st({ agent: { type: 'junkd:implementer', tokens: 450_000 } }), on_)).toMatch(
     /implementer context 450k exceeds cap 400k: spawn a fresh implementer, hand it `git diff <base>...<branch>` and why previous rounds failed/,
@@ -830,8 +830,8 @@ test('T12 AC2: a record on disk alone caps, as after a module reload: by id and 
   // at the cap passes; a reviewer's record answers its type
   rec.files[`${RECORDS}/${SID}/at.json`] = record('junkd:implementer', 400_000)
   expect(denial(await send('at'))).toBeUndefined()
-  rec.files[`${RECORDS}/${SID}/rev.json`] = record('junkd:test-reviewer', 10)
-  expect(denial(await send('rev'))).toMatch(/test-reviewer is a reviewer/)
+  rec.files[`${RECORDS}/${SID}/rev.json`] = record('junkd:test-planner', 10)
+  expect(denial(await send('rev'))).toMatch(/test-planner is a reviewer/)
   // a listed agent's record is read by its id, whatever name the call used
   rec.agents = [{ id: 'lid', type: 'junkd:implementer', name: 'listed' }]
   rec.files[`${RECORDS}/${SID}/lid.json`] = record('junkd:implementer', 500_000)
@@ -876,7 +876,7 @@ test('T12 AC2: the record file comes first, the in-memory record is the fallback
   }
   // a field of the wrong kind is dropped, the other kept: a type that is no string (an array reads as its text) or
   // tokens that are no number (a string compares as a number)
-  rec.files[`${RECORDS}/${SID}/oddtype.json`] = record(['junkd:test-reviewer'], 450_000)
+  rec.files[`${RECORDS}/${SID}/oddtype.json`] = record(['junkd:test-planner'], 450_000)
   expect(denial(await send('oddtype'))).toMatch(/implementer context 450k exceeds cap/)
   rec.files[`${RECORDS}/${SID}/oddtok.json`] = record('junkd:implementer', '450000')
   expect(denial(await send('oddtok'))).toBeUndefined()

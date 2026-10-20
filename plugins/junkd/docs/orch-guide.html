@@ -276,9 +276,9 @@
                               │
                     ┌─────────▼──────────┐
                     │  4. VERIFY (gate)  │  verify-coordinator:
-                    │                    │    test-planner → matrix from the DIFF
+                    │                    │    matrix from the DIFF (test-planner if critical)
                     │                    │    ui-reviewer   → browser, screenshot/criterion
-                    │                    │    test-reviewer → test-quality audit
+                    │                    │    test-quality audit (≥ 5 own mutants)
                     │                    │    + inline curl/build/test + standing checks
                     └─────────┬──────────┘   → ONE merged verdict + FAILING: list
                               │
@@ -323,10 +323,9 @@
     <tbody>
       <tr><td><code>implementer</code></td><td>Builds exactly one task on its own branch in its own worktree.</td><td>Scoped changes only (no architectural decisions, no adjacent “improvements”); authors tests for its change; runs the real build/lint/test before reporting; never touches the base branch.</td></tr>
       <tr><td><code>lead-implementer</code></td><td>Builds one <em>big</em> task by fanning out to parallel sub-implementers.</td><td>Freezes the shared contract (types/DTOs/signatures) <strong>first</strong>, so no slice guesses another's interface; slices are <strong>file-disjoint</strong>; merges them back and runs the final gate; <strong>falls back to flat</strong> if the task can't be cut cleanly.</td></tr>
-      <tr><td><code>verify-coordinator</code></td><td>Owns the entire verification of one task.</td><td>Builds and tears down the verify env; spawns the three reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. <strong>No PASS without tool evidence.</strong> Keeps all the heavy output out of the orchestrator's context.</td></tr>
-      <tr><td><code>test-planner</code></td><td>Reads the <strong>diff</strong> and derives the mandatory test matrix.</td><td>One binding row per changed branch / guard / validation / fallback / boundary — happy <strong>and</strong> edge — each with a <em>real</em> induction recipe and a preferred layer (<code>e2e</code>/<code>web</code>/<code>api</code>). A <code>?state=</code>-style preview is never accepted as proof of an error/edge row.</td></tr>
+      <tr><td><code>verify-coordinator</code></td><td>Owns the entire verification of one task.</td><td>Builds and tears down the verify env; audits the shipped tests itself and spawns the reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. <strong>No PASS without tool evidence.</strong> Keeps all the heavy output out of the orchestrator's context.</td></tr>
+      <tr><td><code>test-planner</code></td><td>Reads the <strong>diff</strong> and derives the mandatory test matrix; spawned only for a <code>critical: true</code> task or on request (the coordinator derives the matrix itself otherwise).</td><td>One binding row per changed branch / guard / validation / fallback / boundary — happy <strong>and</strong> edge — each with a <em>real</em> induction recipe and a preferred layer (<code>e2e</code>/<code>web</code>/<code>api</code>). A <code>?state=</code>-style preview is never accepted as proof of an error/edge row.</td></tr>
       <tr><td><code>ui-reviewer</code></td><td>Verifies the UI/browser criteria by driving the real browser.</td><td>One screenshot per criterion via <code>agent-browser</code>; every state (default/empty/loading/error/no-permission); data checked against the real account, not a mock; PASS/FAIL/PM-REVIEW — never on the implementer's word.</td></tr>
-      <tr><td><code>test-reviewer</code></td><td>Audits the tests that ship with the change.</td><td>Judges <em>quality</em> (real assertions, coverage of the change, no over-mocking, modifications truly updated) — not just that the suite is green. Returns <code>OK</code> or <code>GAPS</code>; <code>GAPS</code> is a FAIL.</td></tr>
     </tbody>
   </table></div>
   <div class="note"><p>A note on <strong>where evidence lives</strong>: the <code>verify-coordinator</code>
@@ -356,7 +355,7 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Standing check</th><th>Gated on</th><th>What it proves</th></tr></thead>
     <tbody>
-      <tr><td><strong>Green scoped suite + change covered</strong>, plus an independent <strong>test-quality audit</strong> (<code>test-reviewer</code> <code>GAPS</code> = FAIL) when tests were added/touched</td><td><code>tests</code> declared</td><td>The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions.</td></tr>
+      <tr><td><strong>Green scoped suite + change covered</strong>, plus the coordinator's own <strong>test-quality audit</strong> (real assertions, modified behaviour re-pinned, ≥ 5 own mutants from the diff's branches; <code>GAPS</code> = FAIL) when tests were added/touched</td><td><code>tests</code> declared</td><td>The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions.</td></tr>
       <tr><td><strong>Malformed body → clean 4xx naming the field, never a 500</strong></td><td><code>api</code> declared</td><td>Every touched write-endpoint validates its input. Happy-path-only is not a pass.</td></tr>
       <tr><td><strong>Real-data provenance</strong> — a fresh account created <em>this run</em> with <strong>random</strong> values; rendered == returned == stored</td><td><code>web</code> + <code>api</code> declared</td><td>The screen shows <em>this account's</em> data from the live API — never a mock/demo seed or a <code>?preview=</code> switch a hardcoded value could pass.</td></tr>
       <tr><td><strong>FE actually calls the live API</strong> on data-backed routes, verified <strong>E2E through the UI</strong></td><td><code>web</code> + <code>api</code> declared</td><td>The frontend really consumes the backend end to end — not static content with a silent mock behind it.</td></tr>
@@ -481,7 +480,7 @@ criteria_source: derived # verbatim | derived
     <li><strong>Adhoc task created.</strong> <code>orch-state new ADHOC-1 "fix login redirect bug"</code> writes the skeleton file; the orchestrator fills the description from your prompt.</li>
     <li><strong>Criteria frozen (interactively).</strong> No structured DoD exists, so the loop <em>derives</em> criteria — e.g. <em>“AC1: after a successful login the user lands on <code>/dashboard</code>, not <code>/login</code> (modality: ui)”</em> — each traceable to a sentence in your prompt, and shows them to you for approval.</li>
     <li><strong>Delegated.</strong> A short plan + the current lessons go to an <code>implementer</code>, spawned in its own worktree on branch <code>task/adhoc-1-fix-login-redirect</code>, fed the dev-server and test commands from the config.</li>
-    <li><strong>Verified.</strong> <code>verify-coordinator</code> boots the app, has <code>test-planner</code> derive the matrix from the diff (including the <em>failed</em>-login and <em>already-logged-in</em> branches), has <code>ui-reviewer</code> drive the real browser through the redirect on a fresh random account, runs the standing checks, and returns a merged verdict.</li>
+    <li><strong>Verified.</strong> <code>verify-coordinator</code> boots the app, derives the matrix from the diff (including the <em>failed</em>-login and <em>already-logged-in</em> branches), has <code>ui-reviewer</code> drive the real browser through the redirect on a fresh random account, runs the standing checks, and returns a merged verdict.</li>
     <li><strong>Resolved.</strong> All PASS → the task is <code>done</code>, a <strong>draft PR</strong> is opened (<code>gh pr create --draft …</code>), and a lesson is appended to <code>_lessons.md</code>. The run prints <code>BACKLOG: DRAINED</code>.</li>
   </ol>
   <p>You review and merge the PR — <code>orch</code> never does.</p>

@@ -584,8 +584,8 @@ An `all` or `--single-pr` run whose config declares `specs:` ends with the direc
    descriptions go `blocked` with a question — never implemented on vibes).
 2. **Implement** on an isolated task branch (`implementer`, or `lead-implementer` for a big task
    that cuts into file-disjoint slices behind a frozen contract).
-3. **Verify** the whole task via `verify-coordinator` — it builds the env, spawns `test-planner`
-   (diff → mandatory matrix), `ui-reviewer` (browser criteria) and `test-reviewer` (test quality),
+3. **Verify** the whole task via `verify-coordinator` — it builds the env, derives the mandatory test matrix from the diff (a `test-planner` only for a `critical: true` task
+   or on request), spawns `ui-reviewer` (browser criteria), audits the shipped tests itself (test quality),
    runs the standing checks, and returns one merged verdict. **No PASS without tool evidence.**
 4. **Resolve:** all-PASS → `done` + draft PR; any FAIL → fix loop, capped at `--rounds`. Round 1
    builds, middle rounds re-run the same implementer on only the failing criteria, the **final
@@ -631,10 +631,9 @@ a different model only when the user asked for it.
 | `orch-ops` | haiku | runs the bin scripts, git, gh and jq reads for the orchestrator; one line back, output in a report file |
 | `implementer` | opus | builds one task (or one file-disjoint slice of it) on its own branch in its own worktree, with tests and a mutant sweep |
 | `lead-implementer` | opus | one big task: freezes the shared contract, fans out to parallel `implementer` slices, merges them back, runs the final gate |
-| `verify-coordinator` | opus | the whole verification of one task: builds the verify env, runs the inline checks, spawns the three reviewers, writes the verdict table |
-| `test-planner` | sonnet | derives the mandatory test matrix from the diff (happy + edge rows with real induction recipes) |
+| `verify-coordinator` | opus | the whole verification of one task: builds the verify env, runs the inline checks, audits the shipped tests itself, spawns `ui-reviewer` (and `test-planner` for a `critical: true` task), writes the verdict table |
+| `test-planner` | sonnet | derives the mandatory test matrix from the diff (happy + edge rows with real induction recipes); spawned only for a `critical: true` task or on request |
 | `ui-reviewer` | sonnet | drives the browser (chrome-devtools MCP, agent-browser, playwright MCP, agent-device: first found), a screenshot per UI criterion |
-| `test-reviewer` | sonnet | audits the tests a change ships: real assertions, coverage of the change, no over-mocking; `OK` or `GAPS` |
 
 On Claude Code each is the agent type `junkd:<role>` (`junkd:implementer`, …). The real files live in
 `skills/orch/roles/`; `agents/` at the plugin root is a symlink to them (see the layout note in the repo
@@ -717,7 +716,7 @@ Every denial starts with `Orchestrator mode (orch):` and says what to do instead
 |---|---|
 | `ListAgents`, `TaskStop`, `AskUserQuestion`, `ToolSearch`, `Skill`, `CronList`, `CronDelete`, `EnterPlanMode`, `ExitPlanMode`, `PushNotification`, `RemoteTrigger` | always |
 | `Agent` | with `model: opus\|sonnet\|haiku`, or as a `junkd:` agent type with no `model` (theirs is pinned). Never as a fork or with `inherit`. With a Fable model only when `allow_fable_agents` is on. An `agent.spawn` hook checks the resolved model again (a fork, `inherit`, or no model on a non-`junkd:` type would run on the main loop's model). |
-| `SendMessage` | except to a reviewer (`verify-coordinator`, `ui-reviewer`, `test-planner`, `test-reviewer`, bare or `junkd:`: spawn a new one), to an agent past `implementer_ctx_k` k tokens of context, or to an agent nobody knows. A stopped agent is known by its `SubagentStop` record (see [Agent records](#agent-records)): its type and the context tokens of its transcript's last usage record, by id and by name. |
+| `SendMessage` | except to a reviewer (`verify-coordinator`, `ui-reviewer`, `test-planner`, bare or `junkd:`: spawn a new one), to an agent past `implementer_ctx_k` k tokens of context, or to an agent nobody knows. A stopped agent is known by its `SubagentStop` record (see [Agent records](#agent-records)): its type and the context tokens of its transcript's last usage record, by id and by name. |
 | `Read` | in the session scratchpad, the repo's task store `<repo>/.orch/` (`<repo>` = git's toplevel of the session's cwd; none outside a repo) and, in the config dir (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), `orch/`, `handoffs/` and `projects/*/memory/`. The path must be a plain absolute ASCII path (no `~`, no relative path, no surrounding spaces, no non-ASCII letters) with no `..` segment; symlinks and case aliases are resolved first and where it lands must pass too, and a path that cannot be placed is denied. |
 | `Write` | in the same places as `Read`, except that in the task store only a `.md` file (task files, `_lessons.md`) and never an existing `.orch/config.md` (its `tasks_dir` steers the bin scripts; a new one passes as any new `.md` does), or to a new `.md` file. Never a path with a `..` segment, never to settings, Claude Code config (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, anything in a `.claude/` dir, any plugin's `agents`, `commands`, `skills`, `hooks`, `rules`, `output-styles`, a `.claude-plugin/` dir), the module's own control files `junkd/orch-off` and `junkd/orch-rules-off` (or any path under those names), the agent records `junkd/orch/_agents/` (any case, any path under it) or this plugin. The path must be a plain absolute ASCII path; symlinks and case aliases are resolved first, and a path that cannot be placed (a link to nothing, a folder that does not resolve) is denied. |
 | `Bash`, `Monitor` | only to run one of this plugin's own `bin/` scripts, by its path under the plugin root, with plain arguments (no quotes, `$`, backticks, `;`, `&`, `\|`, `<`, `>`) |
@@ -754,7 +753,7 @@ session folders can be removed by hand.
   tool call, so nothing changes in practice.
 - **`ScheduleWakeup`:** not on the always-allowed list. The `CronCreate` row holds for it: only
   `/junkd:orch`, `/loop` of an allowed prompt, a plain prompt, or a stop.
-- **`SendMessage`:** `test-planner` and `test-reviewer` count as reviewers, so they are spawned fresh
+- **`SendMessage`:** `test-planner` counts as a reviewer, so it is spawned fresh
   every time and never messaged. The record file on disk is read first, and the module's own
   `SubagentStop` record is the fallback.
 - **`Read`, `Write`:** the task store `<repo>/.orch/` is a root of its own. Writes there take a `.md`
@@ -1221,7 +1220,7 @@ business and is skipped, and the main loop itself is never watched or stopped.
 | Role | Stall limit | Idle leftover |
 |---|---|---|
 | `implementer`, `lead-implementer` | `orch_stall_minutes` | Kept while its task is `in_progress` (a verify or fix round reuses it); stopped once the task is `done` or `blocked`, or after `orch_idle_stop_minutes` when the task is in no other state |
-| `verify-coordinator`, `test-planner`, `test-reviewer`, `ui-reviewer` | `orch_stall_minutes` + 5 | Stopped as soon as it reported: a reviewer is never messaged again |
+| `verify-coordinator`, `test-planner`, `ui-reviewer` | `orch_stall_minutes` + 5 | Stopped as soon as it reported: a reviewer is never messaged again |
 | `orch-ops`, any agent named `pr-…` or `gh-…` | `orch_stall_minutes` | Stopped as soon as it reported |
 | Any other agent | `orch_stall_minutes` | Stopped after `orch_idle_stop_minutes` |
 

@@ -386,7 +386,7 @@ stop_event '"s1"' '"j1"' "$tr_dir/plain.jsonl" | PATH="$tmp/nojq-stop" "$stop" |
 export CLAUDE_CONFIG_DIR="$tmp/cfg"
 
 # ---------------------------------------------------------------- agents (AC1)
-for agent in implementer verify-coordinator ui-reviewer orch-ops lead-implementer test-planner test-reviewer; do
+for agent in implementer verify-coordinator ui-reviewer orch-ops lead-implementer test-planner; do
     f="$plugin/agents/$agent.md"
     [ -f "$f" ] || fail "missing agent $agent"
     model=$(awk 'NR==1 && !/^---/ {exit} /^---/ {n++; if (n==2) exit; next} /^model:/ {sub(/^model:[ \t]*/, ""); print}' "$f")
@@ -397,7 +397,7 @@ for agent in implementer verify-coordinator ui-reviewer orch-ops lead-implemente
     name=$(awk '/^---/ {n++; if (n==2) exit; next} /^name:/ {sub(/^name:[ \t]*/, ""); print}' "$f")
     [ "$name" = "$agent" ] || fail "agent $agent: frontmatter name is '$name'"
 done
-for pair in implementer:opus lead-implementer:opus verify-coordinator:opus ui-reviewer:sonnet test-planner:sonnet test-reviewer:sonnet orch-ops:haiku; do
+for pair in implementer:opus lead-implementer:opus verify-coordinator:opus ui-reviewer:sonnet test-planner:sonnet orch-ops:haiku; do
     model=$(awk '/^---/ {n++; if (n==2) exit; next} /^model:/ {sub(/^model:[ \t]*/, ""); print}' "$plugin/agents/${pair%%:*}.md")
     [ "$model" = "${pair##*:}" ] || fail "agent ${pair%%:*}: model '$model', expected ${pair##*:}"
 done
@@ -483,6 +483,26 @@ needs "orch-guide.md" "$guide" '### Security' \
     'Its commit/push review stays on, because it runs in the implementer at the moment of the commit, on that commit alone, and is a cheap early warning.' \
     'security: { severity: high } # omit unless there is a web app, an api, or a security-named file' \
     '| `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row; a missing or other value is read as `high`, with a note under the table. Absent → no security check'
+
+# ---------------------------------------------------------------- test quality is the coordinator's own step (T31)
+# There is no test reviewer agent: the verify-coordinator audits the shipped tests itself, and test-planner is spawned
+# only on a critical task or on request. Whole-sentence needles, so a deleted mutant count or a spawn line put back fails.
+needs "verify-coordinator step 3" "$(flat "$(section "$vc_md" '^3[.] [*][*]Test gate' '^4[.] [*][*]Verdict rules')")" \
+    '**Test quality (when the change added/touched tests):** you audit the shipped tests yourself, as the independent reader of the change.' \
+    "- Real assertions: the tests assert observable behaviour and exact values, not tautologies, \"it didn't throw\", or snapshots that lock in nothing; mocks stand in for true externals, never for the logic under test." \
+    '- Modified behaviour re-pinned: for changed logic the existing tests assert the NEW behaviour, not deleted, `.skip`-ped, loosened, or still asserting the old behaviour;' \
+    "- Apply ≥ 5 own mutants of your choosing, taken from the diff's branches (guard, validation, fallback, boundary, error mapping): flip the condition, remove the branch, shift the bound, run the targeted suite, and require a RED kill; revert each and confirm a clean \`git status\`." \
+    '- GAPS: every gap (a surviving mutant, a branch with no test, a test that proves nothing, a modification that was not re-pinned) is its own `FAIL` row `test quality: <gap>`' \
+    'none → one `PASS` row `test quality: OK`.'
+needs "verify-coordinator step 0" "$(flat "$(section "$vc_md" '^0[.] [*][*]Plan the matrix' '^1[.] [*][*]Build the verify env')")" \
+    '**Spawn `test-planner` only when the task file says `critical: true`, or when the orchestrator asked for one**'
+needs "orch.md §4" "$s4" \
+    'The coordinator spawns `test-planner` only for a task with `critical: true`, or when you ask for one in its brief; every other task gets a matrix the coordinator derives itself. There is no separate test reviewer.'
+# no spawn line, role or roster entry of the removed agent anywhere (the name is split so this file does not hold it)
+gone='test-re''viewer'
+if rg -n -g '!node_modules' "$gone" "$plugin" "$plugin/../../README.md" "$plugin/../../tests" >/dev/null; then
+    fail "the removed test reviewer is still named: $(rg -n -g '!node_modules' "$gone" "$plugin" "$plugin/../../README.md" "$plugin/../../tests" | head -3)"
+fi
 
 # ---------------------------------------------------------------- bin scripts (AC4, AC5)
 for s in orch-state orch-sync orch-worktree; do bash -n "$plugin/bin/$s" || fail "bash -n $s"; done
