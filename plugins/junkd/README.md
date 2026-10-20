@@ -396,6 +396,8 @@ already fill it) has a baseline: when the threshold sits at or under that fill, 
 of growth above it. A loop armed in any other window, a fresh session or one that already ran turns, has no
 baseline, so threshold 5 at 7% hands off at the end of that turn. `/junkd:ahandoff off` drops the baseline.
 
+A handoff the model does not write is asked for at most 3 times in all; after the third miss the loop disarms, logs `decision=give-up:3-tries` and toasts `ahandoff: handoff not written after 3 tries — disarmed`.
+
 A reload of the plugin (a change in the `/config` menu, `/reload-plugins`, a save in a watched `--plugin-dir`
 folder) starts the module over; the armed loop, its prompt and its baseline come back from `$.state` (a toast says
 so), a new process starts with the loop off.
@@ -416,7 +418,7 @@ the one after a `/clear`, has its own file):
 asked for), `skip:below-limit`, `skip:fresh` (the first measurement of the window after a handoff is still
 pending), `skip:phase-<phase>` (a handoff is already under way), `skip:disarmed`, `skip:five-hour-limit`,
 `skip:measure-only`, `skip:restored`, or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
-that turn, or one was written and the clear starts). `window` is the context window the host reported, in
+that turn, or one was written and the clear starts), `give-up:3-tries`. `window` is the context window the host reported, in
 tokens. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
 on the line of the turn that should have fired it.
 
