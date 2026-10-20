@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Is junkd live in Claude Code, installed from a local checkout (a directory marketplace)? One line per check:
+#   PASS|FAIL  enabled      settings.json enabledPlugins["junkd@junk-drawer"] is true
+#   PASS|FAIL  installed    plugins/installed_plugins.json has a junkd@junk-drawer entry
+#   PASS|FAIL  marketplace  plugins/known_marketplaces.json "junk-drawer" is a directory source whose path is a
+#                           checkout: a folder with .claude-plugin/marketplace.json that lists junkd
+#   PASS|FAIL  symlinks     the checkout's junkd plugin root has bin, agents and scripts as symlinks that resolve
+#   PASS|INFO  agents       junkd/orch/_agents/<CLAUDE_CODE_SESSION_ID>/ exists (the SubagentStop hook ran in this
+#                           session); INFO when no subagent stopped yet or no session id is set: never a failure
+# All under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}. Exits 1 on any FAIL, 0 otherwise. Reads only, writes nothing.
+# Claude Code only: on Codex, Kimi Code and OpenCode (host-lib picks the host) it prints "Claude Code only" and
+# exits 0; with no host signal at all it exits 2, as the other helpers do.
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac # no dirname: a hook may run with a bare PATH
+. "$here/host-lib" || exit 2
+jd_host || exit 2
+if [ "$JD_HOST" != claude ]; then
+    echo "junkd-doctor: Claude Code only (this host is $JD_HOST)"
+    exit 0
+fi
+
+cfg=$JD_CFG
+market=junk-drawer
+id="junkd@$market"
+fails=0
+pass() { printf 'PASS  %-12s %s\n' "$1" "$2"; }
+fail() { printf 'FAIL  %-12s %s\n' "$1" "$2"; fails=$((fails + 1)); }
+info() { printf 'INFO  %-12s %s\n' "$1" "$2"; }
+
+if ! command -v jq >/dev/null 2>&1; then
+    fail jq "jq is not on PATH; every check reads JSON with it"
+    exit 1
+fi
+
+settings="$cfg/settings.json"
+if jq -e --arg id "$id" '.enabledPlugins[$id] == true' "$settings" >/dev/null 2>&1; then
+    pass enabled "$id is on in $settings"
+else
+    fail enabled "$id is not true in enabledPlugins of $settings (/plugin install $id)"
+fi
+
+installed="$cfg/plugins/installed_plugins.json"
+if jq -e --arg id "$id" '.plugins[$id] | arrays | length > 0' "$installed" >/dev/null 2>&1; then
+    pass installed "$id has an entry in $installed"
+else
+    fail installed "$id has no entry in $installed (/plugin install $id)"
+fi
+
+known="$cfg/plugins/known_marketplaces.json"
+kind=$(jq -r --arg m "$market" '.[$m].source.source // empty' "$known" 2>/dev/null)
+path=$(jq -r --arg m "$market" '.[$m].source.path // empty' "$known" 2>/dev/null)
+src=""
+if [ -z "$kind" ]; then
+    fail marketplace "$known has no $market marketplace (/plugin marketplace add /abs/path/to/junk-drawer)"
+elif [ "$kind" != directory ]; then
+    fail marketplace "$market is a $kind source, not a directory (/plugin marketplace add /abs/path/to/junk-drawer)"
+elif [ -z "$path" ] || [ ! -d "$path" ]; then
+    fail marketplace "$market points at '$path', which is not a folder"
+else
+    src=$(jq -r '.plugins[] | select(.name == "junkd") | .source | strings' "$path/.claude-plugin/marketplace.json" 2>/dev/null | head -n1)
+    if [ -z "$src" ]; then
+        fail marketplace "$path is not a junk-drawer checkout: no .claude-plugin/marketplace.json that lists junkd"
+    else
+        pass marketplace "$market is a directory source: $path"
+    fi
+fi
+
+if [ -z "$src" ]; then
+    fail symlinks "no checkout to check (see the marketplace line)"
+else
+    plugin="${path%/}/${src#./}"
+    broken=""
+    for link in bin agents scripts; do
+        [ -L "$plugin/$link" ] && [ -e "$plugin/$link" ] || broken="$broken $link"
+    done
+    if [ -n "$broken" ]; then
+        fail symlinks "in $plugin, not a symlink that resolves:$broken"
+    else
+        pass symlinks "bin, agents and scripts resolve in $plugin"
+    fi
+fi
+
+sid=${CLAUDE_CODE_SESSION_ID:-}
+case "$sid" in
+    "") info agents "no CLAUDE_CODE_SESSION_ID: run this from a Claude Code session to check its subagent records" ;;
+    *[!A-Za-z0-9_-]*) info agents "the session id '$sid' is not a plain id: no records folder is kept for it" ;;
+    *)
+        if [ -d "$cfg/junkd/orch/_agents/$sid" ]; then
+            pass agents "$cfg/junkd/orch/_agents/$sid exists"
+        else
+            info agents "no subagent stopped yet in session $sid ($cfg/junkd/orch/_agents/$sid fills after one does)"
+        fi
+        ;;
+esac
+
+[ "$fails" -eq 0 ] || exit 1
+exit 0
