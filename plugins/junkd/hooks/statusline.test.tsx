@@ -57,6 +57,8 @@ function world(on: On, o: Opts = {}) {
     // The host's snapshot of the user's statusLine (undefined: none), what `settings.read` answers and what a row's write
     // puts back into the file.
     host: { line: undefined as unknown, behind: 0 },
+    // The `source` of every settings.read the module made.
+    reads: [] as (string | undefined)[],
     // Releases the sleeps of VERIFY_MS the module started and lets what follows them run.
     verify: async () => {},
     o,
@@ -94,7 +96,8 @@ function world(on: On, o: Opts = {}) {
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('command.list', () => ({ value: [] }))
   if (!o.noSettingsRead) {
-    on('settings.read', () => {
+    on('settings.read', (_$, e) => {
+      rec.reads.push((e as { source?: string }).source)
       const line = hostLine()
       return { value: line === undefined ? {} : { statusLine: line } }
     })
@@ -707,6 +710,22 @@ test('the pane\'s wired switch and /junkd:statusline off|on wait too', W, async 
   await command($, 'off')
   expect(lineIn(rec)).toBeUndefined()
   expect(rec.order.filter(o => o.startsWith('sleep'))).toHaveLength(3) // one per flip: the host is one sleep late each time
+})
+test("the wait compares with the user's settings.json (source user), not the merge over the project's", W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: 1 })
+  await start($)
+  rec.reads.length = 0
+  await set($, 'statusline_enabled', false)
+  expect(rec.reads.length).toBeGreaterThan(0)
+  expect(rec.reads.every(source => source === 'user')).toBe(true)
+})
+test('a host copy that says statusLine null and a file with none agree: no wait (the host writes null for a removed line)', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: 1000 })
+  await start($)
+  rec.host.line = null
+  rec.order.length = 0
+  await set($, 'statusline_enabled', false)
+  expect(rec.order).toEqual(['setup off', 'config.set junkd.statusline_enabled'])
 })
 test('a host that already holds the file is not waited for: no sleep', W, async ($, on) => {
   const rec = world(on, { copy: SCRIPT })
