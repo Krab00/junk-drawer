@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# orch-watch — the agent watchdog for hosts with no hooks module (Codex, Kimi, OpenCode) and headless runs. Zero
+# tokens: bash + jq, no model. Prints one table of this session's agents: agent | role | status | idle | verdict.
+#   orch-watch [--once] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
+#     --once            print the table once and exit 0 (otherwise every S seconds until Ctrl-C)
+#     --interval S      seconds between tables, 1-3600 (default 60)
+#     --idle-minutes N  idle minutes before an idle leftover is due for a stop, 1-120 (default: the
+#                       orch_idle_stop_minutes setting, else 10)
+#     --no-stop         report only (every host but Claude Code reports only anyway: none has an agent stop command;
+#                       on Claude Code the junkd hooks module stops idle leftovers itself)
+#     --session ID      the session whose records to read (default: the newest folder)
+# What it reads:
+#   - the stop records ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/orch/_agents/<session>/*.json that
+#     scripts/orch-agent-stop.sh writes ({type, tokens}, by agent id and by name; the module's own carry a deadNote).
+#     A record's mtime is when the agent finished.
+#   - the live agents: claude/codex/kimi processes (ps) whose cwd (lsof, else pwdx, else /proc) is a task worktree
+#     (.../.worktrees/T<n>), each matched to the newest record of its task. A process whose cwd cannot be read is
+#     listed by name only (verdict unknown).
+#   - the task status of an implementer's task: the frontmatter of <tasks_dir>/T<n>.md (orch-state's root and config).
+# The verdict follows the module's rules (hooks/watchdog.ts): a reviewer (verify-coordinator, test-planner,
+# test-reviewer, ui-reviewer, orch-ops, a pr-/gh- name) still alive after its record is due for a stop at once; an
+# implementer is kept while its task is in_progress, due when it is done/blocked, else after the idle minutes; any
+# other agent after the idle minutes. No jq: a message, exit 0.
+set -uo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+once=0 interval=60 idle_minutes='' no_stop=0 session=''
+usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; }
+die() { echo "orch-watch: $*" >&2; exit 2; }
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --once) once=1 ;;
+    --no-stop) no_stop=1 ;;
+    --interval) [ $# -ge 2 ] || die "--interval needs seconds"; interval=$2; shift ;;
+    --idle-minutes) [ $# -ge 2 ] || die "--idle-minutes needs minutes"; idle_minutes=$2; shift ;;
+    --session) [ $# -ge 2 ] || die "--session needs an id"; session=$2; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument '$1' (orch-watch --help)" ;;
+  esac
+  shift
+done
+[[ "$interval" =~ ^[0-9]+$ ]] && [ "$interval" -ge 1 ] && [ "$interval" -le 3600 ] || die "--interval takes whole seconds 1-3600, not '$interval'"
+if [ -n "$idle_minutes" ]; then
+  [[ "$idle_minutes" =~ ^[0-9]+$ ]] || die "--idle-minutes takes whole minutes 1-120, not '$idle_minutes'"
+  [ "$idle_minutes" -ge 1 ] || idle_minutes=1
+  [ "$idle_minutes" -le 120 ] || idle_minutes=120
+fi
+[ -z "$session" ] || [[ "$session" =~ ^[A-Za-z0-9_-]+$ ]] || die "--session takes a plain id ([A-Za-z0-9_-]), not '$session'"
+
+command -v jq >/dev/null 2>&1 || { echo "orch-watch: needs jq (brew install jq, apt install jq); nothing checked"; exit 0; }
+
+cfg="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+agents_root="$cfg/junkd/orch/_agents"
+
+# The idle minutes when not given: orch_idle_stop_minutes of the first junkd@ entry of settings.json, rounded and
+# clamped 1-120 as orch-lib.ts does; 10 when missing or unreadable.
+if [ -z "$idle_minutes" ]; then
+  idle_minutes=$(jq -rs '
+    (if length == 1 then .[0] else error end).pluginConfigs
+    | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
+    | .orch_idle_stop_minutes as $x
+    | (if ($x | type) == "number" then $x
+       elif ($x | type) == "string" then ($x | gsub("^\\s+|\\s+$"; "") | try tonumber catch null) else null end) as $n
+    | if $n == null or ($n | isinfinite) or ($n | isnan) then 10 else [120, ([1, ($n | round)] | max)] | min end
+  ' "$cfg/settings.json" 2>/dev/null) || idle_minutes=10
+  [[ "$idle_minutes" =~ ^[0-9]+$ ]] || idle_minutes=10
+fi
+
+mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+
+# cwd_of <pid>: the process's working directory, or nothing.
+cwd_of() {
+  local d
+  if command -v lsof >/dev/null 2>&1; then
+    d=$(lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n1)
+    [ -n "$d" ] && { echo "$d"; return; }
+  fi
+  if command -v pwdx >/dev/null 2>&1; then
+    d=$(pwdx "$1" 2>/dev/null | sed -n 's/^[0-9]*: //p')
+    [ -n "$d" ] && { echo "$d"; return; }
+  fi
+  readlink "/proc/$1/cwd" 2>/dev/null
+}
+
+# task_of <name> [cwd]: the T<n> in the name, else in the cwd's .worktrees/T<n> segment (watchdog.ts's taskOf).
+task_of() {
+  local t
+  t=$(grep -oE '(^|[^A-Za-z0-9])T[0-9]+($|[^0-9])' <<<"$1" | head -n1 | grep -oE 'T[0-9]+')
+  [ -n "$t" ] || t=$(grep -oE '/\.worktrees/T[0-9]+(/|$)' <<<"${2:-}" | tail -n1 | grep -oE 'T[0-9]+')
+  echo "$t"
+}
+
+# class_of <type> <name>: reviewer | implementer | other (watchdog.ts's stopClass).
+class_of() {
+  local base=${1##*:}
+  case "$base" in
+    implementer|lead-implementer) echo implementer; return ;;
+    verify-coordinator|test-planner|test-reviewer|ui-reviewer|orch-ops) echo reviewer; return ;;
+  esac
+  case "$2" in pr-*|gh-*) echo reviewer ;; *) echo other ;; esac
+}
+
+tasks_dir=''
+task_status() {
+  local f st
+  if [ -z "$tasks_dir" ]; then
+    tasks_dir=$("$here/orch-state" tasks-dir 2>/dev/null) || tasks_dir="$("$here/orch-state" root 2>/dev/null || pwd)/.orch/tasks"
+  fi
+  f="$tasks_dir/$1.md"
+  [ -f "$f" ] || return 0
+  st=$(awk 'NR==1 { if ($0 !~ /^---\r?$/) exit; next } /^---\r?$/ { exit } /^status:/ { sub(/^status:[ \t]*/, ""); sub(/[ \t\r]+$/, ""); print; exit }' "$f")
+  echo "$st"
+}
+
+table() {
+  local now dir sid f stem body key at prev rows='' procs='' pid args cmd cwd task
+  now=$(date +%s)
+  sid=$session
+  if [ -z "$sid" ] && [ -d "$agents_root" ]; then
+    # the newest session folder by mtime
+    sid=$(ls -1t "$agents_root" 2>/dev/null | while IFS= read -r d; do [[ "$d" =~ ^[A-Za-z0-9_-]+$ ]] && [ -d "$agents_root/$d" ] && { echo "$d"; break; }; done)
+  fi
+  dir="$agents_root/$sid"
+
+  # The live agent processes: pid, host, cwd ('' when unreadable), task (from the cwd).
+  while read -r pid args; do
+    [ -n "$pid" ] || continue
+    cmd=${args%% *}
+    cmd=${cmd##*/}
+    case "$cmd" in claude|codex|kimi) ;; *) continue ;; esac
+    cwd=$(cwd_of "$pid")
+    if [ -z "$cwd" ]; then
+      procs+="$pid	$cmd		"$'\n'
+      continue
+    fi
+    task=$(task_of '' "$cwd")
+    [ -n "$task" ] || continue # not in a task worktree: the main loop or another session
+    procs+="$pid	$cmd	$cwd	$task"$'\n'
+  done < <(ps -axo pid=,args= 2>/dev/null)
+
+  # The records, one row per agent: the id and the name file of one agent hold the same text and time, so a pair
+  # collapses to its name (the stem that does not look like an agent id).
+  local recs='' lines=''
+  if [ -n "$sid" ] && [ -d "$dir" ]; then
+    for f in "$dir"/*.json; do
+      [ -f "$f" ] || continue
+      stem=$(basename "$f" .json)
+      [[ "$stem" =~ ^[A-Za-z0-9_-]+$ ]] || continue
+      body=$(jq -c '.' "$f" 2>/dev/null) || continue
+      [ -n "$body" ] || continue
+      lines+="$(mtime "$f")	$body	$stem"$'\n'
+    done
+    # one row per agent: an id file (`a` + hex) with a name file of the same time and text is that name's twin and
+    # folds into it; two names never fold, nor two ids
+    recs=$(printf '%s' "$lines" | awk -F'\t' '
+      { n++; k[n] = $1 FS $2; st[n] = $3; at[n] = $1; bd[n] = $2; isid[n] = ($3 ~ /^a[0-9a-f]{6,}$/); if (!isid[n]) named[k[n]] = 1 }
+      END { for (i = 1; i <= n; i++) if (!(isid[i] && (k[i] in named))) print st[i] "\t" at[i] "\t" bd[i] }' | sort -t$'\t' -k2,2nr -k1,1)
+  fi
+
+  local out='agent	role	status	idle	verdict' name type note role cls idle st verdict alive t
+  local -a used=()
+  while IFS=$'\t' read -r name at body; do
+    [ -n "$name" ] || continue
+    type=$(jq -r '.type | strings' <<<"$body")
+    note=$(jq -r '.deadNote | strings' <<<"$body")
+    role=${type##*:}
+    [ -n "$role" ] || role='-'
+    idle="$(( (now - at) / 60 ))m"
+    if [ -n "$note" ]; then
+      out+=$'\n'"$name	$role	gone	$idle	dead ($note)"
+      continue
+    fi
+    task=$(task_of "$name")
+    alive=''
+    if [ -n "$task" ]; then
+      # one process per record, the newest record of its task first (the agent that reported last is the one left)
+      while IFS=$'\t' read -r pid cmd cwd t; do
+        [ -n "$pid" ] && [ "$t" = "$task" ] || continue
+        case " ${used[*]-} " in *" $pid "*) continue ;; esac
+        alive=$pid
+        break
+      done <<<"$procs"
+    fi
+    if [ -z "$alive" ]; then
+      out+=$'\n'"$name	$role	done	$idle	done"
+      continue
+    fi
+    used+=("$alive")
+    cls=$(class_of "$type" "$name")
+    over=0
+    [ $(( now - at )) -gt $(( idle_minutes * 60 )) ] && over=1
+    want=$over
+    why="idle $([ $over = 1 ] && echo over || echo under) $idle_minutes min"
+    if [ "$cls" = reviewer ]; then
+      want=1 why='reviewers are never messaged again'
+    elif [ "$cls" = implementer ]; then
+      st=$(task_status "$task")
+      case "$st" in
+        done|blocked) want=1 why="$task is $st" ;;
+        in_progress) want=0 why="$task in progress" ;;
+      esac
+    fi
+    if [ "$want" = 1 ]; then verdict="stop, report only ($why)"; else verdict="kept ($why)"; fi
+    out+=$'\n'"$name	$role	idle (pid $alive)	$idle	$verdict"
+  done <<<"$recs"
+
+  # The live processes no record names: running, or unknown when their cwd could not be read.
+  while IFS=$'\t' read -r pid cmd cwd t; do
+    [ -n "$pid" ] || continue
+    local skip=0
+    case " ${used[*]-} " in *" $pid "*) skip=1 ;; esac
+    [ $skip = 0 ] || continue
+    if [ -z "$cwd" ]; then
+      out+=$'\n'"$cmd:$pid	-	alive	-	unknown (cwd unreadable)"
+    else
+      out+=$'\n'"$cmd:$pid ($t)	-	running	-	ok"
+    fi
+  done <<<"$procs"
+
+  local mode='report only: this host has no agent stop command (Claude Code: the junkd module stops)'
+  [ $no_stop = 0 ] || mode='report only (--no-stop)'
+  echo "orch-watch · session ${sid:-none} · idle stop after $idle_minutes min · $mode"
+  column -t -s $'\t' <<<"$out"
+}
+
+if [ $once = 1 ]; then
+  table
+  exit 0
+fi
+trap 'exit 0' INT TERM
+while :; do
+  table
+  echo
+  sleep "$interval"
+done

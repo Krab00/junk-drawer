@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orch dashboard"
+  short_description: "The orch task board, timeline and lessons as a local HTML page"
+  default_prompt: "Use $dashboard to open the orch dashboard."

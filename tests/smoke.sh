@@ -128,7 +128,7 @@ done
 
 # Every command is a skill of junkd's (/junkd:<name>); no plugin-root commands/ (it would add /junkd:init and a
 # second /junkd:orch from skills/orch/commands).
-for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools explain; do
+for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools explain dashboard; do
     [ "$(awk -F': *' '$1 == "name" { print $2; exit }' "$junkd/skills/$skill/SKILL.md")" = "$skill" ] ||
         { echo "junkd: skills/$skill/SKILL.md is missing or not named $skill"; exit 1; }
 done
@@ -169,6 +169,19 @@ jq -e '[.userConfig[] | keys[] | select(. != "type" and . != "title" and . != "d
 # the whole module when a stored value is out of a manifest range.
 jq -e '.userConfig.tools_refresh | keys == ["default", "description", "title", "type"]' "$junkd_manifest" >/dev/null ||
     { echo "junkd: the tools_refresh row carries more than type, title, description and default"; exit 1; }
+# The orch dashboard's two number rows, clamped in code (refresh 5-600 s, window 1-168 h): numbers, defaults 30 and 24,
+# type, title, description and default only (the loop above holds settings.ts to the same title and default).
+for row in 'orch_dashboard_refresh 30' 'orch_dashboard_window_h 24'; do
+    jq -e --arg k "${row% *}" --argjson d "${row#* }" '.userConfig[$k] | (keys == ["default", "description", "title", "type"]) and .type == "number" and .default == $d' \
+        "$junkd_manifest" >/dev/null || { echo "junkd: the ${row% *} row is not a number row with default ${row#* } and no bounds"; exit 1; }
+done
+
+# The orch dashboard page opens from file://: no http(s) script, stylesheet or link, no fetch, no module script; its
+# helper and its data are plain <script src> beside it.
+dash_page="$junkd/skills/orch/dashboard/orch-dashboard.html"
+if rg -qi '<(script|link|img|iframe)[^>]*(src|href)="(https?:)?//' "$dash_page"; then echo "junkd: orch-dashboard.html loads an http(s) resource"; exit 1; fi
+if rg -q 'fetch\(|type="module"|@import' "$dash_page"; then echo "junkd: orch-dashboard.html uses fetch, a module script or an @import"; exit 1; fi
+rg -qF '<script src="scale.js"></script>' "$dash_page" || { echo "junkd: orch-dashboard.html does not load scale.js with a plain <script src>"; exit 1; }
 
 # The flag files are the shell-side truth of a row a shell hook reads before the module runs: the module and the
 # script spell each alike under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/.
@@ -299,6 +312,11 @@ CONFIG
 
 # The orch plugin's own tests: the SessionStart rule-sheet hook, the agent roster, the bin scripts.
 bash "$root/tests/orch.sh" >/dev/null 2>&1 || { echo "tests/orch.sh failed; run it alone for the reason"; exit 1; }
+# bin/orch-watch, the watchdog of the hosts with no hooks module, over a fixture and a stub ps/lsof; again with a
+# TMPDIR that ends in `/`.
+bash "$root/tests/orch-watch.sh" >/dev/null 2>&1 || { echo "tests/orch-watch.sh failed; run it alone for the reason"; exit 1; }
+TMPDIR="$tmp/slash/" bash "$root/tests/orch-watch.sh" >/dev/null 2>&1 ||
+    { echo "tests/orch-watch.sh failed with TMPDIR ending in /; run it alone with TMPDIR=\$TMPDIR/ for the reason"; exit 1; }
 
 catalog=$(JUNK_DRAWER_RUNTIME=codex "$root/plugins/junk-drawer/bin/junk-drawer")
 rg -q '\$orch' <<<"$catalog"
@@ -324,10 +342,10 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-# Thirteen skills: junk-drawer's one and junkd's twelve (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
-# ctx-limit, ctx-tokens, statusline, tools, explain). skills/junkd also holds the real home of the plugin-root bin/ and scripts/
+# Fourteen skills: junk-drawer's one and junkd's thirteen (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
+# ctx-limit, ctx-tokens, statusline, tools, explain, dashboard). skills/junkd also holds the real home of the plugin-root bin/ and scripts/
 # links, as the layout invariant above asks.
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 13 ]
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 14 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
@@ -380,7 +398,7 @@ cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load
     { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
 
 # Every host map names all four hosts; handoff tells the resume command of each; tldr says OpenCode has no hook.
-for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools explain; do
+for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools explain dashboard; do
     for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do
         rg -qF "$host" "$root/plugins/junkd/skills/$skill/SKILL.md" || { echo "junkd: skills/$skill/SKILL.md does not name $host"; exit 1; }
     done
@@ -390,9 +408,9 @@ for resume in '`/junkd:handon <id>`' '`$handon <id>`' '`/skill:handon <id>`' '`/
 done
 rg -qF 'OpenCode has no hook' "$root/plugins/junkd/skills/tldr/SKILL.md" || { echo "junkd: tldr/SKILL.md does not say OpenCode has no hook"; exit 1; }
 
-# The Kimi model followed whichever host line came first: handon, junkd, ahandoff, ctx-limit, ctx-tokens and tools put
-# the non-Claude line before the Claude Code one (explain too, in its slider-page route).
-for skill in handon junkd ahandoff ctx-limit ctx-tokens tools explain; do
+# The Kimi model followed whichever host line came first: handon, junkd, ahandoff, ctx-limit, ctx-tokens, tools,
+# explain (in its slider-page route) and dashboard put the non-Claude line before the Claude Code one.
+for skill in handon junkd ahandoff ctx-limit ctx-tokens tools explain dashboard; do
     md="$root/plugins/junkd/skills/$skill/SKILL.md"
     other=$(rg -n -m1 '^- Codex, Kimi Code, OpenCode or any other host' "$md" | cut -d: -f1)
     claude_line=$(rg -n -m1 '^- Claude Code' "$md" | cut -d: -f1)

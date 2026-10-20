@@ -9,6 +9,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 | `/junkd:handon [id]` | Resume a handoff in a fresh session (the newest without an id) |
 | `/junkd:ahandoff [prompt] \| off \| panel` | Arm the auto handoff loop: at a context threshold handoff, `/clear`, `/junkd:handon`, continue; resume after the 5h rate limit (Claude Code only) |
 | `/junkd:orch …` | The orchestration loop: tasks, implementer and verifier subagents, evidence gates, draft PRs (`panel` opens its settings pane) |
+| `/junkd:dashboard [close]` | Open the orch dashboard, a local HTML page with the task board, the agents' timeline, the recent events and the lessons; `close` stops its writes (`/junkd:orch dashboard` too) |
 | `/junkd:orch-init` | Write the project's `.orch/config.md` once, before the first `/junkd:orch` |
 | `/junkd:tldr [N \| on \| off \| status]` | Summarize the last substantive reply in at most N sentences, or keep every reply terse |
 | `/junkd:ctx-limit [<tokens> \| on \| off \| status \| action <m> \| cmd <shell>]` | A context-size limit a per-prompt hook enforces: block, warn, or run a command |
@@ -133,7 +134,7 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 |---|---|---|
 | core | `core_output_style`, `core_cache_check_sessions` | [Output style](#output-style-ste), [prompt-cache check](#prompt-cache-check-claude-code-only) |
 | handoff | `handoff_enabled`, `handoff_threshold`, `handoff_checkEvery`, `handoff_autoOn`, `handoff_resumeAfterLimit`, `handoff_staleDays`, `handoff_segment` | [handoff settings](#settings-1) |
-| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md` | [orch settings](#settings-2) |
+| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md`, `orch_dashboard_refresh`, `orch_dashboard_window_h`, `orch_watchdog`, `orch_idle_stop`, `orch_idle_stop_minutes`, `orch_stall_minutes` | [orch settings](#settings-2), [dashboard](#dashboard), [watchdog settings](#settings-7) |
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
 | ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
 | statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
@@ -700,8 +701,9 @@ session folders can be removed by hand.
 
 #### Settings
 
-`/junkd:orch panel` toggles the pane: one Settings tab with the eight rows (`tab` moves, `enter` saves a
-field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes).
+`/junkd:orch panel` toggles the pane: one Settings tab with the fourteen rows (`tab` moves, `enter` saves a
+field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes) and the
+`dashboard: open ▸` line, which opens [the dashboard](#dashboard) as `/junkd:dashboard` does.
 The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and the first four and
 `orch_claude_md` in the /junkd pane.
 
@@ -715,6 +717,12 @@ The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and 
 | `orch_inject_rules` | boolean | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file `junkd/orch-rules-off` while off) |
 | `orch_rounds` | number | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
 | `orch_claude_md` | boolean | `false` | On: the `## Orchestrator mode` section of `~/.claude/CLAUDE.md` becomes the `junkd:orch` pointer block; off: the block is removed (the original section only from the backup). Runs at once and at every session start while `orch_enabled` is on; see [the CLAUDE.md pointer block](#the-claudemd-pointer-block-orch_claude_md) |
+| `orch_dashboard_refresh` | number | `30` | While [the dashboard](#dashboard) is open, write its `status.js` again every N seconds (5–600, clamped and rounded) |
+| `orch_dashboard_window_h` | number | `24` | The hours the dashboard's timeline shows, ending now (1–168, clamped and rounded) |
+| `orch_watchdog` | boolean | `true` | The [agent watchdog](#watchdog) as a whole; off (or `orch_enabled` off): no timer, no alarms |
+| `orch_idle_stop` | boolean | `true` | The watchdog stops idle leftovers; off: it reports them only |
+| `orch_idle_stop_minutes` | number | `10` | Idle minutes before a finished agent with no task in progress is stopped (1–120) |
+| `orch_stall_minutes` | number | `15` | Minutes without a tool call before a running agent counts as stalled; a reviewer gets 5 more (1–120) |
 
 Scope: user-global; project/session overrides: planned.
 
@@ -1071,6 +1079,151 @@ when the Artifact tool exists, the page is also published as an Artifact; the ot
 at the path. Hosts: Claude Code (`/junkd:explain`), Codex (`$explain`), Kimi Code (`/skill:explain`) and OpenCode
 (`/explain`).
 
+## dashboard
+
+The orch run as a local web page: the task board (todo, in progress, verify, done; blocked under todo) with each
+task's round, AC and ACX counts and its last verdict note; a timeline of the phases each agent worked on a task
+(implement, verify, fix, done; a killed one hatched), with an overview strip and 1h, 3h, 12h and all zooms; the
+agents with their status, model, context, last step and age of their last call; the recent events; the lessons
+from `_lessons.md`; the rate-limit usage. No server and no fetch: the page is a file (`index.html`) that loads
+`status.js` (`window.ORCH = {…}`) beside it with a plain `<script>` and reads it again every 5 seconds, so it works
+from `file://`. Without a `status.js` it draws an empty board and says `status.js unreachable`.
+
+Both live in `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/orch/dashboard/<hash>/`: `index.html` and `scale.js` (copied
+from `skills/orch/dashboard/` at every open, so a plugin update reaches them), `status.js`, and the `open` flag.
+`<hash>` is the handoff ids' rule (`host-lib`'s `jd_hash8`) applied to the session's git toplevel; a session in no
+repo uses `_none`. The task store is the orch root's (`.orch/config.md`'s `tasks_dir`), found from inside a task
+worktree too.
+
+**Two writers of `status.js`:**
+
+- **The hooks module** (Claude Code). `/junkd:dashboard` (or `/junkd:orch dashboard`, or `dashboard: open ▸` in
+  the orch pane) writes the `open` flag, copies the page, writes `status.js`, opens the page (`open` on macOS,
+  `xdg-open` elsewhere) and toasts the path. While the flag is there it writes again at every agent spawn, every
+  agent's end, every turn's end and every `orch_dashboard_refresh` seconds. `/junkd:dashboard close` removes the
+  flag; the page keeps its last data. A flag left by an earlier session starts the writes again at session start.
+  Nothing is written while `orch_enabled` is off. Each spawn opens a phase on the task it names (its `.worktrees/<id>`
+  folder, else the first task id in its name, description or prompt): `implement` for an implementer, `fix` for one
+  on a task that was verified, `verify` for a reviewer. It closes at the agent's SubagentStop (with its context),
+  when the agent list says done, or killed when it failed, was killed or left the list with no SubagentStop record.
+  The phases live in `status.js` itself: the first write after a `/reload-plugins` reads the file back and merges,
+  so the history stays. The write is atomic (`status.js.tmp`, then `mv`).
+- **`bin/orch-status`** (any host, bash and jq): `orch-status [--out <dir>] [--sample] [--open]` builds the same
+  file from the task store, the SubagentStop records under `junkd/orch/_agents/<session>/` (each agent done, with
+  its context), `_lessons.md`, the OAuth usage endpoint when the macOS keychain holds the credentials (else no
+  usage) and `git` for the repo and branch. It has no phases: a shell sees no spawns. `--sample` writes the demo
+  data as `status.js`, `--open` copies the page beside it, writes the flag and opens it. It exits 0 with a partial
+  file rather than nothing (no jq: an empty status and a note). The `dashboard` skill runs it on the other hosts.
+
+**The data contract** (every field optional; the page draws an empty state per section): `generatedAt` epoch ms;
+`repo`, `branch`, `mock`; `window {start, end}` epoch ms; `tasks[{id, title, column: todo|in_progress|verify|done|blocked,
+round, deps, ac:[pass,total], acx:[pass,total], note, implementer, verifier, worktree, lastActivity, commits,
+phases[{agent, model, kind: implement|verify|fix|done, start, end, ctx, killed, note}]}]`; `agents[{name, role,
+model, status: running|waiting|done|dead|queued, lastCallSec, ctx, task, round, branch, worktree, lastStep,
+deadNote, events[{t, text, kind}]}]`; `events[{t, text, kind: info|pass|fail}]`; `lessons[{task, text}]`;
+`usage {fiveHour, week}` (percent); `watchdog {on, minutes}`. The comment at the top of
+`skills/orch/dashboard/status.sample.js` holds the same, with the time formats the page also takes.
+
+**Hosts:** Claude Code has the live writer. Codex, Kimi Code and OpenCode have the `dashboard` skill (`$dashboard`,
+`/skill:dashboard`, `/dashboard`), which runs `orch-status --open`: a snapshot, run it again to refresh.
+
+**Settings:** `orch_dashboard_refresh` (seconds between writes while open, default 30, 5–600) and
+`orch_dashboard_window_h` (hours the timeline shows, default 24, 1–168), both clamped in the module (the manifest
+holds no bounds: Claude Code would refuse the module over a stored value out of range), in `/config`
+(`junkd.orch_dashboard_*`) and the orch pane; see [orch settings](#settings-2). `orch-status` reads the window from
+`settings.json` (or `ORCH_DASHBOARD_WINDOW_H`).
+
+## watchdog
+
+A watchdog over the agents of this session, part of orch. It costs no tokens: on Claude Code it is engine hooks and
+a 30 s timer in the hooks module; on the other hosts it is the bash script `bin/orch-watch`. No model is in the
+loop, and it never respawns anything.
+
+### The rules
+
+The watchdog looks at each agent the main loop spawned. An agent spawned by another agent is its parent's
+business and is skipped, and the main loop itself is never watched or stopped.
+
+- **Stall**: the agent is `running`, no tool call of its own is in flight, and its last call ended longer ago than
+  its role's limit. A permission prompt (`waiting`, `◐` in the tools pane) is never a stall, and neither is a long
+  call such as `sleep 90` in Bash.
+- **Dead**: the agent was in the agent list at the last tick, it is gone now, and it left no SubagentStop record.
+  An agent that is gone with a record finished, even if its report was lost.
+- **Idle leftover**: the agent finished (it is done, or it has a stop record newer than its last move) and it is
+  still listed. Whether it is stopped depends on its role.
+
+| Role | Stall limit | Idle leftover |
+|---|---|---|
+| `implementer`, `lead-implementer` | `orch_stall_minutes` | Kept while its task is `in_progress` (a verify or fix round reuses it); stopped once the task is `done` or `blocked`, or after `orch_idle_stop_minutes` when the task is in no other state |
+| `verify-coordinator`, `test-planner`, `test-reviewer`, `ui-reviewer` | `orch_stall_minutes` + 5 | Stopped as soon as it reported: a reviewer is never messaged again |
+| `orch-ops`, any agent named `pr-…` or `gh-…` | `orch_stall_minutes` | Stopped as soon as it reported |
+| Any other agent | `orch_stall_minutes` | Stopped after `orch_idle_stop_minutes` |
+
+The task of an agent is the `T<n>` in its name, else the `T<n>` of its worktree path (`.worktrees/T<n>`). Its
+status is the `status:` line of the frontmatter of `.orch/tasks/T<n>.md`, read once per tick. An agent with no
+task has the idle rule alone. A task file that cannot be read keeps the last status, and an agent list that cannot
+be read keeps the last verdict: neither raises an alarm.
+
+Each alarm is raised once per agent and kind (stall, dead, stopped), and cleared when the agent moves again.
+`/clear` and `/resume` start the watchdog over. With `orch_enabled` or `orch_watchdog` off there is no timer and no
+alarm.
+
+### What it does (Claude Code)
+
+- **A stop** goes through the engine's `TaskStop` tool with the agent's id (the hooks API has no agent stop
+  operation). It shows a toast such as `⚠ stopped verify-T17: reported 12 min ago`. A stop that fails or is
+  refused is said once and not tried again. With `orch_idle_stop` off, the leftover is reported once instead.
+- **A death** shows a toast and the `⚠ 1 dead` segment under the prompt. It writes a `deadNote` into the agent's
+  record (`no SubagentStop record · last: <tool> <argument head>`), so SendMessage still reaches it by id or name.
+  At the orchestrator's next turn, one line rides along as context, once:
+  `watchdog: impl-T17 died (no stop record, last call Bash tests/smoke.sh 18 min ago); resume it with SendMessage or spawn a fresh agent on task/T17-…`.
+- **A stall** shows a toast, the `⚠ 1 stalled` segment and one line at the next turn:
+  `watchdog: impl-T19 idle 16 min, last call Edit …; ping it or stop it`. Nothing else happens.
+- The segment is red and hidden while nothing is wrong. A press opens the tools pane on its Agents tab, where each
+  agent row carries the watchdog's verdict: `⚠ stalled 16m`, `✝ dead`, `· idle 4m` or `· stopped`.
+- `/junkd:orch watchdog` runs a tick now, prints the verdict table (agent, role, status, idle, verdict) to the
+  transcript and shows the counts as a toast. `/junkd:orch watchdog off` and `on` flip `orch_watchdog`.
+
+Every stop, death, stall and reported leftover is also one JSON line `{t, agent, kind, note}` in the watchdog log:
+
+```
+${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/orch/watchdog/<session id>.log
+```
+
+### The other hosts: `bin/orch-watch`
+
+```
+orch-watch [--once] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
+```
+
+It reads the stop records of a session (`junkd/orch/_agents/<session>/*.json` as `scripts/orch-agent-stop.sh`
+writes them; the newest session folder unless `--session` names one). It finds the live agents in the process list:
+`claude`, `codex` and `kimi` processes whose working directory (`lsof`, else `pwdx`, else `/proc`) is a task
+worktree. A process whose directory cannot be read is listed by name only. It prints one table, agent, role,
+status, idle and verdict, by the rules above. `--once` prints it and exits 0; otherwise it prints one every
+`--interval` seconds (1–3600, default 60) until Ctrl-C. `--idle-minutes` defaults to the `orch_idle_stop_minutes`
+row of `settings.json`, else 10. Without `jq` it says so and exits 0.
+
+| Host | Watches with | Stops idle leftovers |
+|---|---|---|
+| Claude Code | the hooks module (and `bin/orch-watch` in a headless run) | Yes, through `TaskStop`, while `orch_idle_stop` is on |
+| Codex, Kimi Code, OpenCode | `bin/orch-watch` (the `orch` skill's `./bin/orch-watch`) | No: the host has no agent stop command, so the table only reports (`stop, report only`) |
+
+`--no-stop` says the same on any host. On Claude Code the plugin root's `bin/orch-watch` is the same script.
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `orch_watchdog` | boolean | `true` | The whole watchdog. Off: no timer, no alarms, no segment; `/junkd:orch watchdog` says it is off |
+| `orch_idle_stop` | boolean | `true` | Stop the idle leftovers the rules above name. Off: report them only (a toast and a log line, once) |
+| `orch_idle_stop_minutes` | number | `10` | Idle minutes before a finished agent with no task in progress is stopped. Clamped to 1–120 |
+| `orch_stall_minutes` | number | `15` | Minutes without a tool call before a running agent is stalled; a reviewer gets 5 more. Clamped to 1–120 |
+
+The four rows are in the orch pane (`/junkd:orch panel`) and in `/config` (`junkd.orch_watchdog`, …). A switch
+takes `true`, `'true'` or `'on'` as on. A minutes value is rounded and clamped in the module, and a value that is
+no number is refused; the manifest keeps the rows to their type and default.
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
@@ -1083,6 +1236,8 @@ at the path. Hosts: Claude Code (`/junkd:explain`), Codex (`$explain`), Kimi Cod
 - `hooks/handoff.tsx`, `handoff-lib.ts`, `handoff-ui.tsx`, `handoff-views.tsx` — handoff: the auto loop, the 🪃
   segment, its pane.
 - `hooks/orch.tsx`, `orch-lib.ts`, `orch-views.tsx` — orch: the main-loop guard, its pane.
+- `hooks/watchdog.ts`, `watchdog.tsx` — the agent watchdog: the rules and the tick, `$`-free; the timer, the stops,
+  the ⚠ segment, the log and the line at the next turn.
 - `hooks/tldr.tsx` — tldr: the sentences default and the flag files `tldr-on`, `tldr-off`.
 - `hooks/ctx.ts` — ctx: the rows, their files `ctx-limit-*`, `/junkd:ctx-limit`, the move of the old files.
 - `hooks/statusline.tsx`, `statusline-views.tsx` — statusline: the rows, `statusline-setup` on|off, the refresh at
@@ -1090,9 +1245,13 @@ at the path. Hosts: Claude Code (`/junkd:explain`), Codex (`$explain`), Kimi Cod
 - `hooks/tools-pane.tsx`, `tools.ts`, `tools-views.tsx` — tools: the pane, its poll and the settings group; the
   counters, the worktree parser and the agents tree; the four tabs.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
+- `hooks/dashboard.tsx`, `dashboard.ts` — the orch dashboard: `/junkd:dashboard`, the phases, `status.js`; the task
+  store's parsers and the status builder.
+- `skills/orch/dashboard/` — the dashboard page (`orch-dashboard.html`), its timeline scale (`scale.js`) and the
+  demo data with the data contract (`status.sample.js`); `skills/orch/bin/orch-status` its shell writer.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
-  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `explain`); the real helpers live inside their skill (`skills/handoff/bin`,
-  `skills/orch/bin`, `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
+  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `explain`, `dashboard`); the real helpers live inside their skill (`skills/handoff/bin`,
+  `skills/orch/bin` (with `orch-watch`), `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
   (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
   `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a
   real copy in each skill that sources it (handoff, handon, tldr, ctx-limit, ctx-tokens).
@@ -1102,4 +1261,5 @@ at the path. Hosts: Claude Code (`/junkd:explain`), Codex (`$explain`), Kimi Cod
 - `output-styles/STE.md` — the `junkd:STE` output style. `docs/orch-guide.md` (and `.html`) — orch's long guide.
 - Tests: `hooks/*.test.ts(x)` (`claude plugin test plugins/junkd`), `tests/junkd.sh`, `tests/orch.sh`,
   `tests/tldr.sh`, `tests/cache-check.sh`, `tests/ctx.sh`, `tests/statusline.sh` (its golden line in
-  `tests/statusline/`), all run by `tests/smoke.sh`.
+  `tests/statusline/`), `tests/orch-watch.sh`, all run by `tests/smoke.sh`; `tests/dashboard.sh` (the page's scale
+  under node and its file:// shape) and `tests/orch-status.sh` (the shell writer over fixture task stores).
