@@ -1438,3 +1438,53 @@ test('a measurement with no percent in it keeps the last one and says so', THRES
   await $.session.measure({ context: noFill().context, rateLimits: [], changed: ['context'] })
   expect(bodies(rec).at(-1)).toBe('session.measure percent=0 limit=5 armed=false fresh=false decision=skip:measure-only base=0 threshold=5 phase=idle window=200000 note=no-percent')
 })
+
+// The cap: a model that never writes the handoff is asked 3 times in all, then the loop disarms.
+const asked = (rec: { commands: string[] }) => rec.commands.filter(c => c === 'junkd:handoff').length
+for (const via of ['the turn end', 'a tool call'] as const) {
+  test(`a model that never writes the handoff is asked 3 times (due at ${via}), then the loop disarms with a toast and a log line`, THRESHOLD_5, async ($, on) => {
+    const rec = world(on)
+    const clock = mock.clock(on)
+    await start($)
+    await ahandoff($, '')
+    rec.percent = 7
+    if (via === 'a tool call') expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+    for (let i = 0; i < 6; i++) {
+      await turn($)
+      await clock.advance(1)
+    }
+    expect(asked(rec)).toBe(3)
+    expect(bodies(rec).filter(l => l.includes('decision=cycle:ask-handoff')).length).toBe(via === 'a tool call' ? 3 : 2)
+    expect(bodies(rec).filter(l => l.includes('decision=give-up:3-tries')).length).toBe(1)
+    expect(rec.toasts).toContain('ahandoff: handoff not written after 3 tries — disarmed')
+    expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto off')
+    expect(denial(await $.tool.call(READ))).toBeUndefined() // no gate any more
+    await turn($)
+    await clock.advance(1)
+    expect(asked(rec)).toBe(3)
+  })
+}
+
+test('a written handoff gives the next cycle its 3 tries again', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  passMeasure(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  await turn($) // fire: ask 1
+  await turn($) // miss: ask 2
+  await clock.advance(1)
+  expect(asked(rec)).toBe(2)
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await clock.advance(1) // cleared and resumed
+  await measure($, 7) // the new window opens at 7%: the limit is 12
+  rec.percent = 12
+  for (let i = 0; i < 6; i++) {
+    await turn($)
+    await clock.advance(1)
+  }
+  expect(asked(rec)).toBe(2 + 3)
+  expect(bodies(rec).filter(l => l.includes('give-up')).length).toBe(1)
+})

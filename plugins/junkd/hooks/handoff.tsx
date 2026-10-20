@@ -9,7 +9,7 @@ import type { JunkdAhandoff as Ahandoff } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { isSets, shutSet } from './set'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
-import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
+import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, MAX_ASKS, S, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
 import { VIEWS } from './handoff-views'
 import { toolsTurnEnd } from './tools-pane'
@@ -275,6 +275,7 @@ async function arm($: $) {
   S.armed = true
   S.phase = 'idle'
   S.calls = 0
+  S.asks = 0
   S.armedAt = Date.now()
   await persist($)
   await sync($)
@@ -286,6 +287,7 @@ async function disarm($: $) {
   cancelResume()
   S.phase = 'idle'
   S.written = null
+  S.asks = 0
   S.fresh = false
   S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
   S.armedAt = null
@@ -574,18 +576,26 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     if (S.fresh) {
       // nothing: the first measurement of the new window decides (session.measure)
       await measured($, 'turn.complete', percent, 'skip:fresh')
+    } else if (S.phase === 'handoff' && !S.written && S.asks >= MAX_ASKS) {
+      // asked MAX_ASKS times, no file: stop here instead of asking every turn for ever
+      await measured($, 'turn.complete', percent, `give-up:${MAX_ASKS}-tries`)
+      await disarm($)
+      $.ui.toast(`ahandoff: handoff not written after ${MAX_ASKS} tries — disarmed`)
     } else if (S.phase === 'handoff' && !S.written) {
       await measured($, 'turn.complete', percent, 'cycle:ask-handoff')
+      S.asks++
       queueHandoff($) // model never wrote it mid-turn: ask /junkd:handoff as the next turn
     } else if (S.phase === 'idle' && percent >= limit()) {
       await measured($, 'turn.complete', percent, 'fire')
       S.phase = 'handoff'
+      S.asks = 1
       queueHandoff($)
     } else if (S.phase === 'handoff' && S.written) {
       await measured($, 'turn.complete', percent, 'cycle:continue')
       const id = record(S.written)
       S.written = null
       S.calls = 0
+      S.asks = 0
       S.count++
       S.phase = 'resume'
       await persist($)
