@@ -75,20 +75,20 @@ After the user confirms:
 
 ## 5. Binding rules → checks
 
-A rule written into CLAUDE.md holds only on the prompt until a tool checks it. This step turns each
-written rule into a row of `standing_checks_extra`, a pointer to a test that already pins it, or an
-explicit "prose". Run it after the config is written (§4), before the "how to start" message.
+A rule written into CLAUDE.md holds only on the prompt until a tool checks it.
+This step turns each written rule into a row of `standing_checks_extra`, a pointer to a test that already pins it, or an explicit "prose".
+Run it after the config is written (§4), before the "how to start" message.
 
-1. **Find the candidates.** Read every `CLAUDE.md` and `AGENTS.md` in the repo (root and per package).
-   A candidate is (a) any rule in a section whose heading matches
-   `/binding|non-negotiable|never|must|invariant/i`, or (b) any list item anywhere that contains
-   `never`, `always`, `must` or `only`. Keep the file, the heading and the rule text for each.
+1. **Find the candidates.**
+   Read every `CLAUDE.md` and `AGENTS.md` in the repo (root and per package).
+   A candidate is (a) any rule in a section whose heading matches `/binding|non-negotiable|never|must|invariant/i`, or (b) any list item anywhere that contains `never`, `always`, `must` or `only`.
+   Keep the file, the heading and the rule text for each.
 2. **Pick one outcome per candidate:**
-   - **row**: a `standing_checks_extra` row with a concrete tool recipe: a `grep`/`rg` over the source
-     (what must or must not match, in which paths), a test command, or a `curl` against the dev server.
+   - **row**: a `standing_checks_extra` row with a concrete tool recipe: a `grep`/`rg` over the source (what must or must not match, in which paths), a test command, or a `curl` against the dev server.
      The recipe states the expected result, so the verify-coordinator can run it and show the output.
-   - **covered by test `<path>`**: a test already pins the rule. Grep the test tree for the rule's key
-     nouns and name the file (and test) that asserts it. No row is written.
+   - **covered by test `<path>`**: a test already pins the rule.
+     Grep the test tree for the rule's key nouns and name the file (and test) that asserts it.
+     No row is written.
    - **not tool-checkable, stays prose**: no tool can decide it (taste, architecture intent, naming).
      No row is written.
 3. **Show the table** (`rule | source | outcome | row or test path`).
