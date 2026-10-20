@@ -10,8 +10,9 @@ import { SCHEMA, entryOf } from './settings'
 import { statuslineGet, statuslineHide, statuslineOpen, statuslineSet, statuslineShow } from './statusline'
 import { tldrGet, tldrSet } from './tldr'
 import { toolsGet, toolsHide, toolsOpen, toolsSet, toolsShow } from './tools-pane'
+import { lessonsHide, lessonsOpen, lessonsShow } from './lessons.tsx'
 
-export type FeaturePane = 'handoff' | 'orch' | 'statusline' | 'tools'
+export type FeaturePane = 'handoff' | 'orch' | 'statusline' | 'tools' | 'lessons'
 
 // One row's current value. The key is a row of SCHEMA (the caller checked).
 export async function getSetting($: $, key: JunkdKey): Promise<JunkdValue> {
@@ -48,17 +49,20 @@ export async function showPane($: $, pane: FeaturePane, input: ShowInput = {}): 
   if (pane === 'handoff') return handoffShow($, input)
   if (pane === 'statusline') return statuslineShow($, input)
   if (pane === 'tools') return toolsShow($, input)
+  if (pane === 'lessons') return lessonsShow($, input)
   return orchShow($, input)
 }
 export async function hidePane($: $, pane: FeaturePane, input: HideInput = {}): Promise<void> {
   if (pane === 'handoff') return handoffHide($, input)
   if (pane === 'statusline') return statuslineHide($, input)
   if (pane === 'tools') return toolsHide($, input)
+  if (pane === 'lessons') return lessonsHide($, input)
   return orchHide($, input)
 }
 export async function openPane($: $, pane: FeaturePane, input: OpenInput = {}): Promise<void> {
   if (pane === 'handoff') return handoffOpen($, input)
   if (pane === 'statusline') return statuslineOpen($, input)
   if (pane === 'tools') return toolsOpen($, input)
+  if (pane === 'lessons') return lessonsOpen($, input)
   return orchOpen($, input)
 }

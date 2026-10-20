@@ -6,7 +6,7 @@
 //   agent's id. Every stop, death, stall and reported idle leftover is a toast and a line of the watchdog log,
 //   ${CLAUDE_CONFIG_DIR}/junkd/orch/watchdog/<session>.log, one JSON {t, agent, kind, note} per line.
 // - A death or a stall: the ⚠ segment under the prompt (index.tsx lays it out; a press opens the tools pane on Agents)
-//   and one line for the orchestrator at its next turn, attached by the prompt.submit hook below. A death also leaves
+//   and one line for the orchestrator at its next turn, attached by index.tsx's prompt.submit hook. A death also leaves
 //   a record with a deadNote on disk, so SendMessage still reaches the agent by id or name.
 // - Off (orch_enabled or orch_watchdog off): no timer, no alarms. /clear and /resume start everything over
 //   (tools-pane.tsx's session.end hook calls watchdogEnd); any other end of the session stops the timer.
@@ -371,13 +371,13 @@ export function registerWatchdog(on: On, _options: Record<string, unknown>): voi
   repos.clear()
   resetWatch()
 
-  // The orchestrator's next turn (a prompt, a task notification, a scheduled run): the pending watchdog lines ride
-  // along as context, once. A prompt that does not enter keeps them for the next.
-  on('prompt.submit', async (_$, e, next) => {
-    const lines = takePending(W.state)
-    if (!lines.length) return next(e)
-    const r = await next({ ...e, context: [...(e.context ?? []), lines.join('\n')] })
-    if (r.drop !== undefined) W.state.pending.unshift(...lines)
-    return r
-  })
+}
+
+// index.tsx's prompt.submit, the orchestrator's next turn (a prompt, a task notification, a scheduled run): the
+// pending watchdog lines ride along as context, once; a prompt that does not enter gives them back for the next.
+export function watchdogLines(): string[] {
+  return takePending(W.state)
+}
+export function watchdogKeep(lines: readonly string[]): void {
+  W.state.pending.unshift(...lines)
 }

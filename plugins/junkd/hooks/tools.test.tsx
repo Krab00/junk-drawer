@@ -890,17 +890,17 @@ test('tools_enabled off: the pane closes, the /junkd set leaves its tab out, /ju
   const rec = world(on)
   await start($)
   await run($, 'junkd') // the set: junkd, handoff, orch, statusline, tools
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID, 'junkd-lessons'])
   await rec.clock.settle()
   const polled = gitRuns(rec)
   await frame($, 'set', { key: 'tools_enabled', value: false })
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-lessons'])
   await rec.clock.advance(600_000)
   expect(gitRuns(rec)).toBe(polled) // its poll went with it
   await run($, 'junkd')
   expect(rec.panes).toEqual([])
   await run($, 'junkd')
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-lessons'])
   await run($, 'junkd')
   expect((await tools($)).text).toBe('junkd: the tools pane is off: /junkd → tools → Tools pane: enabled')
   expect((await tools($, 'mcp')).text).toMatch(/the tools pane is off/)
@@ -915,14 +915,14 @@ test('tools_enabled off: the pane closes, the /junkd set leaves its tab out, /ju
   expect(rec.panes).toEqual([])
   await frame($, 'config', { key: 'junkd.tools_enabled', value: 'on' })
   await run($, 'junkd')
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID, 'junkd-lessons'])
 })
 
 test('tools_enabled off in the options: the set has no tools tab from the start', { ...W, options: { tools_enabled: false } }, async ($, on) => {
   const rec = world(on)
   await start($)
   await run($, 'junkd')
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline'])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-lessons'])
 })
 
 test('/junkd:tools toggles; /junkd:tools <tab> opens on that tab or switches to it; an unknown tab is said', W, async ($, on) => {
@@ -1310,15 +1310,15 @@ test('settings ▸ on tools: the pane opens unfocused, junkd and the set\'s othe
   const rec = world(on)
   await start($)
   await run($, 'junkd')
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID, 'junkd-lessons'])
   const junkd = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', component: 'Pane', requestId: 'junkd', props: { ...paneOf().props, title: 'junkd' } })
   const at = rec.log.length
   await junkd.press({ key: 'pane:tools' })
   await junkd.unmount()
-  expect(rec.log.slice(at)).toEqual([`ui.open ${PANE_ID}`, 'ui.close junkd', 'ui.close ahandoff', 'ui.close orch', 'ui.close statusline', `ui.open ${PANE_ID} focus`])
+  expect(rec.log.slice(at)).toEqual([`ui.open ${PANE_ID}`, 'ui.close junkd', 'ui.close ahandoff', 'ui.close orch', 'ui.close statusline', 'ui.close junkd-lessons', `ui.open ${PANE_ID} focus`])
   expect(rec.toasts).toEqual([])
   await run($, 'junkd') // the tools pane is the person's now: the set opens behind junkd ...
-  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID])
+  expect(rec.panes).toEqual(['junkd', 'ahandoff', 'orch', 'statusline', PANE_ID, 'junkd-lessons'])
   await run($, 'junkd') // ... and, reopened in the set, closes with it
   expect(rec.panes).toEqual([])
 })

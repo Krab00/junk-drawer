@@ -32,6 +32,7 @@ export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'orch_idle_stop', group: 'orch', field: 'idle_stop', type: 'boolean', title: 'Watchdog: stop idle leftovers', default: true, main: false },
   { key: 'orch_idle_stop_minutes', group: 'orch', field: 'idle_stop_minutes', type: 'number', title: 'Watchdog: idle minutes before a stop', default: 10, main: false },
   { key: 'orch_stall_minutes', group: 'orch', field: 'stall_minutes', type: 'number', title: 'Watchdog: stall after N minutes', default: 15, main: false },
+  { key: 'orch_lessons', group: 'orch', field: 'lessons', type: 'boolean', title: 'Lessons loop', default: true, main: true },
   { key: 'tldr_enabled', group: 'tldr', field: 'enabled', type: 'boolean', title: 'TL;DR: enabled', default: true, main: true },
   { key: 'tldr_terse', group: 'tldr', field: 'terse', type: 'boolean', title: 'Terse mode', default: false, main: true },
   { key: 'tldr_sentences', group: 'tldr', field: 'sentences', type: 'number', title: 'Sentences in a summary', default: 3, main: true },

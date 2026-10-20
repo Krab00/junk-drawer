@@ -154,6 +154,12 @@
       "description": "Minutes a running agent may go without a tool call (none in flight) before it counts as stalled; a reviewer gets 5 more. A value under 1 is read as 1, one over 120 as 120.",
       "default": 15
     },
+    "orch_lessons": {
+      "type": "boolean",
+      "title": "Lessons loop",
+      "description": "On: the lessons of the three stores (.orch/tasks/_lessons.md, the repo's lessons.md, ~/.claude/junkd/lessons.md) whose stack meets the repo's are injected at an orch session's start, pending ones show the 📒 segment and the lessons tab, and an orch run does not end while any is pending. Off: none of that, and the files are left as they are.",
+      "default": true
+    },
     "tldr_enabled": {
       "type": "boolean",
       "title": "TL;DR: enabled",

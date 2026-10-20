@@ -12,7 +12,7 @@
 
 export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr' | 'ctx' | 'statusline' | 'tools'
 export type JunkdHandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
-export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md' | JunkdOrchDashboardField | JunkdOrchWatchdogField
+export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md' | JunkdOrchDashboardField | JunkdOrchWatchdogField | 'lessons'
 // The orch dashboard's two rows (orch_dashboard_refresh, orch_dashboard_window_h), clamped in code.
 export type JunkdOrchDashboardField = 'dashboard_refresh' | 'dashboard_window_h'
 // The agent watchdog's rows (hooks/watchdog.tsx): the whole watchdog, stopping idle leftovers, the idle minutes before a
@@ -78,11 +78,11 @@ export type JunkdAhandoff = {
 // unknown pane or route) rejects the promise with the reason.
 export type JunkdGetInput = { key: JunkdKey }
 export type JunkdSetInput = { key: JunkdKey; value: JunkdValue; scope?: 'user' }
-// `open` toggles one pane: `junkd` is the /junkd set (junkd, handoff, orch, statusline and tools as tabs), `handoff`,
-// `orch`, `statusline` and `tools` the feature's own pane. `route` opens on that tab, or switches to it while the pane
+// `open` toggles one pane: `junkd` is the /junkd set (junkd, handoff, orch, statusline, tools and lessons as tabs),
+// `handoff`, `orch`, `statusline`, `tools` and `lessons` the feature's own pane. `route` opens on that tab, or switches to it while the pane
 // is up: each pane takes its own routes (handoff a JunkdHandoffRoute, tools a JunkdToolsRoute) and refuses the others;
-// junkd, orch and statusline have no tabs.
-export type JunkdPane = 'junkd' | 'handoff' | 'orch' | 'statusline' | 'tools'
+// junkd, orch, statusline and lessons have no tabs.
+export type JunkdPane = 'junkd' | 'handoff' | 'orch' | 'statusline' | 'tools' | 'lessons'
 export type JunkdOpenInput = { pane: JunkdPane; route?: JunkdHandoffRoute | JunkdToolsRoute }
 
 export type Junkd = {
