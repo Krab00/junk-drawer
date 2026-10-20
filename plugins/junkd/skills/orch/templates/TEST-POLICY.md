@@ -33,10 +33,9 @@ implementers (authoring), test-planner (matrix granularity) and test-reviewer (a
    class names, element structure, or styling.
 
 7. **Every binding rule of CLAUDE.md has a test or a `standing_checks_extra` row.**
-   A task that adds a binding rule (a "never", "always", "must" or "only" in CLAUDE.md / AGENTS.md)
-   adds its check in the same branch: a test that pins it, or a row in `standing_checks_extra` with
-   a concrete tool recipe. A rule that no tool can check is marked as prose in the review, not left
-   silently unchecked.
+   A task that adds a binding rule (a "never", "always", "must" or "only" in CLAUDE.md / AGENTS.md) adds its check in the same branch.
+   The check is a test that pins the rule, or a row in `standing_checks_extra` with a concrete tool recipe.
+   A rule that no tool can check is marked as prose in the review, not left silently unchecked.
 
 ## Precedence
 

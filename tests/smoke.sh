@@ -140,22 +140,34 @@ done
 # the binding-rule check; orch.md's retro keeps the "rule exists, no check" shortcut.
 orch_skills="$junkd/skills"
 init_md="$orch_skills/orch/commands/init.md"
-for needle in '## 5. Binding rules → checks' '/binding|non-negotiable|never|must|invariant/i' '`never`, `always`, `must` or `only`' \
-    '**row**' '**covered by test' 'stays prose' 'Write only the rows the user confirms.' \
+for needle in '## 5. Binding rules → checks' \
+    'Run it after the config is written (§4), before the "how to start" message.' \
+    'Read every `CLAUDE.md` and `AGENTS.md` in the repo (root and per package).' \
+    'A candidate is (a) any rule in a section whose heading matches `/binding|non-negotiable|never|must|invariant/i`, or (b) any list item anywhere that contains `never`, `always`, `must` or `only`.' \
+    '- **row**: a `standing_checks_extra` row with a concrete tool recipe: a `grep`/`rg` over the source (what must or must not match, in which paths), a test command, or a `curl` against the dev server.' \
+    '- **covered by test `<path>`**: a test already pins the rule.' \
+    "Grep the test tree for the rule's key nouns and name the file (and test) that asserts it." \
+    '- **not tool-checkable, stays prose**: no tool can decide it (taste, architecture intent, naming).' \
+    'Write only the rows the user confirms.' \
     'A row is never added silently; a declined row stays in the table as prose.' \
-    'A candidate that re-derives as covered by a test, or as prose, is not new' \
+    '**Re-runs propose only what is new.**' \
+    'A candidate with outcome row is new unless a `standing_checks_extra` row already holds its recipe or names its source rule.' \
+    'A candidate that re-derives as covered by a test, or as prose, is not new: it writes nothing, so it is not proposed again and the second table lists nothing for it (at most a one-line count).' \
     'If nothing is new, say so and write nothing.' \
-    'Offer the starter test policy only when `.orch/TEST-POLICY.md` is absent.' 'Copy only after the user agrees.' \
+    'Offer the starter test policy only when `.orch/TEST-POLICY.md` is absent.' \
+    'Its seventh rule is this step: every binding rule has a test or a row.' \
+    'Copy only after the user agrees.' \
     'When the file exists, leave it alone and do not offer.'; do
     rg -qF -- "$needle" "$init_md" || { echo "junkd: orch/commands/init.md lacks: $needle"; exit 1; }
 done
 rg -qF 'Binding rules → checks' "$orch_skills/orch-init/SKILL.md" || { echo "junkd: orch-init/SKILL.md host notes do not mention the Binding rules step"; exit 1; }
 policy="$orch_skills/orch/templates/TEST-POLICY.md"
 [ -f "$policy" ] && [ ! -L "$policy" ] || { echo "junkd: orch/templates/TEST-POLICY.md is not a real file"; exit 1; }
-[ "$(rg -c '^[0-9]+\. \*\*' "$policy")" = 7 ] || { echo "junkd: TEST-POLICY.md does not carry seven numbered rules"; exit 1; }
+[ "$(rg -c '^[0-9]+\. ' "$policy")" = 7 ] || { echo "junkd: TEST-POLICY.md does not carry seven numbered rules"; exit 1; }
+rg -qF 'A task that adds a binding rule (a "never", "always", "must" or "only" in CLAUDE.md / AGENTS.md) adds its check in the same branch.' "$policy" || { echo "junkd: TEST-POLICY.md rule 7 lacks the same-branch sentence"; exit 1; }
 rg -q '^7\. \*\*Every binding rule of CLAUDE\.md has a test or a `standing_checks_extra` row' "$policy" ||
     { echo "junkd: TEST-POLICY.md rule 7 is not the binding-rule check"; exit 1; }
-rg -qF 'do not wait for the recurrence: propose the promotion at once and say so ("rule exists in CLAUDE.md §X, no check").' "$orch_skills/orch/commands/orch.md" || { echo "junkd: orch.md retro lacks the rule-exists shortcut"; exit 1; }
+rg -qF 'Shortcut: when a lesson names a rule already written in a `CLAUDE.md`/`AGENTS.md`, do not wait for the recurrence: propose the promotion at once and say so ("rule exists in CLAUDE.md §X, no check").' "$orch_skills/orch/commands/orch.md" || { echo "junkd: orch.md retro lacks the rule-exists shortcut"; exit 1; }
 rg -qF 'Rules need checks' "$junkd/docs/orch-guide.md" || { echo "junkd: docs/orch-guide.md lacks Rules need checks"; exit 1; }
 
 # $.junkd.schema() is a mirror of the manifest's userConfig (a hooks module cannot import JSON): every row's key,
