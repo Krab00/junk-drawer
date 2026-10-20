@@ -128,7 +128,7 @@ done
 
 # Every command is a skill of junkd's (/junkd:<name>); no plugin-root commands/ (it would add /junkd:init and a
 # second /junkd:orch from skills/orch/commands).
-for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools; do
+for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools explain; do
     [ "$(awk -F': *' '$1 == "name" { print $2; exit }' "$junkd/skills/$skill/SKILL.md")" = "$skill" ] ||
         { echo "junkd: skills/$skill/SKILL.md is missing or not named $skill"; exit 1; }
 done
@@ -324,10 +324,10 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-# Twelve skills: junk-drawer's one and junkd's eleven (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
-# ctx-limit, ctx-tokens, statusline, tools). skills/junkd also holds the real home of the plugin-root bin/ and scripts/
+# Thirteen skills: junk-drawer's one and junkd's twelve (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
+# ctx-limit, ctx-tokens, statusline, tools, explain). skills/junkd also holds the real home of the plugin-root bin/ and scripts/
 # links, as the layout invariant above asks.
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 12 ]
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 13 ]
 
 for skill_md in "$installed"/*/SKILL.md; do
     skill_dir=$(dirname "$skill_md")
@@ -337,8 +337,9 @@ for skill_md in "$installed"/*/SKILL.md; do
         echo "escapes skill dir with ../ : $skill_md"; exit 1
     fi
     # junkd, ahandoff and tools reference no skill-local path at all: their text is only the fallback for a host or
-    # session where the hooks module did not answer the command, and it runs nothing.
-    case "$(basename "$skill_dir")" in junkd | ahandoff | tools) continue ;; esac
+    # session where the hooks module did not answer the command, and it runs nothing. explain is the same case for a
+    # different reason: it runs no helper (its text only tells the model how to answer), so it has no ./bin to resolve.
+    case "$(basename "$skill_dir")" in junkd | ahandoff | tools | explain) continue ;; esac
     # Every skill-local path it does reference must exist after the copy. No look-around
     # here -- ripgrep's default engine rejects it and would exit 2, silently checking
     # nothing. A `../../bin/x` would also match this pattern, but the ../ check above
@@ -379,7 +380,7 @@ cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load
     { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
 
 # Every host map names all four hosts; handoff tells the resume command of each; tldr says OpenCode has no hook.
-for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools; do
+for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools explain; do
     for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do
         rg -qF "$host" "$root/plugins/junkd/skills/$skill/SKILL.md" || { echo "junkd: skills/$skill/SKILL.md does not name $host"; exit 1; }
     done
@@ -390,14 +391,28 @@ done
 rg -qF 'OpenCode has no hook' "$root/plugins/junkd/skills/tldr/SKILL.md" || { echo "junkd: tldr/SKILL.md does not say OpenCode has no hook"; exit 1; }
 
 # The Kimi model followed whichever host line came first: handon, junkd, ahandoff, ctx-limit, ctx-tokens and tools put
-# the non-Claude line before the Claude Code one.
-for skill in handon junkd ahandoff ctx-limit ctx-tokens tools; do
+# the non-Claude line before the Claude Code one (explain too, in its slider-page route).
+for skill in handon junkd ahandoff ctx-limit ctx-tokens tools explain; do
     md="$root/plugins/junkd/skills/$skill/SKILL.md"
     other=$(rg -n -m1 '^- Codex, Kimi Code, OpenCode or any other host' "$md" | cut -d: -f1)
     claude_line=$(rg -n -m1 '^- Claude Code' "$md" | cut -d: -f1)
     [ -n "$other" ] && [ -n "$claude_line" ] && [ "$other" -lt "$claude_line" ] ||
         { echo "junkd: skills/$skill/SKILL.md does not put the non-Claude line before the Claude Code one"; exit 1; }
 done
+
+# explain routes by topic type: its SKILL.md names the three routes, keeps the page free of network loads, and never
+# writes into the repo.
+explain_md="$root/plugins/junkd/skills/explain/SKILL.md"
+for route in 'Route 1: slider' 'Route 2: mermaid' 'Route 3: STE'; do
+    rg -q "^## $route" "$explain_md" || { echo "junkd: skills/explain/SKILL.md has no '## $route' section"; exit 1; }
+done
+rg -qF 'no `<script type="module">`, no `import`' "$explain_md" || { echo "junkd: skills/explain/SKILL.md lost the no-module-script rule for the page"; exit 1; }
+rg -q '^Run this test once' "$explain_md" && rg -qF 'ask one question and wait' "$explain_md" ||
+    { echo "junkd: skills/explain/SKILL.md lost the detection rule or the one-question tie-break"; exit 1; }
+[ -f "$root/plugins/junkd/skills/explain/agents/openai.yaml" ] || { echo "junkd: skills/explain/agents/openai.yaml is missing"; exit 1; }
+rg -qF 'No `http://` or `https://` load, no `fetch`' "$explain_md" || { echo "junkd: skills/explain/SKILL.md lost the no-network rule for the page"; exit 1; }
+rg -qF 'The skill never writes into the repo.' "$explain_md" || { echo "junkd: skills/explain/SKILL.md lost the never-write-into-the-repo rule"; exit 1; }
+rg -qF -e '- Claude Code: when the Artifact tool exists' "$explain_md" || { echo "junkd: skills/explain/SKILL.md lost the Claude Code Artifact line"; exit 1; }
 
 # The catalog degrades to listing sibling skills instead of claiming the marketplace is empty.
 standalone_catalog=$(cd "$installed/junk-drawer" && HOME=$home ./bin/junk-drawer)

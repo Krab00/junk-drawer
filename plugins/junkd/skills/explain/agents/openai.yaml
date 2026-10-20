@@ -1,0 +1,4 @@
+interface:
+  display_name: "Explain"
+  short_description: "Explain a topic as a slider page, a Mermaid diagram or short text"
+  default_prompt: "Use $explain to explain how the watchdog stall setting works."

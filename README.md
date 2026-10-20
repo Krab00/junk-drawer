@@ -90,7 +90,7 @@ After installing or updating: `/plugin marketplace update junk-drawer`, then `/r
 
 One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens and the status line, and the frame over the marketplace.
 Its skills (`handoff`, `handon`, `ahandoff`, `orch`, `orch-init`, `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`,
-`junkd`, `tools`) run on every host; on Claude Code each is `/junkd:<name>`, and the hooks module adds the automatic
+`junkd`, `tools`, `explain`) run on every host; on Claude Code each is `/junkd:<name>`, and the hooks module adds the automatic
 handoff loop, the orch main-loop guard, the panes (the tools pane among them: this session's agents over the repo's
 worktrees, and the tools, MCP servers and skills it used), the status line's wiring and `$.junkd` for other mods.
 
@@ -165,7 +165,7 @@ lifecycle hooks, so `tldr` and `ctx-limit` lose their automatic hook behavior an
 them explicitly instead.
 
 ```bash
-npx skills add Krab00/junk-drawer                     # all eleven skills
+npx skills add Krab00/junk-drawer                     # all thirteen skills
 npx skills add Krab00/junk-drawer --skill orch        # just one
 npx skills add Krab00/junk-drawer --list              # preview, install nothing
 ```
