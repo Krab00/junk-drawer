@@ -6,6 +6,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { panelStart } from './panel'
 import { panelView, type Els } from './junkd-views'
 import { C, applyCacheSettings } from './cache-lib'
 import { SCHEMA } from './settings'
@@ -140,6 +141,7 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   const rec = {
     files, reads: [] as string[], writes: [] as string[], mvs: [] as string[][], rms: [] as string[][], runs: [] as string[][],
     config: [] as { key: string; value: unknown }[], toasts: [] as string[], opens: [] as Open[], closed: [] as string[],
+    registered: [] as string[],
     commands: [] as { name: string; description: string; source: 'builtin' | 'plugin' | 'user' | 'mcp'; plugin?: string }[], beneath: '', merged: '',
     // `log`: every pane open and close, one line each (`ui.open <id>[ focus]`, `ui.close <id>`), in the order they came.
     log: [] as string[], gits: [] as string[][],
@@ -214,7 +216,7 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
   on('ui.close', (_$, e) => { rec.closed.push(e.id); rec.log.push(`ui.close ${e.id}`); rec.tabs = rec.tabs.filter(t => t !== e.id); return { value: undefined } })
   on('ui.focus', () => ({}))
   on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
-  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('command.register', (_$, e) => { rec.registered.push(e.name); return { value: { command: e.name } } })
   on('command.list', () => { if (o.listThrows) throw new Error('list broke'); return { value: rec.commands } })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   // The engine's own drawing where the mod passes; under the prompt, another plugin's hint when `beneath` names one.
@@ -882,6 +884,19 @@ test('AC6: session.start with the pane already placed -> it is refreshed, and th
   await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE }) // flushes the start's refresh
   expect(rec.reads.filter(r => !r.endsWith('/statusline.sh'))[1]).toBe(MARKETPLACE_JSON) // statusline's start reads its copies
   expect(rec.reads).toContain(SETTINGS)
+})
+
+test('T27: session.start never registers the bare junkd command (the engine refuses it)', W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  expect(rec.registered).not.toContain('junkd')
+})
+
+test('T27: the start step resolves when command.register and ui.panes both reject', W, async ($, on) => {
+  world(on, fixture())
+  // The engine swallows a throwing hook, so only a direct call to the start step observes a rejection.
+  const failing = { ui: { panes: () => Promise.reject(new Error('panes broke')) }, command: { register: () => Promise.reject(new Error('refused')) } }
+  await expect(panelStart(failing as never)).resolves.toBeUndefined()
 })
 
 test('the mobile surface gets the engine pane, not ours', W, async ($, on) => {
