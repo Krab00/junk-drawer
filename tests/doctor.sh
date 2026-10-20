@@ -138,6 +138,12 @@ rg -q '^FAIL +marketplace .*github source, not a directory' <<<"$out" || fail "g
 $out"
 rg -q '^FAIL +symlinks ' <<<"$out" || fail "github: the symlinks line is not a FAIL"
 world
+known_source '{"source": "git", "url": "https://github.com/Krab00/junk-drawer.git"}'
+run
+expect 1 3 2 "git marketplace"
+rg -q '^FAIL +marketplace .*a git source, not a directory' <<<"$out" || fail "git: the marketplace line does not say so:
+$out"
+world
 printf '{"other": {"source": {"source": "directory", "path": "%s"}}}\n' "$checkout" > "$cfg/plugins/known_marketplaces.json"
 run
 expect 1 3 2 "no junk-drawer marketplace"
@@ -230,6 +236,12 @@ world
 run "CLAUDE_CODE_SESSION_ID=../_agents"
 expect 0 4 0 "a session id that is a path"
 rg -q '^INFO +agents .*not a plain id' <<<"$out" || fail "path session id: wrong line:
+$out"
+# A dot-only id has no `/`, yet _agents/.. is a folder (junkd/orch): still INFO, never a PASS.
+world
+run "CLAUDE_CODE_SESSION_ID=.."
+expect 0 4 0 "the session id .."
+rg -q "^INFO +agents .*'\.\.' is not a plain id" <<<"$out" || fail "session id ..: wrong line:
 $out"
 # Everything wrong at once: four FAIL lines, the agents line still INFO.
 world
