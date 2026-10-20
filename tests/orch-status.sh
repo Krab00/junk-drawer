@@ -3,7 +3,9 @@
 # list of deps, in_progress with CRLF and two verification rounds, no frontmatter, an `_notes.md`, an unreadable file,
 # _lessons.md) and agent records → status.js parsed by node; the window clamp; the atomic write; the store found from
 # a task worktree; the default folder (host-lib's jd_hash8 of the toplevel); --sample; --open with stub openers; no jq
-# (the fallback file); a bad flag. Never the network: ORCH_STATUS_NO_USAGE=1. Run: bash tests/orch-status.sh
+# (the fallback file); a bad flag; the same store through hooks/dashboard.ts (parity); the write through an mv spy and a
+# refusing mv; the usage endpoint through stub security/curl; a failing jq. Never the network: ORCH_STATUS_NO_USAGE=1
+# (the usage cases stub curl). Run: bash tests/orch-status.sh
 set -u
 
 repo=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -55,7 +57,7 @@ printf 'no frontmatter here\n' >"$T/T3.md"
 printf -- '---\nid: N1\nstatus: todo\n---\n' >"$T/_notes.md"
 printf -- '---\nid: T4\nstatus: todo\n---\n' >"$T/T4.md"
 chmod 000 "$T/T4.md"
-printf '## T1 (2026-10-18)\nFirst lesson. More text\nwrapped here.\n\n## T2 (2026-10-19)\nSecond lesson is about e.g\nwrapping? Yes.\n' >"$T/_lessons.md"
+printf '## T1 (2026-10-18)\nFirst lesson. More text\nwrapped here.\n\n## T2 (2026-10-19)\nSecond lesson is about e.g\nwrapping? Yes.\n\n## T3 (2026-10-20)\n\n' >"$T/_lessons.md" # T3: a heading with no body is no lesson
 mkdir -p "$CLAUDE_CONFIG_DIR/junkd/orch/_agents/aa-old" "$CLAUDE_CONFIG_DIR/junkd/orch/_agents/sid-new"
 printf '{"type":"x:old","tokens":1}\n' >"$CLAUDE_CONFIG_DIR/junkd/orch/_agents/aa-old/old.json"
 printf '{"type":"junkd:implementer","tokens":148213}\n' >"$CLAUDE_CONFIG_DIR/junkd/orch/_agents/sid-new/impl-T10.json"
@@ -101,6 +103,20 @@ expect "$S" 'JSON.stringify(S.events) === "[]" && JSON.stringify(S.usage) === "{
 expect "$tmp/out-sid/status.js" 'S.agents.length === 1 && S.agents[0].name === "old" && S.agents[0].role === "old" && S.agents[0].ctx === "1"' "ORCH_SESSION"
 (cd "$proj" && ORCH_SESSION=nope "$bin" --out "$tmp/out-sid2" >/dev/null 2>&1)
 expect "$tmp/out-sid2/status.js" 'S.agents.length === 0' "no such session: no agents"
+# a session name that climbs out (../_agents/sid-new names a real folder by the back door): refused, no agents
+(cd "$proj" && ORCH_SESSION=../_agents/sid-new "$bin" --out "$tmp/out-sid3" >/dev/null 2>&1)
+expect "$tmp/out-sid3/status.js" 'S.agents.length === 0' "ORCH_SESSION with a path in it: no agents"
+# a record that is JSON but no object is no agent
+printf '[1,2]\n' >"$CLAUDE_CONFIG_DIR/junkd/orch/_agents/sid-new/arr.json"
+(cd "$proj" && "$bin" --out "$tmp/out-sid4" >/dev/null 2>&1)
+expect "$tmp/out-sid4/status.js" 'S.agents.length === 3 && !S.agents.some(a => a.name === "arr")' "a record that is no object: skipped"
+rm -f "$CLAUDE_CONFIG_DIR/junkd/orch/_agents/sid-new/arr.json"
+
+# a verification table with no Verdict column: the round, nothing counted
+printf -- '---\nid: T30\nstatus: in_progress\n---\n\n## Verification round 3\n\n| Criterion | Evidence |\n|---|---|\n| AC1 a | PASS |\n| ACX1 b | FAIL |\n' >"$T/T30.md"
+(cd "$proj" && "$bin" --out "$tmp/outnv" >/dev/null 2>&1)
+expect "$tmp/outnv/status.js" 'JSON.stringify(S.tasks.find(t => t.id === "T30")) === JSON.stringify({id: "T30", title: "", column: "in_progress", round: 3})' "a table with no Verdict column: the round alone"
+rm -f "$T/T30.md"
 
 # the window: clamped, rounded; a non-number is 24; the setting when the env is unset
 for pair in 500:168 168:168 169:168 0:1 1:1 -5:1 2.6:3 abc:24 ' 12 ':12 '':24; do
@@ -144,6 +160,87 @@ expect "$tmp/outs/status.js" 'S.tasks.find(t => t.id === "T20").column === "todo
 expect "$tmp/outs/status.js" 'S.tasks.find(t => t.id === "T21").column === "verify" && S.tasks.find(t => t.id === "T22").column === "blocked"' "verify and blocked"
 expect "$tmp/outs/status.js" '!S.tasks.some(t => t.id === "T23")' "an unclosed frontmatter is skipped"
 rm -f "$T/T20.md" "$T/T21.md" "$T/T22.md" "$T/T23.md"
+
+# ---------------------------------------------------------------- the two writers agree (hooks/dashboard.ts under node)
+# The same store through dashboard.ts's parsers (parseTask, columnOf, parseVerification, parseLessons) gives the tasks
+# and lessons orch-status wrote, field for field.
+(cd "$proj" && "$bin" --out "$tmp/outp" >/dev/null 2>&1)
+node --input-type=module -e '
+  const fs = await import("node:fs")
+  const D = await import(process.argv[1])
+  const [dir, out] = process.argv.slice(2)
+  const S = JSON.parse(/^window\.ORCH = ([\s\S]*);\n$/.exec(fs.readFileSync(out, "utf8"))[1])
+  const names = fs.readdirSync(dir).filter(D.isTaskFile).sort((a, b) => a.localeCompare(b, "en", { numeric: true }))
+  const tasks = []
+  for (const n of names) {
+    let text
+    try { text = fs.readFileSync(`${dir}/${n}`, "utf8") } catch { continue }
+    const h = D.parseTask(n, text)
+    if (!h) continue
+    tasks.push({ id: h.id, title: h.title, column: D.columnOf(h.status, []), ...(h.deps.length ? { deps: h.deps } : {}), ...(D.parseVerification(text) ?? {}) })
+  }
+  const lessons = D.parseLessons(fs.readFileSync(`${dir}/_lessons.md`, "utf8"))
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  if (!same(tasks, S.tasks)) { console.error("tasks differ:\n" + JSON.stringify(tasks) + "\n" + JSON.stringify(S.tasks)); process.exit(1) }
+  if (!same(lessons, S.lessons)) { console.error("lessons differ"); process.exit(1) }
+  if (tasks.length < 3) process.exit(1)
+' "$junkd/hooks/dashboard.ts" "$T" "$tmp/outp/status.js"
+ok $? "orch-status and dashboard.ts read the store alike (tasks, columns, deps, rounds, ac/acx, notes, lessons)"
+
+# ---------------------------------------------------------------- the atomic write through mv
+spy="$tmp/spy"
+mkdir -p "$spy"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s/mv.log"\nexec %s "$@"\n' "$tmp" "$(command -v mv)" >"$spy/mv"
+chmod +x "$spy/mv"
+(cd "$proj" && PATH="$spy:$PATH" "$bin" --out "$tmp/outa" >/dev/null 2>&1); rc=$?
+ok "$rc" "through the mv spy: exit 0"
+[ "$(cat "$tmp/mv.log" 2>/dev/null)" = "-f $tmp/outa/status.js.tmp $tmp/outa/status.js" ]; ok $? "status.js is written as status.js.tmp, then mv -f onto status.js ($(cat "$tmp/mv.log" 2>/dev/null))"
+expect "$tmp/outa/status.js" 'S.tasks.length >= 3' "the moved file is the whole status"
+# an mv that refuses: the status.js already there is left whole, no .tmp, exit 1 with the reason
+refuse="$tmp/refuse"
+mkdir -p "$refuse"
+printf '#!/bin/sh\nexit 1\n' >"$refuse/mv"
+chmod +x "$refuse/mv"
+printf 'window.ORCH = {"mock":false,"generatedAt":1,"tasks":[]};\n' >"$tmp/outa/status.js"
+err=$(cd "$proj" && PATH="$refuse:$PATH" "$bin" --out "$tmp/outa" 2>&1 >/dev/null); rc=$?
+[ "$rc" = 1 ] && [[ "$err" == *"cannot write $tmp/outa/status.js"* ]]; ok $? "a refused mv: exit 1, cannot write (rc $rc, $err)"
+[ "$(cat "$tmp/outa/status.js")" = 'window.ORCH = {"mock":false,"generatedAt":1,"tasks":[]};' ]; ok $? "a refused mv: the previous status.js untouched, never half a new one"
+[ ! -e "$tmp/outa/status.js.tmp" ]; ok $? "a refused mv: no .tmp left"
+# a folder it cannot write in: exit 1, nothing there
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$tmp/ro" && chmod 555 "$tmp/ro"
+  (cd "$proj" && "$bin" --out "$tmp/ro" >/dev/null 2>&1); rc=$?
+  [ "$rc" = 1 ] && [ -z "$(ls -A "$tmp/ro")" ]; ok $? "a read-only folder: exit 1, nothing written (rc $rc)"
+  chmod 755 "$tmp/ro"
+fi
+
+# ---------------------------------------------------------------- the usage endpoint (stub keychain and curl)
+us="$tmp/us"
+mkdir -p "$us"
+printf '#!/bin/sh\necho Darwin\n' >"$us/uname"
+printf '#!/bin/sh\n[ -n "${STUB_NOKEY:-}" ] && exit 44\necho %s\n' "'{\"claudeAiOauth\":{\"accessToken\":\"tok-123\"}}'" >"$us/security"
+printf '#!/bin/sh\ncat >"%s/curl.stdin"\nprintf "%%s\\n" "$*" >"%s/curl.argv"\nprintf "%%s" "${STUB_BODY:-}"\n' "$tmp" "$tmp" >"$us/curl"
+chmod +x "$us"/*
+body='{"five_hour":{"utilization":41.6},"seven_day":{"utilization":12.4},"other":{"utilization":99}}'
+(cd "$proj" && env -u ORCH_STATUS_NO_USAGE PATH="$us:$PATH" STUB_BODY="$body" "$bin" --out "$tmp/outu" >/dev/null 2>&1)
+expect "$tmp/outu/status.js" 'JSON.stringify(S.usage) === JSON.stringify({fiveHour: 42, week: 12})' "usage from the endpoint, rounded, only the two windows"
+grep -q 'Authorization: Bearer tok-123' "$tmp/curl.stdin" && ! grep -q tok-123 "$tmp/curl.argv" && grep -q 'api/oauth/usage' "$tmp/curl.argv"; ok $? "the token goes to curl on stdin, never in argv"
+(cd "$proj" && env -u ORCH_STATUS_NO_USAGE PATH="$us:$PATH" STUB_BODY='<html>oops' "$bin" --out "$tmp/outu" >/dev/null 2>&1)
+expect "$tmp/outu/status.js" 'JSON.stringify(S.usage) === "{}" && S.tasks.length >= 3' "a body that is no JSON: no usage, the rest written"
+rm -f "$tmp/curl.argv"
+(cd "$proj" && env -u ORCH_STATUS_NO_USAGE PATH="$us:$PATH" STUB_NOKEY=1 STUB_BODY="$body" "$bin" --out "$tmp/outu" >/dev/null 2>&1)
+expect "$tmp/outu/status.js" 'JSON.stringify(S.usage) === "{}"' "no credentials: no usage"
+[ ! -e "$tmp/curl.argv" ]; ok $? "no credentials: curl is never called"
+
+# ---------------------------------------------------------------- jq there but failing
+badjq="$tmp/badjq"
+mkdir -p "$badjq"
+printf '#!/bin/sh\nexit 5\n' >"$badjq/jq"
+chmod +x "$badjq/jq"
+err=$(cd "$proj" && PATH="$badjq:$PATH" "$bin" --out "$tmp/outbj" 2>&1 >/dev/null); rc=$?
+ok "$rc" "a failing jq: exit 0"
+[[ "$err" == *"could not be built"* ]]; ok $? "a failing jq: stderr says the status could not be built ($err)"
+expect "$tmp/outbj/status.js" 'S.mock === false && S.tasks.length === 0 && S.agents.length === 0' "a failing jq: the empty status parses"
 
 # ---------------------------------------------------------------- a task worktree with no .orch/ (lesson T2)
 git -C "$proj" worktree add -q "$proj/.worktrees/T10" -b task/T10 2>/dev/null
@@ -225,6 +322,13 @@ printed=$(cd "$proj" && PATH="$stub:$PATH" "$inst/dashboard/bin/orch-status" --o
 ok "$rc" "the copy's orch-status --open exits 0"
 cmp -s "$tmp/outi/index.html" "$inst/orch/dashboard/orch-dashboard.html" && cmp -s "$tmp/outi/scale.js" "$inst/orch/dashboard/scale.js"; ok $? "the copy's --open copies the orch skill's page"
 expect "$tmp/outi/status.js" 'S.tasks.length > 0' "the copy builds the status"
+# the page or the sample missing: --open says the page could not be copied and still exits 0; --sample exits 1
+rm -f "$inst/orch/dashboard/orch-dashboard.html" "$inst/orch/dashboard/status.sample.js"
+err=$(cd "$proj" && PATH="$stub:$PATH" "$inst/dashboard/bin/orch-status" --open --out "$tmp/outi2" 2>&1 >/dev/null); rc=$?
+[ "$rc" = 0 ] && [[ "$err" == *"could not be copied"* ]]; ok $? "no page to copy: said, exit 0 ($err)"
+expect "$tmp/outi2/status.js" 'S.tasks.length > 0' "no page to copy: status.js written all the same"
+err=$(cd "$proj" && "$inst/dashboard/bin/orch-status" --sample --out "$tmp/outi3" 2>&1 >/dev/null); rc=$?
+[ "$rc" = 1 ] && [[ "$err" == *"status.sample.js"* ]] && [ ! -e "$tmp/outi3/status.js" ]; ok $? "no sample: exit 1, said, nothing written ($err)"
 
 # ---------------------------------------------------------------- the layout
 [ -f "$junkd/skills/orch/bin/orch-status" ] && [ ! -L "$junkd/skills/orch/bin/orch-status" ] && [ -x "$junkd/skills/orch/bin/orch-status" ]; ok $? "a real executable in skills/orch/bin"

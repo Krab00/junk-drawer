@@ -65,8 +65,70 @@ for (const s2 of [sc, build(720), build(60)]) {
   ok(mono, 'xOf is monotonic')
   ok(inv, 'tOf(xOf(t)) = t')
 }
+// The px-per-minute floor: a view too narrow for its gaps still gives the busy time 60 px in all.
+const many = [{ s: start, e: start + H }, { s: start + 3 * H, e: start + 4 * H }, { s: start + 6 * H, e: start + 7 * H }]
+const narrow = S.scale({ start, end, zoom: 0, vis: 100, gaps: many, gapW: GAPW })
+ok(near(narrow.ppm, 60 / (24 * H - 3 * H)), `the ppm floor: 60 px over the busy minutes (${narrow.ppm})`)
 if (failed) { console.log(`${failed} scale check(s) failed`); process.exit(1) }
 console.log('scale: all checks passed')
+JS
+
+# The page's own zoom handler (orch-dashboard.html, the `#ctl [data-z]` click), its source run as written over the real
+# scale.js: render() (stubbed: it rebuilds geom for zoomMin, as the page's does) before the rectangle is read, so 3h ->
+# 12h on a 24 h window draws half the strip, not the quarter the 3h scale gave. Then the page's no-status.js prelude
+# over a truncated status.js: the script throws, nothing is set, the page takes its empty data and the note.
+node - "$dash/scale.js" "$dash/orch-dashboard.html" <<'JS'
+const S = require(process.argv[2])
+const page = require('fs').readFileSync(process.argv[3], 'utf8')
+const vm = require('vm')
+let failed = 0
+const ok = (cond, what) => { if (!cond) { failed++; console.log('FAIL', what) } }
+const near = (a, b, eps = 0.01) => Math.abs(a - b) <= eps
+
+const m = /zb\.forEach\(function\(b\)\{b\.addEventListener\("click",function\(\)\{([\s\S]*?)\}\)\}\);/.exec(page)
+ok(m, 'the zoom handler is found in the page')
+if (m) {
+  const H = 60, start = 1_000_000, end = start + 24 * H, VIEW = 1000
+  const ctx = {
+    zoomMin: 180, lastH: 0, OrchScale: S, zb: [], rendered: [], scrolls: [], views: [],
+    gw: { scrollLeft: 3000, clientWidth: VIEW + 220 },
+    viewW() { return VIEW },
+    setScroll(l) { ctx.scrolls.push(l) },
+    mmView(vp) { ctx.views.push(vp) },
+    render() { ctx.rendered.push(ctx.zoomMin); ctx.geom = S.scale({ start, end, zoom: ctx.zoomMin, vis: VIEW, gaps: [], gapW: 28 }) },
+  }
+  ctx.geom = S.scale({ start, end, zoom: 180, vis: VIEW, gaps: [], gapW: 28 })
+  const b = { dataset: { z: '720' }, setAttribute() {} }
+  ctx.zb = [b]
+  ctx.b = b
+  const handler = new Function('ctx', `with (ctx) {${m[1]}}`)
+  handler(ctx)
+  ok(ctx.zoomMin === 720 && ctx.rendered.join() === '720', `the handler renders once, at the new zoom (${ctx.rendered})`)
+  ok(ctx.views.length === 1, `the rectangle is drawn once (${ctx.views.length})`)
+  const vp = ctx.views[0] || { width: NaN, left: NaN }
+  ok(near(vp.width, 50), `3h -> 12h: the rectangle is half the strip, read from the new scale (${vp.width})`)
+  // the anchor read on the old (3h) scale: the view's centre, 3500 px of 8000, stays the centre on the 2000 px strip
+  ok(near(ctx.scrolls[0], 375) && near(vp.left, 18.75), `the scroll and the rectangle keep the old centre (${ctx.scrolls[0]}, ${vp.left})`)
+}
+
+const pre = /var ORCH_UNREACHABLE=!window\.ORCH;\s*if\(!window\.ORCH\)\{[^\n]*\}/.exec(page)
+ok(pre, "the page's no-status.js prelude is found")
+if (pre) {
+  const whole = require('fs').readFileSync(process.argv[3].replace(/orch-dashboard\.html$/, 'status.sample.js'), 'utf8')
+  const load = text => {
+    const c = vm.createContext({ window: {}, Date })
+    try { vm.runInContext(text, c) } catch (e) { if (e.name !== 'SyntaxError') throw e } // as a browser does: the error reported, the page goes on
+    vm.runInContext(`${pre[0]}; this.unreachable = ORCH_UNREACHABLE;`, c)
+    return c
+  }
+  const cut = load(whole.slice(0, Math.floor(whole.length / 2)))
+  ok(cut.unreachable === true, 'a truncated status.js: the page says unreachable')
+  ok(cut.window.ORCH.mock === true && Array.isArray(cut.window.ORCH.tasks) && cut.window.ORCH.tasks.length === 0, 'a truncated status.js: the empty fallback data')
+  const full = load(whole)
+  ok(full.unreachable === false && full.window.ORCH.tasks.length > 0, 'a whole status.js: its data, no note')
+}
+if (failed) { console.log(`${failed} page check(s) failed`); process.exit(1) }
+console.log('page: zoom handler and prelude checks passed')
 JS
 
 page="$dash/orch-dashboard.html"
