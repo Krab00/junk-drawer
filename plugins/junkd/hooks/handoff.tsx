@@ -9,7 +9,7 @@ import type { JunkdAhandoff as Ahandoff } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { isSets, shutSet } from './set'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
-import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, MAX_ASKS, S, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
+import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, MAX_ASKS, PROMPT_DELAY_MS, S, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
 import { VIEWS } from './handoff-views'
 import { toolsTurnEnd } from './tools-pane'
@@ -182,9 +182,11 @@ function queueHandoff($: $) {
   void $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') }))
 }
 
-// /clear → /junkd:handon <id> → the continuation prompt, detached like queueHandoff.
-// A slash prompt cannot ride along as text (the host refuses it and the model would only read it),
-// so it runs as the command itself right after /junkd:handon.
+// /clear → /junkd:handon <id> carrying the continuation prompt, detached like queueHandoff.
+// One turn does both: the continuation rides the handon submission as hidden context (handoffContinuation), so the
+// model loads the handoff and goes on in the same turn, however it loads it (under the orch guard an agent does,
+// and a turn that ends with that agent running would let a separate prompt start before the handoff is in). Only
+// when no handon submission took it (a handon that raised none) is it sent as a prompt of its own, as before.
 function continueFrom($: $, id: string) {
   const text = S.prompt || DEFAULT_PROMPT
   void $.clock.sleep(0).then(async () => {
@@ -196,23 +198,44 @@ function continueFrom($: $, id: string) {
     await cleared
     S.phase = 'resume'
     void sync($)
-    await $.command.run({ command: await findCommand($, 'handon'), args: id })
+    const pending = (S.pending = { id, text, delivered: false })
+    try {
+      await $.command.run({ command: await findCommand($, 'handon'), args: id })
+    } finally {
+      S.pending = null
+    }
     S.phase = 'idle'
     await persist($)
     await sync($, 0)
-    await sendPrompt($, text)
+    if (!pending.delivered) await sendPrompt($, text)
   })
 }
 
+// What the handon submission of a continuing loop carries to the model: the person's continuation prompt, said as
+// theirs, to follow in the same turn. Called by the module's one prompt.submit hook (index.tsx) with each submission;
+// undefined for every other one. The first matching submission takes it.
+export function handoffContinuation(e: { command?: { name: string; args: string } }): string | undefined {
+  const p = S.pending
+  if (!p || p.delivered || !e.command || !/(^|:)handon$/.test(e.command.name) || e.command.args.trim() !== p.id) return undefined
+  p.delivered = true
+  const how = p.text.startsWith('/')
+    ? `run this slash command (the Skill tool, the command name as the skill and the rest as its arguments): ${p.text}`
+    : p.text
+  return `ahandoff: the person has already told you what to do once the handoff is loaded, so do not stop after loading it or wait for them. In this same turn, after loading it, continue as they asked: ${how}`
+}
+
 // Runs the armed prompt as the next turn, detached like queueHandoff ($.prompt.submit is refused
-// inside a hook the turn waits on). The host refuses a submitted text starting with /, so a slash
-// command goes through $.command.run instead.
+// inside a hook the turn waits on), PROMPT_DELAY_MS after the command that armed it ended. The host refuses a
+// submitted text starting with /, so a slash command goes through $.command.run instead.
 function runPrompt($: $, text: string) {
-  void $.clock.sleep(0).then(() => sendPrompt($, text))
+  void $.clock.sleep(PROMPT_DELAY_MS).then(() => sendPrompt($, text))
 }
 async function sendPrompt($: $, text: string) {
   const [, command, args = ''] = /^\/(\S+)\s*([\s\S]*)$/.exec(text) ?? []
-  await (command ? $.command.run({ command, args }) : $.prompt.submit({ text }))
+  if (command) return void (await $.command.run({ command, args }))
+  const r = await $.prompt.submit({ text })
+  // a hook or a settings hook that refuses the prompt leaves no turn: say so instead of leaving the loop silent
+  if (r.drop !== undefined) $.ui.toast(`ahandoff: the prompt was refused — ${r.drop}`)
 }
 
 // `/junkd:ahandoff status`: armed or off, the limit as it stands, the last measurement, and the log's path.
