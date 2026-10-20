@@ -33,10 +33,12 @@ test('AC2: Edit, Grep, Glob, WebFetch and an MCP tool are each denied on a Fable
 })
 
 test('AC3: the coordination tools always pass', () => {
-  for (const tool of ['ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill', 'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger']) {
+  for (const tool of ['ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill', 'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger', 'ReadNotifications']) {
     expect(orchGuard(main(tool), st(), on_), tool).toBeUndefined()
     expect(orchGuard(main(tool), st({ model: OPUS }), { ...on_, guard: 'always' }), tool).toBeUndefined()
   }
+  // ReadNotifications reads the session's own queue; the guard still holds the main loop to its other tools
+  expect(orchGuard({ tool: 'Bash', command: 'ls' }, st(), on_)).toMatch(/the main loop may not run Bash/)
 })
 
 test('a subagent call always passes', () => {
