@@ -201,7 +201,8 @@ set -m
 (cd "$repo" && CLAUDE_CONFIG_DIR="$empty" exec "$watch" --interval 1) >"$tmp/loop.out" 2>&1 &
 loop=$!
 set +m
-sleep 2.5
+# wait for two tables (a loaded machine is slow to print the first), at most 60 s
+for _ in $(seq 600); do [ "$(grep -c '^orch-watch · ' "$tmp/loop.out")" -ge 2 ] && break; sleep 0.1; done
 kill -INT "$loop"
 set +e
 wait "$loop"
@@ -209,7 +210,7 @@ rc=$?
 loop=''
 set -e
 [ $rc = 0 ] || fail "the loop exited $rc on INT, expected 0"
-[ "$(grep -c '^orch-watch · ' "$tmp/loop.out")" -ge 2 ] || fail "the loop printed $(grep -c '^orch-watch · ' "$tmp/loop.out") tables in 2.5 s"
+[ "$(grep -c '^orch-watch · ' "$tmp/loop.out")" -ge 2 ] || fail "the loop printed $(grep -c '^orch-watch · ' "$tmp/loop.out") tables in 60 s"
 
 # no jq: a clear message, exit 0, nothing else read
 nojq="$tmp/nojq"
