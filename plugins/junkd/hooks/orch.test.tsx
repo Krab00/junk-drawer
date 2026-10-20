@@ -14,7 +14,7 @@ const CFG = '/fake/claude'
 const FABLE = 'claude-fable-5-1'
 const OPUS = 'claude-opus-5-5'
 const BIN = '/p/bin/'
-const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, dashboard_refresh: 30, dashboard_window_h: 24 }
+const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 }
 const main = (tool: string, args: Record<string, unknown> = {}) => ({ tool, ...args })
 const REPO = '/repo'
 const st = (s: Partial<OrchState> = {}): OrchState => ({ model: FABLE, binDir: BIN, configDir: CFG, repo: REPO, ...s })
@@ -331,11 +331,11 @@ test('SendMessage: reviewers are always fresh, an implementer over the cap is re
 
 test('settings: defaults for missing or wrong types, the number rows clamped to their bounds at load', () => {
   applyOrchSettings({})
-  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, dashboard_refresh: 30, dashboard_window_h: 24 })
-  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99, claude_md: true })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10, claude_md: true, dashboard_refresh: 30, dashboard_window_h: 24 })
-  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0, claude_md: 'true' })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1, claude_md: false, dashboard_refresh: 30, dashboard_window_h: 24 })
+  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 })
+  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 121, stall_minutes: 500 })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 120, stall_minutes: 120, dashboard_refresh: 30, dashboard_window_h: 24 })
+  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0, claude_md: 'true', watchdog: 'on', idle_stop: 1, idle_stop_minutes: 0, stall_minutes: 'x' })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1, claude_md: false, watchdog: false, idle_stop: false, idle_stop_minutes: 1, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 })
   // claude_md at load, one assertion per value: only a JSON true is on (the default is off)
   for (const [v, want] of [[true, true], [undefined, false], [false, false], ['true', false], ['on', false], [1, false], [null, false]] as const) {
     applyOrchSettings(v === undefined ? {} : { claude_md: v })
@@ -369,7 +369,7 @@ test('coerce: one check for every write path; the exact bounds of the number row
 })
 
 test("SCHEMA is settings.ts's orch rows, by field and in manifest order: enabled first, the guard the one choice row", () => {
-  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds', 'claude_md', 'dashboard_refresh', 'dashboard_window_h'])
+  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds', 'claude_md', 'dashboard_refresh', 'dashboard_window_h', 'watchdog', 'idle_stop', 'idle_stop_minutes', 'stall_minutes'])
   expect(SCHEMA.map(f => ({ ...f, key: `orch_${f.key}` }))).toEqual(rowsOf('orch').map(({ group: _g, field: _f, ...f }) => f))
   expect(SCHEMA.filter(f => f.options).map(f => [f.key, f.options])).toEqual([['guard', ['fable', 'always', 'off']]])
 })
@@ -1225,7 +1225,7 @@ test("the script's answer: an updated line is a toast, up to date or skipped is 
 
 // ------------------------------------------------------------------ $.junkd's orch rows and the pane
 
-const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md', 'orch_dashboard_refresh', 'orch_dashboard_window_h']
+const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md', 'orch_dashboard_refresh', 'orch_dashboard_window_h', 'orch_watchdog', 'orch_idle_stop', 'orch_idle_stop_minutes', 'orch_stall_minutes']
 
 test("$.junkd: the orch calls answer; schema's orch rows mirror the manifest; get answers the defaults; guard is the choice row", WITH_FRAME, async ($, on) => {
   world(on)

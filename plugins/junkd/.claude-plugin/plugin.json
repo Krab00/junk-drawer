@@ -1,7 +1,7 @@
 {
   "name": "junkd",
   "description": "One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens, the status line and the tools pane, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd:ctx-limit sets a context-size limit a prompt hook enforces (block, warn or a command); /junkd:ctx-tokens reads the live context usage. /junkd:statusline wires a colored status line (context, branch, worktree, model, effort, rate limits; each segment a setting) into settings.json. /junkd:tools opens the tools pane: this session's agents over the repo's git worktrees, and the tools, MCP servers and skills the session used. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff, orch, statusline and tools tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr, ctx, statusline, tools) and the commands. The hooks module exports $.junkd for other mods.",
-  "version": "0.7.0",
+  "version": "0.9.0",
   "author": {
     "name": "Krab00"
   },
@@ -129,6 +129,30 @@
       "title": "Dashboard: timeline window (hours)",
       "description": "The hours the dashboard's timeline shows, ending now (1-168, clamped).",
       "default": 24
+    },
+    "orch_watchdog": {
+      "type": "boolean",
+      "title": "Agent watchdog",
+      "description": "Watch this session's agents (no tokens: engine hooks and a 30 s timer): a stall, a death and an idle leftover each raise a toast once; a death or a stall also shows ⚠ under the prompt and one line for the orchestrator at the next turn. Off while orch is disabled.",
+      "default": true
+    },
+    "orch_idle_stop": {
+      "type": "boolean",
+      "title": "Watchdog: stop idle leftovers",
+      "description": "Stop an agent that reported and is still alive when it will not be needed again (a reviewer at once, an implementer once its task is done or blocked, anything else after the idle minutes). Off: they are reported only.",
+      "default": true
+    },
+    "orch_idle_stop_minutes": {
+      "type": "number",
+      "title": "Watchdog: idle minutes before a stop",
+      "description": "Minutes a finished agent with no task in progress may stay idle before it is stopped. A value under 1 is read as 1, one over 120 as 120.",
+      "default": 10
+    },
+    "orch_stall_minutes": {
+      "type": "number",
+      "title": "Watchdog: stall after N minutes",
+      "description": "Minutes a running agent may go without a tool call (none in flight) before it counts as stalled; a reviewer gets 5 more. A value under 1 is read as 1, one over 120 as 120.",
+      "default": 15
     },
     "tldr_enabled": {
       "type": "boolean",
