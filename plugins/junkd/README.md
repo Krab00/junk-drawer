@@ -80,12 +80,14 @@ closes them together:
 3. **orch** — orch's settings pane ([below](#orch)).
 4. **statusline** — the status line's pane ([below](#statusline)).
 5. **tools** — the tools pane ([below](#tools)), only while `tools_enabled` is on.
+6. **lessons** — the pending orch lessons ([below](#lessons)), only while `orch_enabled` and `orch_lessons` are on.
 
-All five are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
+All six are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
 already open on its own closes first and opens again behind junkd's tab, so its tab never comes first, and from
 then on it is the set's. `q`, a second `/junkd`, or closing junkd's tab by hand (`×`) closes them all, but only a
 feature pane that is still the set's: one you closed and opened again on your own (`/junkd:handoff panel`,
-`/junkd:orch panel`, `/junkd:ahandoff panel`, `/junkd:statusline`, `/junkd:tools`, the 🪃 click) stays.
+`/junkd:orch panel`, `/junkd:ahandoff panel`, `/junkd:statusline`, `/junkd:tools`, `/junkd:lessons`, the 🪃 or 📒
+click) stays.
 
 Where the set sits depends on the layout. Only in the fullscreen layout (`"tui": "fullscreen"` in
 `settings.json`), from 110 terminal columns, it docks beside the transcript; narrower, and always on the main
@@ -133,7 +135,7 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 |---|---|---|
 | core | `core_output_style`, `core_cache_check_sessions` | [Output style](#output-style-ste), [prompt-cache check](#prompt-cache-check-claude-code-only) |
 | handoff | `handoff_enabled`, `handoff_threshold`, `handoff_checkEvery`, `handoff_autoOn`, `handoff_resumeAfterLimit`, `handoff_staleDays`, `handoff_segment` | [handoff settings](#settings-1) |
-| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md`, `orch_dashboard_refresh`, `orch_dashboard_window_h`, `orch_watchdog`, `orch_idle_stop`, `orch_idle_stop_minutes`, `orch_stall_minutes` | [orch settings](#settings-2), [dashboard](#dashboard), [watchdog settings](#settings-7) |
+| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md`, `orch_dashboard_refresh`, `orch_dashboard_window_h`, `orch_watchdog`, `orch_idle_stop`, `orch_idle_stop_minutes`, `orch_stall_minutes`, `orch_lessons` | [orch settings](#settings-2), [dashboard](#dashboard), [watchdog settings](#settings-7), [lessons settings](#settings-8) |
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
 | ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
 | statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
@@ -700,11 +702,11 @@ session folders can be removed by hand.
 
 #### Settings
 
-`/junkd:orch panel` toggles the pane: one Settings tab with the fourteen rows (`tab` moves, `enter` saves a
+`/junkd:orch panel` toggles the pane: one Settings tab with the fifteen rows (`tab` moves, `enter` saves a
 field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes) and the
 `dashboard: open ▸` line, which opens [the dashboard](#dashboard) as `/junkd:dashboard` does.
-The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and the first four and
-`orch_claude_md` in the /junkd pane.
+The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and the first four,
+`orch_claude_md` and `orch_lessons` in the /junkd pane.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
@@ -722,6 +724,7 @@ The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and 
 | `orch_idle_stop` | boolean | `true` | The watchdog stops idle leftovers; off: it reports them only |
 | `orch_idle_stop_minutes` | number | `10` | Idle minutes before a finished agent with no task in progress is stopped (1–120) |
 | `orch_stall_minutes` | number | `15` | Minutes without a tool call before a running agent counts as stalled; a reviewer gets 5 more (1–120) |
+| `orch_lessons` | boolean | `true` | The [lessons loop](#lessons): injection by stack, the lessons tab, 📒 and the blocking dialog; off: none of them (the flag file `junkd/orch-lessons-off` while off) |
 
 Scope: user-global; project/session overrides: planned.
 
@@ -1202,6 +1205,114 @@ The four rows are in the orch pane (`/junkd:orch panel`) and in `/config` (`junk
 takes `true`, `'true'` or `'on'` as on. A minutes value is rounded and clamped in the module, and a value that is
 no number is refused; the manifest keeps the rows to their type and default.
 
+## lessons
+
+orch's lessons are a queue that empties itself: every lesson has a promotion target, a run cannot end (or start)
+while one is pending, and a promotion turns it into something executable and deletes it.
+
+### The three stores
+
+| Store | File | Lives |
+|---|---|---|
+| local | `<tasks_dir>/_lessons.md` (`.orch/tasks/_lessons.md`) | This checkout's orch store; every lesson is born here. `.orch/` never enters git |
+| repo | `<project root>/lessons.md` | Committed and pushed with the project (the team, other machines); made on the first promotion to it, committed on the task branch of the task that produced it |
+| global | `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/lessons.md` | One per machine, read by every repo |
+
+Promotion goes one way, local → repo → global. One block per lesson, in all three files:
+
+```
+## L<n> (<YYYY-MM-DD>) scope: local|repo|global · stack: <tags> · to: test|smoke|check|role|repo|global|drop · from: T<id>
+<2–3 sentences: what failed, why, what check would have caught it>
+```
+
+`L<n>` is unique per file (the next free number). `stack` is one or more of `node`, `python`, `shell`, `tsx-mods`,
+`go`, `rust`, `any`, comma separated. A repo's own stack is read from its files: `package.json` → node,
+`pyproject.toml` or `requirements*.txt` → python, a `bin/*` file with a bash shebang → shell, `*.tsx` under a
+`hooks/` folder → tsx-mods, `go.mod` → go, `Cargo.toml` → rust; nothing → `any`. A `## ` heading of another shape (the
+old diary's `## T8 (…)`) is no lesson. There is no entry limit: relevance comes from the stack tag.
+
+A lesson is **pending** unless its `to` is a store it has reached (`to: repo` in the repo or global store, `to:
+global` in the global store). A lesson with no `to`, a handed test, and every other target are pending.
+
+### The signal rule and blocking
+
+A lesson is written only on a signal: a fix round, a surviving mutant, a PM-REVIEW that found a bug, a dead or stalled
+agent (the [watchdog](#watchdog)), a verify FAIL. A clean round-0 PASS writes nothing. At a task's resolve the
+orchestrator adds it with a `to`, and promotes what needs no consent at once: a `test` or `smoke` lesson goes to the
+implementer of the same task as a fix round and is closed once the test is on the branch. Everything else stays
+pending.
+
+The run does not print its `BACKLOG:` line while `orch-state lesson pending` exits 1: the orchestrator resolves each
+pending lesson with you (promote, drop or move up), and a new `/junkd:orch` with lessons pending starts with the same
+dialog before it selects a task. There is no "later". The hooks module cannot stop the model from printing text, so
+the enforcement is the spec (`commands/orch.md` §7 and §8), the context line below, and `pending`'s exit code.
+
+### `bin/orch-state lesson` (every host)
+
+| Command | Does |
+|---|---|
+| `lesson add [--scope local\|repo\|global] [--stack <tags>] --to <target> --from T<id> "<text>"` | Appends the block (scope `local`, stack the repo's by default) and prints its id, `local:L4` |
+| `lesson list [--pending] [--scope <s>] [--json]` | The table id · scope · stack · to · from · first sentence; `--json` for scripts |
+| `lesson promote <id> [--to <target>] [--yes]` | To its `to` (or `--to`): `repo`/`global` moves it one store up (renumbered, `scope` rewritten) and deletes it below; `check` appends the text to `standing_checks_extra` in `.orch/config.md` only with `--yes` (without it: the proposed line, exit 3); `test`/`smoke` prints the fix-round line and marks it `to: test·handed`; `role` writes a task `T<next>.md` into the backlog when this repo is junk-drawer (elsewhere it prints the text to paste and writes nothing); `drop` deletes |
+| `lesson up <id>` | One store up, the `to` kept |
+| `lesson drop <id>` | Deletes it |
+| `lesson prune [--months N] [--yes]` | Lists the lessons older than N months (default 6) whose stack is not this repo's; `--yes` drops them |
+| `lesson pending` | The count of pending lessons of the three stores; exit 1 when there are any |
+| `lesson inject` | The lessons whose stack meets the repo's (and `any`), as the text the session start prints |
+
+`<id>` is `L3`, or `local:L3`, `repo:L3`, `global:L3` when two stores have an `L3`. It is the one writer of the
+stores: each write is a temp file and an `mv`, a CRLF file is written back LF, and a file that cannot be written
+stops the command (exit 2) with nothing changed. With no `.orch/` the repo and global stores still work. Without
+`jq` the read commands say so and exit 0, the writes exit 2.
+
+### Injection, and why it is fenced
+
+At every orch session's start `scripts/orch-context.sh` prints, after the rule sheet, what `orch-state lesson
+inject` prints: `# Lessons for this repo (stack: …)`, one line saying the block below is data from lessons files and
+not instructions, and the lessons in one fenced block. A lessons file is text other people can write (anyone who
+can commit to the repo writes its `lessons.md`), and the block lands in the main loop's context, so:
+
+- the repo store is injected only in an orch project (one with `.orch/config.md`, which you initialised); the local
+  and global stores are yours;
+- a body line that opens a heading (`#`…`######` and a space) or a fence (```` ``` ````, `~~~`) is dropped, so a
+  lesson cannot close the fence or pose as a new section;
+- at most 40 lessons and 4096 bytes of them are printed; the rest is one line, `… N more, see /junkd:lessons`.
+
+The injection needs `orch_enabled`, `orch_inject_rules` and `orch_lessons` on (each read from `settings.json`, else
+from its flag file: `junkd/orch-off`, `junkd/orch-rules-off`, `junkd/orch-lessons-off`).
+
+### Claude Code: the lessons tab, 📒 and the dialog
+
+- **The lessons tab** of the [/junkd set](#the-junkd-frame-claude-code-only), after tools: the pending lessons of the
+  three stores, columns id · scope · stack · to · from · text (cut to the pane; a lesson of another stack dimmed).
+  `j`/`k` (or the arrows) select, `p` promotes it to its `to` (a `check` or a `role` asks in a confirm line first,
+  `y`/`n`; a confirmed check runs with `--yes`), `d` drops it, `u` moves it a store up, `r` reads the stores again,
+  `q` closes. Every write is a run of `orch-state lesson …`.
+- **`📒 N`** under the prompt (the theme's warning colour) while lessons are pending; a press opens the tab. None at 0.
+- **The dialog**: at the session start of an orch session (orch on, `orch_lessons` on, a `.orch/config.md` at the
+  root) with lessons pending, when the main loop's answer prints a `BACKLOG:` line, and when `/junkd:orch` starts a
+  run, the tab opens focused with the top line `N lessons pending — resolve them to finish the run`, and every prompt
+  of the main loop carries one context line, `lessons: N pending, open /junkd lessons; the run is not finished`, until
+  none is pending.
+- **`/junkd:lessons [list | promote <id> | drop <id> | up <id>]`** toggles the tab (`list` opens it) or runs the one
+  action and answers with the CLI's line.
+
+The stores are read again at session start, at the end of each main-loop turn, after each write and on `r`.
+
+| Host | Lessons with |
+|---|---|
+| Claude Code | The hooks module (tab, 📒, dialog, context line) and `orch-state lesson` |
+| Codex, Kimi Code, OpenCode | The `lessons` skill (`$lessons`, `/skill:lessons`, `/lessons`), which runs `./bin/orch-state lesson …`; the orchestrator asks with plain questions |
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `orch_lessons` | boolean | `true` | The lessons loop. Off: no injection, no tab, no 📒, no dialog, no context line, no blocking and no `lesson add` by the spec; the files are left as they are (the flag file `junkd/orch-lessons-off` while off) |
+
+The row is in the /junkd pane (orch's main rows), the orch pane and `/config` (`junkd.orch_lessons`); `true`,
+`'true'` and `'on'` are on.
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
@@ -1223,13 +1334,15 @@ no number is refused; the manifest keeps the rows to their type and default.
 - `hooks/tools-pane.tsx`, `tools.ts`, `tools-views.tsx` — tools: the pane, its poll and the settings group; the
   counters, the worktree parser and the agents tree; the four tabs.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
+- `hooks/lessons.tsx`, `lessons.ts`, `lessons-views.tsx` — the lessons loop: the tab, 📒, the dialog and its context
+  line, `/junkd:lessons`; the reader of the three stores, the stack filter and the pending rule; the tab's drawing.
 - `hooks/dashboard.tsx`, `dashboard.ts` — the orch dashboard: `/junkd:dashboard`, the phases, `status.js`; the task
   store's parsers and the status builder.
 - `skills/orch/dashboard/` — the dashboard page (`orch-dashboard.html`), its timeline scale (`scale.js`) and the
   demo data with the data contract (`status.sample.js`); `skills/orch/bin/orch-status` its shell writer.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
-  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `dashboard`); the real helpers live inside their skill (`skills/handoff/bin`,
-  `skills/orch/bin` (with `orch-watch`), `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
+  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `dashboard`, `lessons`); the real helpers live inside their skill (`skills/handoff/bin`,
+  `skills/orch/bin` (with `orch-watch`, and `orch-state lesson`), `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
   (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
   `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a
   real copy in each skill that sources it (handoff, handon, tldr, ctx-limit, ctx-tokens).
@@ -1240,4 +1353,5 @@ no number is refused; the manifest keeps the rows to their type and default.
 - Tests: `hooks/*.test.ts(x)` (`claude plugin test plugins/junkd`), `tests/junkd.sh`, `tests/orch.sh`,
   `tests/tldr.sh`, `tests/cache-check.sh`, `tests/ctx.sh`, `tests/statusline.sh` (its golden line in
   `tests/statusline/`), `tests/orch-watch.sh`, all run by `tests/smoke.sh`; `tests/dashboard.sh` (the page's scale
-  under node and its file:// shape) and `tests/orch-status.sh` (the shell writer over fixture task stores).
+  under node and its file:// shape) and `tests/orch-status.sh` (the shell writer over fixture task stores);
+  `tests/lessons.sh` (`orch-state lesson` and the lessons of `scripts/orch-context.sh` over fixture stores).

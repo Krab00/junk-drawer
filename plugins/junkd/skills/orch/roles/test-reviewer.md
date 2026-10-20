@@ -34,7 +34,10 @@ existing green suite already pins). List those as removable over-testing under G
 4. **Modifications truly updated the tests.** For changed logic, confirm existing tests now assert
    the NEW behaviour — not deleted, `.skip`-ped, loosened, or still asserting the old behaviour
    just to stay green.
-5. **A claimed "no unit tests" is honest.** If the change added none, decide whether that's
+5. **Through the real path, once.** A "still resolves / still registers" test that passes with the hook
+   path broken (only a direct call fails) is a gap; so is a test that repeats an existing assertion. A
+   coercion with several spellings needs one assertion per spelling through each write path.
+6. **A claimed "no unit tests" is honest.** If the change added none, decide whether that's
    genuinely warranted (pure config / copy / styling / no runner in that layer) or a gap dressed
    up as "nothing to test".
 

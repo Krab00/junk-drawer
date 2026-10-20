@@ -81,7 +81,7 @@ Two more principles hold the whole thing together:
                   └───────────┬───────────┘        final round FRESH impl. + diff + why
                               │                     still failing after R → blocked + escalate
                     ┌─────────▼──────────┐
-                    │  6. RETRO          │  append lesson → _lessons.md
+                    │  6. RETRO          │  lesson add on a signal → _lessons.md
                     └─────────┬──────────┘
                               │
                     ┌─────────▼──────────┐
@@ -123,7 +123,7 @@ Step by step, as the shipped `commands/orch.md` runs it:
    - **Still failing after round R** → the task is `blocked`, the escalation reason is appended,
      and the loop moves on.
 
-6. **Retro.** Every resolve appends a lesson to `_lessons.md` — see [§5](#5-learning--the-retro--_lessonsmd).
+6. **Retro.** A resolve with a signal adds a lesson to `_lessons.md` — see [§5](#5-learning--the-retro--_lessonsmd).
 
 7. **Draft PR + iterate.** In `chain`/`all` the next task branches off the one just finished; in
    `batch` verdicts are consumed as coordinators finish. At end of run `orch-sync push` reflects
@@ -198,9 +198,10 @@ exist.
 
 `orch` learns *within a run* and, with your approval, *across runs*.
 
-- **The retro step.** At **every** task resolve — especially after FAIL rounds or a `blocked` — the
-  orchestrator appends 2–3 sentences to `<tasks_dir>/_lessons.md`: *what failed, why, and what
-  check would have caught it.*
+- **The retro step.** At a task resolve that had a signal — a fix round, a surviving mutant, a
+  PM-REVIEW that found a bug, a dead or stalled agent, a verify FAIL — the orchestrator adds a lesson
+  with `orch-state lesson add`: 2–3 sentences, *what failed, why, and what check would have caught
+  it*, and a promotion target. A clean round-0 PASS writes nothing.
 - **Fed forward immediately.** Those lessons are handed into the next task's plan (step 3) and into
   the next `verify-coordinator` spawn (step 4). So a mistake made on task 2 informs task 3 in the
   same run.
@@ -216,6 +217,19 @@ exist.
   standing rule: a task that adds a binding rule adds its check in the same branch. The retro
   shortcut: a lesson that names a rule already in `CLAUDE.md` is proposed for promotion at once
   ("rule exists in CLAUDE.md §X, no check"), without waiting for a second task.
+
+**Lessons.** The lessons are a queue that empties itself, not a diary. They live in three stores,
+promoted one way: **local** `<tasks_dir>/_lessons.md` (born there, never in git), **repo**
+`lessons.md` at the project root (committed with the project, for the team and other machines) and
+**global** `~/.claude/junkd/lessons.md` (one per machine, read by every repo). Each lesson carries a
+`stack:` tag (node, python, shell, tsx-mods, go, rust, any) and a `to:` target: `test` or `smoke` (the
+implementer of the same task adds the check in a fix round), `check` (a `standing_checks_extra` row,
+after you say yes), `role` (a task for the agents' role files in junk-drawer), `repo` or `global`
+(moved up a store), or `drop`. Every orch session starts with the lessons whose stack meets the
+repo's, as data in a fenced block. A run does not end — no `BACKLOG:` line — while a lesson is
+pending: the orchestrator resolves each with you (on Claude Code in the lessons tab of the junkd pane,
+which opens by itself; the `📒 N` segment under the prompt counts them), and a new run starts with
+the same dialog. The `orch_lessons` setting switches the whole loop off; the files are then left alone.
 
 This is the missing feedback loop in naive agent runs: without it, the same class of bug gets
 re-litigated task after task.

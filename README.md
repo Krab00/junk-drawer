@@ -90,11 +90,12 @@ After installing or updating: `/plugin marketplace update junk-drawer`, then `/r
 
 One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens and the status line, and the frame over the marketplace.
 Its skills (`handoff`, `handon`, `ahandoff`, `orch`, `orch-init`, `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`,
-`junkd`, `tools`, `dashboard`) run on every host; on Claude Code each is `/junkd:<name>`, and the hooks module adds
+`junkd`, `tools`, `dashboard`, `lessons`) run on every host; on Claude Code each is `/junkd:<name>`, and the hooks module adds
 the automatic handoff loop, the orch main-loop guard, the panes (the tools pane among them: this session's agents over
 the repo's worktrees, and the tools, MCP servers and skills it used), the live orch dashboard (a local page with the
-task board and the agents' timeline; `bin/orch-status` writes a snapshot of it on the other hosts), the status line's
-wiring and `$.junkd` for other mods.
+task board and the agents' timeline; `bin/orch-status` writes a snapshot of it on the other hosts), the lessons tab
+and its 📒 segment (orch's lessons queue; `orch-state lesson` on every host), the status line's wiring and `$.junkd`
+for other mods.
 
 - Claude Code: `/plugin install junkd@junk-drawer`, then `/reload-plugins`.
 - Codex: `codex plugin add junkd@junk-drawer`; the skills answer as `$handoff`, `$orch-init`, `$orch`, `$tldr`,
@@ -167,7 +168,7 @@ lifecycle hooks, so `tldr` and `ctx-limit` lose their automatic hook behavior an
 them explicitly instead.
 
 ```bash
-npx skills add Krab00/junk-drawer                     # all twelve skills
+npx skills add Krab00/junk-drawer                     # all fourteen skills
 npx skills add Krab00/junk-drawer --skill orch        # just one
 npx skills add Krab00/junk-drawer --list              # preview, install nothing
 ```
@@ -197,9 +198,9 @@ Known limits of the skills-only install:
 
 - `$junk-drawer` catalogs sibling skills instead of plugins, since no plugin manifests are present,
   so it cannot report versions or slash commands.
-- `orch-init` and `dashboard` borrow `orch`'s helpers through a sibling symlink, so their own tree
+- `orch-init`, `dashboard` and `lessons` borrow `orch`'s helpers through a sibling symlink, so their own tree
   hashes do not move when those helpers change. Once `npx skills update` has refreshed `orch`, refresh
-  them explicitly with `npx skills add Krab00/junk-drawer --skill orch-init --skill dashboard`; `add`
+  them explicitly with `npx skills add Krab00/junk-drawer --skill orch-init --skill dashboard --skill lessons`; `add`
   always reinstalls. `dashboard`'s `orch-status` takes the page from the sibling `orch` skill.
 - Codex's plugin installer drops every symlink (the plugin-root `bin/`, `agents/` and `scripts/` too).
   Under the previous layout that left Codex plugin installs with no `bin/` inside the skills at all;
