@@ -18,7 +18,7 @@
 #     listed by name only (verdict unknown).
 #   - the task status of an implementer's task: the frontmatter of <tasks_dir>/T<n>.md (orch-state's root and config).
 # The verdict follows the module's rules (hooks/watchdog.ts): a reviewer (verify-coordinator, test-planner,
-# test-reviewer, ui-reviewer, orch-ops, a pr-/gh- name) still alive after its record is due for a stop at once; an
+# ui-reviewer, orch-ops, a pr-/gh- name) still alive after its record is due for a stop at once; an
 # implementer is kept while its task is in_progress, due when it is done/blocked, else after the idle minutes; any
 # other agent after the idle minutes. No jq: a message, exit 0.
 set -uo pipefail
@@ -95,7 +95,7 @@ class_of() {
   local base=${1##*:}
   case "$base" in
     implementer|lead-implementer) echo implementer; return ;;
-    verify-coordinator|test-planner|test-reviewer|ui-reviewer|orch-ops) echo reviewer; return ;;
+    verify-coordinator|test-planner|ui-reviewer|orch-ops) echo reviewer; return ;;
   esac
   case "$2" in pr-*|gh-*) echo reviewer ;; *) echo other ;; esac
 }

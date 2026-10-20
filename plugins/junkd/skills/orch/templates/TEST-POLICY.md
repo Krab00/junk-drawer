@@ -3,7 +3,7 @@
 Starter policy, copied from the orch skill's `templates/TEST-POLICY.md`. Edit it, then freeze it: the
 text below is yours. Acceptance criteria in `.orch/tasks/*.md` stay binding and untouched: the AC is
 the spec. This policy governs HOW MUCH testing an AC costs, not whether it gets verified. It binds
-implementers (authoring), test-planner (matrix granularity) and test-reviewer (audit standard).
+implementers (authoring), test-planner (matrix granularity) and the verify-coordinator (test-quality audit standard).
 
 1. **One test per AC: the cheapest test that would fail if the AC were broken.**
    No case matrices. One representative happy path, plus only those edge cases the AC names

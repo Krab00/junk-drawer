@@ -196,7 +196,7 @@ export function orchRoot(toplevel: string, hasOrch: (dir: string) => boolean): s
 
 // `junkd:implementer`, `orch:verify-coordinator` -> the role after the plugin's prefix.
 export const roleOf = (type: string) => type.replace(/^.*:/, '')
-const VERIFY = /^(verify-coordinator|ui-reviewer|test-planner|test-reviewer)$/
+const VERIFY = /^(verify-coordinator|ui-reviewer|test-planner)$/
 const IMPLEMENT = /^(implementer|lead-implementer)$/
 
 // A phase's kind from the spawn: an implementer (or lead) implements, and fixes once its task was in verify; a

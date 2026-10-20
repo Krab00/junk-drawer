@@ -30,7 +30,7 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 - `/junkd:orch panel` never reaches this text: the junkd hooks module answers it by toggling the orch settings pane. Without the hooks module loaded, `panel` is no mode; say so in one line.
 - `/junkd:orch watchdog [on|off]` never reaches this text either: the hooks module prints the agent watchdog's verdict table, or flips `orch_watchdog`. Without the hooks module loaded, run `${CLAUDE_PLUGIN_ROOT}/bin/orch-watch --once` and show its table (report only).
 - The helpers are `${CLAUDE_PLUGIN_ROOT}/bin/orch-state`, `${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree` and `${CLAUDE_PLUGIN_ROOT}/bin/orch-sync`, spelled exactly so wherever the spec says `${CLAUDE_PLUGIN_ROOT}`: on a Fable main loop the junkd guard runs only that bin/ path, with plain arguments.
-- The roles are agent types: `junkd:implementer`, `junkd:lead-implementer`, `junkd:verify-coordinator`, `junkd:ui-reviewer`, `junkd:test-planner`, `junkd:test-reviewer`, `junkd:orch-ops`. Spawn them by type without a `model` (theirs is pinned); any other agent needs `model: opus|sonnet|haiku`.
+- The roles are agent types: `junkd:implementer`, `junkd:lead-implementer`, `junkd:verify-coordinator`, `junkd:ui-reviewer`, `junkd:test-planner`, `junkd:orch-ops`. Spawn them by type without a `model` (theirs is pinned); any other agent needs `model: opus|sonnet|haiku`.
 - The settings are the junkd plugin's `orch_*` rows (`/config` under junkd, or `/junkd:orch panel`); `orch-state settings` prints them without the prefix.
 
 ## Codex delegation rules

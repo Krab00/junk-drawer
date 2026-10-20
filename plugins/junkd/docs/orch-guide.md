@@ -69,9 +69,9 @@ Two more principles hold the whole thing together:
                               │
                     ┌─────────▼──────────┐
                     │  4. VERIFY (gate)  │  verify-coordinator:
-                    │                    │    test-planner → matrix from the DIFF
+                    │                    │    matrix from the DIFF (test-planner if critical)
                     │                    │    ui-reviewer   → browser, screenshot/criterion
-                    │                    │    test-reviewer → test-quality audit
+                    │                    │    test-quality audit (≥ 5 own mutants)
                     │                    │    + inline curl/build/test + standing checks
                     └─────────┬──────────┘   → ONE merged verdict + FAILING: list
                               │
@@ -138,10 +138,9 @@ specific property the orchestrator then trusts without re-checking.
 |---|---|---|
 | **`implementer`** | Builds exactly one task on its own branch in its own worktree. | Scoped changes only (no architectural decisions, no adjacent "improvements"); authors tests for its change; runs the real build/lint/test before reporting; never touches the base branch. |
 | **`lead-implementer`** | Builds one *big* task by fanning out to parallel sub-implementers. | Freezes the shared contract (types/DTOs/signatures) **first**, so no slice guesses another's interface; slices are **file-disjoint**; merges them back and runs the final gate; **falls back to flat** if the task can't be cut cleanly. |
-| **`verify-coordinator`** | Owns the entire verification of one task. | Builds and tears down the verify env; spawns the three reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. **No PASS without tool evidence.** Keeps all the heavy output out of the orchestrator's context. |
-| **`test-planner`** | Reads the **diff** and derives the mandatory test matrix. | One binding row per changed branch / guard / validation / fallback / boundary — happy **and** edge — each with a *real* induction recipe and a preferred layer (`e2e`/`web`/`api`). A `?state=`-style preview is never accepted as proof of an error/edge row. |
+| **`verify-coordinator`** | Owns the entire verification of one task. | Builds and tears down the verify env; audits the shipped tests itself and spawns the reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. **No PASS without tool evidence.** Keeps all the heavy output out of the orchestrator's context. |
+| **`test-planner`** | Reads the **diff** and derives the mandatory test matrix; spawned only for a `critical: true` task or on request (the coordinator derives the matrix itself otherwise). | One binding row per changed branch / guard / validation / fallback / boundary — happy **and** edge — each with a *real* induction recipe and a preferred layer (`e2e`/`web`/`api`). A `?state=`-style preview is never accepted as proof of an error/edge row. |
 | **`ui-reviewer`** | Verifies the UI/browser criteria by driving the real browser. | One screenshot per criterion via `agent-browser`; every state (default/empty/loading/error/no-permission); data checked against the real account, not a mock; PASS/FAIL/PM-REVIEW — never on the implementer's word. |
-| **`test-reviewer`** | Audits the tests that ship with the change. | Judges *quality* (real assertions, coverage of the change, no over-mocking, modifications truly updated) — not just that the suite is green. Returns `OK` or `GAPS`; `GAPS` is a FAIL. |
 
 A note on **where evidence lives**: the `verify-coordinator` and `ui-reviewer` deliberately run in
 the orchestrator's checkout, **not** the throwaway verify worktree, so the screenshots and the
@@ -184,7 +183,7 @@ exist.
 
 | Standing check | Gated on | What it proves |
 |---|---|---|
-| **Green scoped suite + change covered**, plus an independent **test-quality audit** (`test-reviewer` `GAPS` = FAIL) when tests were added/touched | `tests` declared | The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions. |
+| **Green scoped suite + change covered**, plus the coordinator's own **test-quality audit** (real assertions, modified behaviour re-pinned, ≥ 5 own mutants from the diff's branches; `GAPS` = FAIL) when tests were added/touched | `tests` declared | The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions. |
 | **Malformed body → clean 4xx naming the field, never a 500** | `api` declared | Every touched write-endpoint validates its input. Happy-path-only is not a pass. |
 | **Real-data provenance** — a fresh account created *this run* with **random** values; rendered == returned == stored | `web` + `api` declared | The screen shows *this account's* data from the live API — never a mock/demo seed or a `?preview=` switch a hardcoded value could pass. |
 | **FE actually calls the live API** on data-backed routes, verified **E2E through the UI** | `web` + `api` declared | The frontend really consumes the backend end to end — not static content with a silent mock behind it. |
@@ -196,7 +195,7 @@ exist.
 ### Break rows
 
 The matrix asks whether each path works; it never asks what happens when two of them happen at
-once, in the wrong order, twice, or half way. So after the matrix `test-planner` writes a **Break**
+once, in the wrong order, twice, or half way. So after the matrix a **Break**
 section from the same diff, over six kinds: **concurrency** (two of the same request at once against
 one resource: one wins, no double effect, no 500), **ordering** (steps out of order or repeated: a
 clean 4xx/409, state unchanged), **replay** (the identical request again after success: idempotent
@@ -217,7 +216,7 @@ cannot induce this run is a `PM-REVIEW` with the reason.
 Security is a standing check of the verify leg, not a new agent and not the implementer's own business.
 With `capabilities.security: { severity: high }` in the config (`/junkd:orch-init` proposes it when the
 repo has a web app, an api, or a file named like `auth|login|session|token|secret|upload|exec|spawn|sql|query`),
-the `verify-coordinator` spawns one fresh reviewer in step 0, beside `test-planner`: Sonnet, or Opus when
+the `verify-coordinator` spawns one fresh reviewer in step 0, beside the matrix work: Sonnet, or Opus when
 the diff touches such a file. It runs Claude Code's built-in `security-review` skill over
 `git diff <base>...<branch>` in the verify worktree, on the changed files and what they call. Each
 finding at or above `severity` is its own `FAIL` row with `file:line` and the class; lower findings are
@@ -423,7 +422,7 @@ Evidence files land in `<tasks_dir>/<ID>.evidence/`.
 3. **Delegated.** A short plan + the current lessons go to an `implementer`, spawned in its own
    worktree on branch `task/adhoc-1-fix-login-redirect`, fed the dev-server and test commands from
    the config.
-4. **Verified.** `verify-coordinator` boots the app, has `test-planner` derive the matrix from the
+4. **Verified.** `verify-coordinator` boots the app, derives the matrix from the
    diff (including the *failed*-login and *already-logged-in* branches), has `ui-reviewer` drive the
    real browser through the redirect on a fresh random account, runs the standing checks, and
    returns a merged verdict.

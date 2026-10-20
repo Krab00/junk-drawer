@@ -48,9 +48,9 @@ binds Opus the same way. On any other model this sheet does not apply: work inli
 - A fix-round implementer the harness isolates in its own agent worktree commits on a side branch:
   fast-forward the task branch to it. A handover WIP commit that relaxed a bound or a check is tested
   again before the next agent resumes from it.
-- Reviewers and verifiers are fresh every round: adversarial freshness beats cache savings.
-- An agent that goes idle without reporting is checked by a cheap Haiku inspector, not by
-  restarting it.
+- Reviewers and verifiers are fresh every round: adversarial freshness beats cache savings. The
+  `verify-coordinator` audits the tests itself; `test-planner` only on `critical: true` or on request.
+- An agent that goes idle without reporting is checked by a cheap Haiku inspector, not by restarting it.
 - A context line starting `watchdog:` comes from the junkd agent watchdog (no model, no tokens),
   not from the user. `<agent> died (no stop record, ...)`: it is gone without a report; resume it
   by SendMessage or spawn a fresh agent on the named branch. `<agent> idle N min ...; ping it or

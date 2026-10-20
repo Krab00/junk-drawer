@@ -102,7 +102,7 @@ test('kindOf: implementer implements, then fixes after a verify; reviewers verif
   expect(kindOf('junkd:implementer', 'impl-T1', false)).toBe('implement')
   expect(kindOf('junkd:implementer', 'impl-T1 verify', true)).toBe('fix')
   expect(kindOf('junkd:lead-implementer', '', true)).toBe('fix')
-  for (const r of ['verify-coordinator', 'ui-reviewer', 'test-planner', 'test-reviewer']) expect(kindOf(`junkd:${r}`, '', false), r).toBe('verify')
+  for (const r of ['verify-coordinator', 'ui-reviewer', 'test-planner']) expect(kindOf(`junkd:${r}`, '', false), r).toBe('verify')
   expect(kindOf('general-purpose', 'review the diff', false)).toBe('verify')
   expect(kindOf('junkd:orch-ops', 'git push the branch', false)).toBe('done')
   expect(kindOf('junkd:orch-ops', 'open the PR', false)).toBe('done')

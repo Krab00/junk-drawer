@@ -34,7 +34,7 @@ rec a1b2c3d4e5f6 '{"type":"junkd:verify-coordinator","tokens":900}' 202001010000
 rec impl-T17 '{"type":"junkd:implementer","tokens":1000}' 202001010100
 rec impl-T18 '{"type":"junkd:implementer","tokens":1000}' "$OLD"
 rec impl-T19 '{"type":"junkd:implementer","tokens":null,"deadNote":"no SubagentStop record · last: Bash tests/smoke.sh"}'
-rec trev-T22 '{"type":"junkd:test-reviewer","tokens":5}'
+rec tplan-T22 '{"type":"junkd:test-planner","tokens":5}'
 rec helper-T23 '{"type":"general-purpose","tokens":5}'
 rec helper-T24 '{"type":"general-purpose","tokens":5}' "$OLD"
 rec pr-T25 '{"type":"general-purpose","tokens":5}'
@@ -92,7 +92,7 @@ row impl-T18 | grep -qE '\|stop, report only \(T18 is done\)$' || fail "impl-T18
 # the watchdog's own death record
 row impl-T19 | grep -qE '^impl-T19\|implementer\|gone\|0m\|dead \(no SubagentStop record · last: Bash tests/smoke.sh\)$' || fail "impl-T19: $(row impl-T19)"
 # a reviewer that reported and is still alive: due at once, idle 0
-row trev-T22 | grep -qE '\|0m\|stop, report only \(reviewers are never messaged again\)$' || fail "trev-T22: $(row trev-T22)"
+row tplan-T22 | grep -qE '\|0m\|stop, report only \(reviewers are never messaged again\)$' || fail "tplan-T22: $(row tplan-T22)"
 # a pr-/gh- name is a reviewer whatever its type
 row pr-T25 | grep -qE 'stop, report only \(reviewers are never messaged again\)$' || fail "pr-T25: $(row pr-T25)"
 # anything else by the idle minutes: under, kept; over, due
@@ -149,7 +149,7 @@ grep -q '^ui-T30 ' <<<"$out" && ! grep -q '^impl-T17 ' <<<"$out" || fail "s2's r
 out=$(run --once --session s1)
 head -n1 <<<"$out" | grep -qF 'session s1' && grep -q '^impl-T17 ' <<<"$out" || fail "--session s1: $out"
 out=$(run --once --session nope)
-[ "$(grep -cE '^(impl|verify|trev|helper|pr|ui)-' <<<"$out")" = 0 ] || fail "--session nope lists records: $out"
+[ "$(grep -cE '^(impl|verify|tplan|helper|pr|ui)-' <<<"$out")" = 0 ] || fail "--session nope lists records: $out"
 
 # an implementer by its task's status: blocked is stopped at once, idle or not; todo (left in_progress) goes by the
 # idle minutes alone, kept under them, due over them; a process only pwdx can read (no lsof answer) still counts

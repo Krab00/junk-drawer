@@ -68,8 +68,8 @@ tests — this is part of "done":
   no runner, that's an architectural call — STOP and raise it as a Blocker; don't introduce a
   framework yourself.
 
-An independent `test-reviewer` audits these for quality (real assertions, coverage of the change,
-that modifications truly updated the tests) — write them to be read, not to pad a count.
+The verify-coordinator audits these for quality on its own (real assertions, coverage of the change,
+that modifications truly updated the tests, ≥ 5 mutants of its own) — write them to be read, not to pad a count.
 
 **What past rounds failed on** (apply each before the first report):
 - **One test per branch, up front.** Every branch of a parser, `if`, guard and fallback gets its own case before

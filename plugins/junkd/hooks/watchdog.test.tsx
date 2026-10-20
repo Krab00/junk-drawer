@@ -27,7 +27,7 @@ const ids = (xs: { id: string }[]) => xs.map(x => x.id)
 
 test('roles: the base type after the last colon; reviewers, orch-ops and pr-/gh- names stop at once; implementers by task', () => {
   expect(['junkd:verify-coordinator', 'orch:implementer', 'implementer', '', 'a:b:c'].map(baseType)).toEqual(['verify-coordinator', 'implementer', 'implementer', '', 'c'])
-  for (const t of ['verify-coordinator', 'junkd:test-planner', 'orch:test-reviewer', 'ui-reviewer', 'junkd:orch-ops']) expect(stopClass(t, 'x'), t).toBe('reviewer')
+  for (const t of ['verify-coordinator', 'junkd:test-planner', 'orch:ui-reviewer', 'ui-reviewer', 'junkd:orch-ops']) expect(stopClass(t, 'x'), t).toBe('reviewer')
   for (const n of ['pr-12', 'gh-merge']) expect(stopClass('general-purpose', n), n).toBe('reviewer')
   for (const n of ['xpr-1', 'pr', 'ghost-1', 'my-pr-1']) expect(stopClass('general-purpose', n), n).toBe('other')
   expect(stopClass('junkd:implementer', 'pr-1')).toBe('implementer') // the type wins over the name
@@ -71,7 +71,7 @@ test('stall: a tool call in flight never counts (a long Bash is no stall)', () =
 test('stall limits per role: implementer and anything else the setting, a reviewer 5 more; orch_stall_minutes moves both', () => {
   const at = (type: string, s = S) => stallLimit(type, s) / MINUTE
   expect([at('junkd:implementer'), at('lead-implementer'), at('general-purpose'), at('orch-ops')]).toEqual([15, 15, 15, 15])
-  expect([at('verify-coordinator'), at('junkd:test-planner'), at('test-reviewer'), at('ui-reviewer')]).toEqual([20, 20, 20, 20])
+  expect([at('verify-coordinator'), at('junkd:test-planner'), at('ui-reviewer')]).toEqual([20, 20, 20])
   const s7 = { ...S, stallMinutes: 7 }
   expect([at('implementer', s7), at('verify-coordinator', s7)]).toEqual([7, 12])
   // a reviewer at 16 and 20 minutes: no stall; past 20: a stall
@@ -690,12 +690,12 @@ test('a reviewer that reported (SubagentStop) and is still listed is stopped at 
 test('the stop record on disk counts too (a reload lost the module\'s), its mtime the finish; one of the watchdog\'s own (deadNote) does not', async ($, on) => {
   const w = world(on)
   await start($)
-  w.rec.files[`${RECS}/v1.json`] = '{"type":"junkd:test-reviewer","tokens":5}\n'
+  w.rec.files[`${RECS}/v1.json`] = '{"type":"junkd:test-planner","tokens":5}\n'
   w.rec.mtimes[`${RECS}/v1.json`] = T0
-  w.rec.files[`${RECS}/rev-2.json`] = '{"type":"junkd:test-reviewer","tokens":5}\n' // by name
-  w.rec.files[`${RECS}/v3.json`] = '{"type":"junkd:test-reviewer","tokens":null,"deadNote":"x"}\n'
+  w.rec.files[`${RECS}/rev-2.json`] = '{"type":"junkd:test-planner","tokens":5}\n' // by name
+  w.rec.files[`${RECS}/v3.json`] = '{"type":"junkd:test-planner","tokens":null,"deadNote":"x"}\n'
   w.rec.files[`${RECS}/v4.json`] = 'not json'
-  w.rec.agents = ['v1', 'v2', 'v3', 'v4'].map(id => agent(id, 'waiting', { type: 'junkd:test-reviewer', name: id === 'v2' ? 'rev-2' : id }))
+  w.rec.agents = ['v1', 'v2', 'v3', 'v4'].map(id => agent(id, 'waiting', { type: 'junkd:test-planner', name: id === 'v2' ? 'rev-2' : id }))
   await ticks(w, 1)
   expect(w.rec.stops).toEqual(['v1', 'v2'])
 })
