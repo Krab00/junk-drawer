@@ -86,6 +86,37 @@ commands, settings keys and state files.
 
 After installing or updating: `/plugin marketplace update junk-drawer`, then `/reload-plugins`.
 
+### Develop from a checkout
+
+Install junkd from a local clone, as a directory marketplace, so the hooks module, the shell hooks and the
+`junkd:<role>` agent types run from your working tree:
+
+```text
+/plugin marketplace add /abs/path/to/junk-drawer
+/plugin install junkd@junk-drawer
+/reload-plugins
+```
+
+A directory-source plugin loads in place from `/abs/path/to/junk-drawer/plugins/junkd`: an edit there takes effect at
+the next session start or `/reload-plugins`, and switching the checkout's branch changes what runs. Where
+`junk-drawer` was added from GitHub before, the `marketplace add` re-points it at the folder (the plugins already
+installed from it follow), and `claude plugin update junkd@junk-drawer` records the checkout's version. The
+`--plugin-dir` flag is not needed.
+
+The install is live when:
+
+- the `✚ junkd` segment shows under the prompt;
+- `junkd:implementer` (and the other `junkd:<role>` types) is in the agent list;
+- `~/.claude/junkd/orch/_agents/<session>/` fills after a subagent of the session stops (the SubagentStop record
+  the main-loop guard reads).
+
+`plugins/junkd/bin/junkd-doctor` checks the same from a shell (Claude Code only; on Codex, Kimi Code and OpenCode it
+prints "Claude Code only" and exits 0). One PASS/FAIL line each: junkd enabled in `settings.json`, its
+`installed_plugins.json` entry, the `junk-drawer` marketplace a directory source at an existing checkout, the
+checkout's plugin-root `bin`, `agents` and `scripts` links resolving, and this session's `_agents` folder (INFO, not a
+FAIL, when no subagent stopped yet). It reads `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, writes nothing and exits 1 on
+any FAIL. Run it through the Bash tool of a session, so it sees `CLAUDE_CODE_SESSION_ID`.
+
 ## junkd
 
 One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens and the status line, and the frame over the marketplace.
