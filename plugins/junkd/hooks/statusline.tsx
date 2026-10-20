@@ -11,6 +11,7 @@
 import type { On, RenderInput } from 'claude-code'
 import type { JunkdStatuslineField as Field } from '../types'
 import type { $, HideInput, OpenInput, SetResult, ShowInput } from './feature'
+import { isSets, shutSet } from './set'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf, rowsOf } from './settings'
 import { FIELDS, plain, statuslineView, type Els } from './statusline-views'
 
@@ -198,16 +199,19 @@ export function registerStatusline(on: On, options: Record<string, unknown>): vo
   })
 
   // The person's closes (q, ×) pass here; ours go through closePane.
-  on('ui.close', { id: PANE }, (_$, e, next) => {
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const isSet = isSets(owner)
     paneOpen = false
     owner = undefined
-    return next(e)
+    const r = await next(e)
+    if (isSet) await shutSet($)
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e: RenderInput<'Pane'>, next) => {
     if (e.surface === 'mobile') return next(e)
     return statuslineView($.ui.resolve(e) as Els, e.props, { values: { ...S }, preview, note }, {
-      close: () => void closePane($),
+      close: () => void (isSets(owner) ? shutSet($) : closePane($)),
       set: (field, value) => void setRow($, field, value),
     })
   })

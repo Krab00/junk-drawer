@@ -8,6 +8,7 @@
 //   finds the pane gone.
 import type { AgentSpawnInput, AgentSpawnResult, CommandRunInput, On, RenderInput, ToolCallInput, ToolCallResult } from 'claude-code'
 import type { HideInput, SetResult } from './feature'
+import { isSets, shutSet } from './set'
 import type { $ } from './feature'
 import { T, applyToolsSettings, coerce, resetTools, countSkill, tallyTool, isField, isRoute, emptyCounters, readWorktrees, mergeAgents, pickTranscript, projectFolder, revealCommand, type Route } from './tools'
 import { toolsView, type Els } from './tools-views'
@@ -310,9 +311,12 @@ export function registerTools(on: On, options: Record<string, unknown>): void {
   })
 
   // The person's closes (q, ×) pass here; ours go through closePane.
-  on('ui.close', { id: TOOLS_PANE_ID }, (_$, e, next) => {
+  on('ui.close', { id: TOOLS_PANE_ID }, async ($, e, next) => {
+    const isSet = isSets(owner)
     closed()
-    return next(e)
+    const r = await next(e)
+    if (isSet) await shutSet($)
+    return r
   })
 
   // A drawing that throws ends the poll (the engine drops what it could not draw).
@@ -320,7 +324,7 @@ export function registerTools(on: On, options: Record<string, unknown>): void {
     if (e.surface === 'mobile') return next(e)
     try {
       return toolsView($.ui.resolve(e) as Els, e.props, now, {
-        close: () => void closePane($),
+        close: () => void (isSets(owner) ? shutSet($) : closePane($)),
         go: route => {
           T.route = route
           redraw($)

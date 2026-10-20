@@ -119,8 +119,12 @@ type Open = { id: string; title?: string; focus?: true }
 // the rename; `realPath` resolves a symlinked path; `listThrows` and `hintThrows` fail $.command.list and the prompt
 // hint beneath; `existsThrows` fails fs.exists on the paths it matches; `shHome` is what `sh -c 'echo $HOME'` prints
 // (default /fake/h2); `sha` is what `git rev-parse --short HEAD` prints (absent: git exits 128, no checkout),
-// `gitThrows` fails the run itself (no git binary); `render` draws a Pane the module passes on.
+// `gitThrows` fails the run itself (no git binary); `render` draws a Pane the module passes on; `clock` mocks the
+// clock (a timer ticks only when a test advances it) and `livePanes` makes ui.panes answer the panes open now, so
+// a poll that looks for its pane finds it while it is up.
 type Opts = {
+  clock?: boolean
+  livePanes?: boolean
   shHome?: string
   env?: Record<string, string>
   checkout?: string
@@ -149,6 +153,10 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
     denyOpen: {} as Record<string, string>, denyFocusedOpen: {} as Record<string, string>,
     held: undefined as Promise<void> | undefined, release: () => {}, readGate: undefined as Promise<void> | undefined,
     tabs: [] as string[], // the open panes in open order, as the engine draws their tabs
+    // `denyClose.<id>` refuses that pane's every close with the reason (a throw, as the engine's refusal reaches `$`).
+    denyClose: {} as Record<string, string>,
+    paneReads: 0, // ui.panes calls: the tools poll asks at every tick
+    clock: o.clock ? mock.clock(on, { now: 1_000_000 }) : undefined,
   }
   const done = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   on('env.get', (_$, e) => ({ value: env[e.name] }))
@@ -213,9 +221,16 @@ function world(on: On, files: Record<string, string>, o: Opts = {}) {
     if (!rec.tabs.includes(e.id)) rec.tabs.push(e.id)
     return { value: { isPlaced: true as const } }
   })
-  on('ui.close', (_$, e) => { rec.closed.push(e.id); rec.log.push(`ui.close ${e.id}`); rec.tabs = rec.tabs.filter(t => t !== e.id); return { value: undefined } })
+  on('ui.close', (_$, e) => {
+    rec.closed.push(e.id)
+    rec.log.push(`ui.close ${e.id}`)
+    const deny = rec.denyClose[e.id]
+    if (deny) return { deny }
+    rec.tabs = rec.tabs.filter(t => t !== e.id)
+    return { value: undefined }
+  })
   on('ui.focus', () => ({}))
-  on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
+  on('ui.panes', () => { rec.paneReads++; return { value: (o.panes ?? (o.livePanes ? rec.tabs.map(id => ({ id })) : [])) as never } })
   on('command.register', (_$, e) => { rec.registered.push(e.name); return { value: { command: e.name } } })
   on('command.list', () => { if (o.listThrows) throw new Error('list broke'); return { value: rec.commands } })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -458,17 +473,170 @@ test('AC1: junkd opens and every feature pane goes out before the pane data is r
   await done
 })
 
-test('AC2: a set pane the person closes by hand loses the mark: closing the set does not close it again', W, async ($, on) => {
+// The set's feature panes: the pane id, its title, the key of its × in the drawing (hotkey q), and the `$.junkd.open`
+// pane that opens it on its own.
+const MEMBERS = [
+  { id: 'ahandoff', title: 'handoff', close: 'close', pane: 'handoff' },
+  { id: 'orch', title: 'orch', close: 'close', pane: 'orch' },
+  { id: 'statusline', title: 'statusline', close: 'close', pane: 'statusline' },
+  { id: 'junkd-tools', title: 'tools', close: 'close', pane: 'tools' },
+  { id: 'junkd-lessons', title: 'lessons', close: 'lessons:close', pane: 'lessons' },
+] as const
+const SET_TABS = ['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools', 'junkd-lessons']
+// Every pane the set closes, the pressed one first (it is the person's close), then junkd and the rest in tab order.
+const closeFrom = (id: string) => [`ui.close ${id}`, ...CLOSE_SET.filter(c => c !== `ui.close ${id}`)]
+const mountMember = ($: Engine, m: (typeof MEMBERS)[number]) => $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...paneOf(m.id, m.title) })
+
+for (const m of MEMBERS) {
+  test(`T28: the person's × on ${m.id} (the tab's close) while the set is up closes junkd and every member in one action, each once; the next toggle opens the set again`, W, async ($, on) => {
+    const rec = world(on, fixture())
+    await start($)
+    await run($, 'junkd')
+    expect(rec.tabs).toEqual(SET_TABS)
+    rec.log.length = 0
+    await run($, 'shut', m.id)
+    expect(rec.tabs).toEqual([])
+    expect(rec.log).toEqual(closeFrom(m.id))
+    rec.log.length = 0
+    await run($, 'junkd') // the set is down: this opens (all six drawn again), it does not close
+    expect(rec.log).toEqual(OPEN_SET)
+    expect(rec.tabs).toEqual(SET_TABS)
+  })
+
+  test(`T28: the × (hotkey q) drawn in the ${m.id} pane closes junkd and every member in one press, each once; the set opens again after`, W, async ($, on) => {
+    const rec = world(on, fixture())
+    await start($)
+    await run($, 'junkd')
+    const pane = await mountMember($, m)
+    expect((await pane.find({ type: 'Button', key: m.close }))?.props.hotkey).toBe('q')
+    rec.log.length = 0
+    await pane.press({ key: m.close })
+    expect(rec.tabs).toEqual([])
+    expect(rec.log).toEqual(CLOSE_SET) // the pane's own close is among them, in tab order
+    expect(rec.toasts).toEqual([])
+    await pane.unmount()
+    rec.log.length = 0
+    await run($, 'junkd')
+    expect(rec.log).toEqual(OPEN_SET)
+    expect(rec.tabs).toEqual(SET_TABS)
+  })
+
+  test(`T28: ${m.id} opened on its own, with the others up on their own too, closes alone on its ×: nothing else is touched`, W, async ($, on) => {
+    const rec = world(on, fixture())
+    await start($)
+    for (const other of MEMBERS) await call($, 'open', { pane: other.pane })
+    const alone = MEMBERS.map(x => x.id)
+    expect(rec.tabs).toEqual(alone)
+    const pane = await mountMember($, m)
+    rec.log.length = 0
+    await pane.press({ key: m.close })
+    expect(rec.log).toEqual([`ui.close ${m.id}`])
+    expect(rec.tabs).toEqual(alone.filter(id => id !== m.id))
+    await pane.unmount()
+    // the tab's close of another one that is up on its own: the same, alone
+    rec.log.length = 0
+    const next = MEMBERS.find(x => x.id !== m.id)!
+    await run($, 'shut', next.id)
+    expect(rec.log).toEqual([`ui.close ${next.id}`])
+    expect(rec.tabs).toEqual(alone.filter(id => id !== m.id && id !== next.id))
+  })
+}
+
+test('T28: a member the person reopened on its own while the set is up closes alone on its ×; the set and the others stay', W, async ($, on) => {
   const rec = world(on, fixture())
   await start($)
   await run($, 'junkd')
-  const before = rec.closed.length
-  await run($, 'shut', 'ahandoff') // the person's close mark on handoff's tab
-  expect(rec.tabs).toEqual(['junkd', 'orch', 'statusline', 'junkd-tools', 'junkd-lessons'])
-  await run($, 'junkd')
+  await run($, 'junkd:orch', 'panel') // the person closes orch ...
+  await run($, 'junkd:orch', 'panel') // ... and opens it on its own
+  const pane = await mountMember($, MEMBERS[1])
+  rec.log.length = 0
+  await pane.press({ key: 'close' })
+  expect(rec.log).toEqual(['ui.close orch'])
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'statusline', 'junkd-tools', 'junkd-lessons'])
+  await pane.unmount()
+  await run($, 'junkd:statusline') // statusline: closed, then up on its own; the tab's close this time
+  await run($, 'junkd:statusline')
+  rec.log.length = 0
+  await run($, 'shut', 'statusline')
+  expect(rec.log).toEqual(['ui.close statusline'])
+  expect(rec.tabs).toEqual(['junkd', 'ahandoff', 'junkd-tools', 'junkd-lessons'])
+  await run($, 'junkd') // the set is still up: this closes what is still its own
   expect(rec.tabs).toEqual([])
-  // handoff closed exactly once from here: the person's close; the set's close leaves it alone
-  expect(rec.closed.slice(before)).toEqual(['ahandoff', 'junkd', 'orch', 'statusline', 'junkd-tools', 'junkd-lessons'])
+})
+
+test("T28: a pane that settings ▸ left on its own closes alone on its ×; junkd's set is down already", W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await run($, 'junkd')
+  const junkd = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  await junkd.press({ key: 'pane:orch' })
+  await junkd.unmount()
+  expect(rec.tabs).toEqual(['orch'])
+  const orch = await mountMember($, MEMBERS[1])
+  rec.log.length = 0
+  await orch.press({ key: 'close' })
+  expect(rec.log).toEqual(['ui.close orch'])
+  expect(rec.tabs).toEqual([])
+})
+
+for (const m of MEMBERS) {
+  test(`T28: a × on ${m.id} stops every timer of the set: the tools poll ticks while the set is up, not after, and again once the set reopens`, W, async ($, on) => {
+    const rec = world(on, fixture(), { clock: true, livePanes: true })
+    await start($)
+    await run($, 'junkd')
+    await rec.clock!.settle()
+    const before = rec.paneReads
+    await rec.clock!.advance(120_000)
+    expect(rec.paneReads, 'the poll runs while the set is up').toBeGreaterThan(before)
+    const pane = await mountMember($, m)
+    await pane.press({ key: m.close })
+    await pane.unmount()
+    expect(rec.tabs).toEqual([])
+    await rec.clock!.settle()
+    const after = rec.paneReads
+    await rec.clock!.advance(600_000)
+    expect(rec.paneReads, 'no tick after the set closed').toBe(after)
+    await run($, 'junkd') // reopened: the poll is back
+    await rec.clock!.settle()
+    const reopened = rec.paneReads
+    await rec.clock!.advance(120_000)
+    expect(rec.paneReads, 'the reopened set polls again').toBeGreaterThan(reopened)
+  })
+}
+
+test("T28: a close the engine refuses on junkd's pane: the other members still close, and one toast says why (the ×, and the tab's close)", W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await run($, 'junkd')
+  rec.denyClose.junkd = 'junkd: close refused'
+  const orch = await mountMember($, MEMBERS[1])
+  await orch.press({ key: 'close' })
+  expect(rec.tabs).toEqual(['junkd']) // everything else went
+  expect(rec.toasts).toHaveLength(1)
+  expect(rec.toasts[0]).toMatch(/^✗ .*junkd: close refused$/)
+  await orch.unmount()
+
+  rec.denyClose.junkd = ''
+  rec.toasts.length = 0
+  await run($, 'junkd') // junkd is up still, set down: this opens the set again
+  expect(rec.tabs).toEqual(SET_TABS)
+  rec.denyClose.junkd = 'junkd: close refused'
+  await run($, 'shut', 'ahandoff')
+  expect(rec.tabs).toEqual(['junkd'])
+  expect(rec.toasts).toHaveLength(1)
+  expect(rec.toasts[0]).toMatch(/^✗ .*junkd: close refused$/)
+})
+
+test('T28: a member whose close the engine refuses does not hold the others back, and says nothing', W, async ($, on) => {
+  const rec = world(on, fixture())
+  await start($)
+  await run($, 'junkd')
+  rec.denyClose['junkd-tools'] = 'tools: close refused'
+  const orch = await mountMember($, MEMBERS[1])
+  await orch.press({ key: 'close' })
+  expect(rec.tabs).toEqual(['junkd-tools'])
+  expect(rec.toasts).toEqual([])
+  await orch.unmount()
 })
 
 test("AC2: the person's close of junkd (×, the tab's close) closes the set's feature panes too; one opened on its own stays", W, async ($, on) => {

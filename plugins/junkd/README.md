@@ -117,10 +117,14 @@ closes them together:
 
 All six are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
 already open on its own closes first and opens again behind junkd's tab, so its tab never comes first, and from
-then on it is the set's. `q`, a second `/junkd:junkd`, or closing junkd's tab by hand (`×`) closes them all, but only a
-feature pane that is still the set's: one you closed and opened again on your own (`/junkd:handoff panel`,
-`/junkd:orch panel`, `/junkd:ahandoff panel`, `/junkd:statusline`, `/junkd:tools`, `/junkd:lessons`, the 🪃 or 📒
-click) stays.
+then on it is the set's. The set closes as one: `q` or `×` in any of its panes (the engine draws one on each pane and
+gives the module no single control for the set, so the module answers a close of any member by closing every member),
+a second `/junkd:junkd`, or closing a tab by hand closes junkd and every feature pane that is still the set's, in one
+action, with no leftover and no second press. A feature pane that is not the set's closes alone, and the set stays:
+one you closed and opened again on your own (`/junkd:handoff panel`, `/junkd:orch panel`, `/junkd:ahandoff panel`,
+`/junkd:statusline`, `/junkd:tools`, `/junkd:lessons`, the 🪃 or 📒 click), or one a `settings ▸` press left open
+(that press closes junkd and the other panes, so the pane left is the only one up). Its own `×` closes just that pane.
+The same command that opened a member (`/junkd:orch panel`, say) still toggles that pane alone.
 
 Where the set sits depends on the layout. Only in the fullscreen layout (`"tui": "fullscreen"` in
 `settings.json`), from 110 terminal columns, it docks beside the transcript; narrower, and always on the main
