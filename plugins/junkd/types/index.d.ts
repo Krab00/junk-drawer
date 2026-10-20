@@ -70,6 +70,10 @@ export type JunkdAhandoff = {
   count: number
   route: JunkdHandoffRoute
   paneOpen: boolean
+  // What a reloaded module needs to carry on the loop it was running (session-scoped, unlike the store): the
+  // fresh window's baseline and whether its first measurement is still pending. Absent in a value an older build wrote.
+  base?: number
+  fresh?: boolean
 }
 
 // Every call through `$` resolves asynchronously (a noun's method is an event), and the host hands a method one

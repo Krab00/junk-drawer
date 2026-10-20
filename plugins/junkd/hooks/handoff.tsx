@@ -2,7 +2,7 @@
 // resume), the 🪃 segment and its pane. The `$`-free parts are handoff-lib.ts (state, options), handoff-ui.tsx and
 // handoff-views.tsx (the pane). index.tsx runs handoffStart at session start, handoffToolCall inside the one tool.call
 // hook and handoffSegment inside the one PromptHint render.
-import { atom, update } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 import type { Next, On, RenderInput, RenderSurface, ToolCallInput } from 'claude-code'
 
 import type { JunkdAhandoff as Ahandoff } from '../types'
@@ -30,7 +30,7 @@ const STORE = 'ahandoff'
 
 const view = atom({ plugin: 'junkd', key: 'ahandoff' } as const, {
   on: false, phase: 'idle', percent: 0, threshold: 85, checkEvery: 5,
-  prompt: '', lastId: '', count: 0, route: 'auto', paneOpen: false,
+  prompt: '', lastId: '', count: 0, route: 'auto', paneOpen: false, base: 0, fresh: false,
 } satisfies Ahandoff)
 
 // ponytail: plugin commands are namespaced (`junkd:handon`) — junkd's own first, else any plugin's by suffix.
@@ -59,18 +59,18 @@ async function handoffDir($: $): Promise<string> {
 
 // ------------------------------------------------------------------ the measurement log
 // Every measurement the loop makes or skips writes one line to `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/handoff/<session>.log`:
-//   <iso> <hook> percent=<n> limit=<n> armed=<bool> fresh=<bool> decision=<fire|skip:reason> base=<n> threshold=<n> phase=<p>
+//   <iso> <hook> percent=<n> limit=<n> armed=<bool> fresh=<bool> decision=<fire|skip:reason> base=<n> threshold=<n> phase=<p> window=<n>
 // (a trailing `note=<word>` where the hook did something besides decide). Appended with `>>`, never read back; a log
 // that cannot be written is dropped, the loop never waits on it for more than the one append. The last line (without
 // its time) is also kept in S.last, for `/junkd:ahandoff status`.
 const PLAIN_ID = /^[A-Za-z0-9_-]+$/
-type Hook = 'tool.call' | 'turn.complete' | 'session.measure'
+type Hook = 'session.start' | 'tool.call' | 'turn.complete' | 'session.measure'
 async function logPath($: $): Promise<string | undefined> {
   const sid = await $.session.id().catch(() => '')
   return PLAIN_ID.test(sid) ? `${await configDir($)}/junkd/handoff/${sid}.log` : undefined
 }
 async function measured($: $, hook: Hook, percent: number, decision: string, note = ''): Promise<void> {
-  const body = `${hook} percent=${percent} limit=${limit()} armed=${S.armed} fresh=${S.fresh} decision=${decision} base=${S.base} threshold=${S.threshold} phase=${S.phase}${note ? ` note=${note}` : ''}`
+  const body = `${hook} percent=${percent} limit=${limit()} armed=${S.armed} fresh=${S.fresh} decision=${decision} base=${S.base} threshold=${S.threshold} phase=${S.phase} window=${S.window}${note ? ` note=${note}` : ''}`
   S.last = body
   S.lastAt = Date.now()
   try {
@@ -116,6 +116,7 @@ function sync($: $, percent?: number) {
   return update($, view, v => ({
     ...v, on: S.armed, phase: S.phase, prompt: S.prompt, lastId: S.lastId ?? '', count: S.count,
     threshold: S.threshold, checkEvery: S.checkEvery, percent: S.percent, route: S.route, paneOpen: S.paneOpen,
+    base: S.base, fresh: S.fresh,
   }))
 }
 
@@ -286,6 +287,7 @@ async function disarm($: $) {
   S.phase = 'idle'
   S.written = null
   S.fresh = false
+  S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
   S.armedAt = null
   await persist($)
   await sync($)
@@ -433,6 +435,25 @@ export function handoffStatus() {
   return status()
 }
 
+// A reload of the module (a change in the /config menu, /reload-plugins, a save in a watched plugin folder) runs
+// register again with S back at its defaults and the loop disarmed, while $.state still holds what the session's loop
+// was doing. Carry the loop on from there; a new process finds nothing and stays as its settings say.
+async function restore($: $) {
+  if (S.armed || !S.enabled) return
+  const kept = await read($, view).catch(() => undefined)
+  if (!kept?.on) return
+  S.armed = true
+  S.armedAt ??= Date.now()
+  S.prompt = kept.prompt || S.prompt
+  S.count = kept.count
+  S.lastId = kept.lastId || null
+  S.base = kept.base ?? 0
+  S.fresh = kept.fresh ?? false
+  await persist($)
+  await measured($, 'session.start', S.percent, 'skip:restored', 'reload')
+  $.ui.toast(`handoff: the plugin reloaded — auto handoff still on, threshold ${S.threshold}%`)
+}
+
 export async function handoffStart($: $): Promise<void> {
   const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string }; resumeAt?: number } | undefined
   if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /junkd:handon ${saved.pending.id}`)
@@ -441,6 +462,7 @@ export async function handoffStart($: $): Promise<void> {
     $.ui.toast(`handoff: a 5h-limit resume was due at ${hhmm(saved.resumeAt)} — ${how}`)
   }
   if (saved?.resumeAt) await $.store.set(STORE, { ...saved, resumeAt: undefined })
+  await restore($)
   await sync($)
 }
 
@@ -459,6 +481,7 @@ export async function handoffToolCall($: $, e: ToolCallInput, next: Next<'tool.c
   } else if (++S.calls % S.checkEvery === 0) {
     const { context } = await $.session.usage()
     S.tokens = context.tokens ?? S.tokens
+    S.window = context.window ?? S.window
     const percent = context.percent ?? 0
     const fire = percent >= limit()
     await measured($, 'tool.call', percent, fire ? 'fire' : 'skip:below-limit')
@@ -547,6 +570,7 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     }
     const { context } = await $.session.usage()
     S.tokens = context.tokens ?? S.tokens
+    S.window = context.window ?? S.window
     const percent = context.percent ?? 0
     if (S.fresh) {
       // nothing: the first measurement of the new window decides (session.measure)
@@ -582,9 +606,13 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     }
     if (e.changed.includes('context')) {
       S.tokens = e.context.tokens ?? S.tokens
+      S.window = e.context.window ?? S.window
       const percent = e.context.percent ?? S.percent
       let note = e.context.percent === undefined ? 'no-percent' : ''
-      if (e.context.percent !== undefined && (S.fresh || !S.base)) {
+      // The baseline is the fill of a window THIS loop's handoff started (system prompt + handon): a limit that
+      // sits at or under it counts growth from it. Any other window (a fresh session, the one the loop was armed
+      // in) has none: its limit is the threshold itself, whatever the first turns already filled.
+      if (e.context.percent !== undefined && S.fresh) {
         S.base = percent
         note = 'base-set'
         if (S.armed && S.fresh) {
