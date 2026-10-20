@@ -141,17 +141,21 @@ done
 orch_skills="$junkd/skills"
 init_md="$orch_skills/orch/commands/init.md"
 for needle in '## 5. Binding rules → checks' '/binding|non-negotiable|never|must|invariant/i' '`never`, `always`, `must` or `only`' \
-    '**row**' '**covered by test' 'stays prose' 'write only the rows the user' 'Re-runs diff against the existing rows' \
-    'When `.orch/TEST-POLICY.md` does not exist' 'leave it alone and do not offer'; do
+    '**row**' '**covered by test' 'stays prose' 'Write only the rows the user confirms.' \
+    'A row is never added silently; a declined row stays in the table as prose.' \
+    'A candidate that re-derives as covered by a test, or as prose, is not new' \
+    'If nothing is new, say so and write nothing.' \
+    'Offer the starter test policy only when `.orch/TEST-POLICY.md` is absent.' 'Copy only after the user agrees.' \
+    'When the file exists, leave it alone and do not offer.'; do
     rg -qF -- "$needle" "$init_md" || { echo "junkd: orch/commands/init.md lacks: $needle"; exit 1; }
 done
 rg -qF 'Binding rules → checks' "$orch_skills/orch-init/SKILL.md" || { echo "junkd: orch-init/SKILL.md host notes do not mention the Binding rules step"; exit 1; }
 policy="$orch_skills/orch/templates/TEST-POLICY.md"
 [ -f "$policy" ] && [ ! -L "$policy" ] || { echo "junkd: orch/templates/TEST-POLICY.md is not a real file"; exit 1; }
-[ "$(rg -c '^[1-9]\. \*\*' "$policy")" = 7 ] || { echo "junkd: TEST-POLICY.md does not carry seven numbered rules"; exit 1; }
+[ "$(rg -c '^[0-9]+\. \*\*' "$policy")" = 7 ] || { echo "junkd: TEST-POLICY.md does not carry seven numbered rules"; exit 1; }
 rg -q '^7\. \*\*Every binding rule of CLAUDE\.md has a test or a `standing_checks_extra` row' "$policy" ||
     { echo "junkd: TEST-POLICY.md rule 7 is not the binding-rule check"; exit 1; }
-rg -qF 'rule exists in CLAUDE.md §X, no check' "$orch_skills/orch/commands/orch.md" || { echo "junkd: orch.md retro lacks the rule-exists shortcut"; exit 1; }
+rg -qF 'do not wait for the recurrence: propose the promotion at once and say so ("rule exists in CLAUDE.md §X, no check").' "$orch_skills/orch/commands/orch.md" || { echo "junkd: orch.md retro lacks the rule-exists shortcut"; exit 1; }
 rg -qF 'Rules need checks' "$junkd/docs/orch-guide.md" || { echo "junkd: docs/orch-guide.md lacks Rules need checks"; exit 1; }
 
 # $.junkd.schema() is a mirror of the manifest's userConfig (a hooks module cannot import JSON): every row's key,

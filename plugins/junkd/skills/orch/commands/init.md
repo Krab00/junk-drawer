@@ -91,13 +91,15 @@ explicit "prose". Run it after the config is written (§4), before the "how to s
      nouns and name the file (and test) that asserts it. No row is written.
    - **not tool-checkable, stays prose**: no tool can decide it (taste, architecture intent, naming).
      No row is written.
-3. **Show the table** (`rule | source | outcome | row or test path`) and **write only the rows the user
-   confirms**. A row is never added silently; a declined row stays in the table as prose.
-4. **Re-runs diff against the existing rows.** When `.orch/config.md` already has `standing_checks_extra`
-   rows, match each candidate to them (same source rule or same recipe) and to tests already named in
-   an earlier table; propose only candidates that are new. If nothing is new, say so and write nothing.
-5. **Offer the starter test policy.** When `.orch/TEST-POLICY.md` does not exist, offer to copy the orch
-   skill's `templates/TEST-POLICY.md` there (`${CLAUDE_PLUGIN_ROOT}/skills/orch/templates/TEST-POLICY.md`
-   on Claude Code, the sibling `orch` skill's `./templates/TEST-POLICY.md` elsewhere). Its seventh rule
-   is this step: every binding rule has a test or a row. Copy only after the user agrees; when the file
-   exists, leave it alone and do not offer.
+3. **Show the table** (`rule | source | outcome | row or test path`).
+   Write only the rows the user confirms.
+   A row is never added silently; a declined row stays in the table as prose.
+4. **Re-runs propose only what is new.**
+   A candidate with outcome row is new unless a `standing_checks_extra` row already holds its recipe or names its source rule.
+   A candidate that re-derives as covered by a test, or as prose, is not new: it writes nothing, so it is not proposed again and the second table lists nothing for it (at most a one-line count).
+   If nothing is new, say so and write nothing.
+5. **Offer the starter test policy only when `.orch/TEST-POLICY.md` is absent.**
+   Then offer to copy the orch skill's `templates/TEST-POLICY.md` there (`${CLAUDE_PLUGIN_ROOT}/skills/orch/templates/TEST-POLICY.md` on Claude Code, the sibling `orch` skill's `./templates/TEST-POLICY.md` elsewhere).
+   Its seventh rule is this step: every binding rule has a test or a row.
+   Copy only after the user agrees.
+   When the file exists, leave it alone and do not offer.
