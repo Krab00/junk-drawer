@@ -61,7 +61,12 @@ the next session start or `/reload-plugins`, and switching the checkout's branch
 installed from it follow), and `claude plugin update junkd@junk-drawer` records the checkout's version. The
 `--plugin-dir` flag is not needed. A `--plugin-dir` session next to an installed copy keeps its rows under
 `junkd@inline`, the installed one under `junkd@junk-drawer`: the status line reads the entry its command names (see
-[statusline](#which-pluginconfigs-entry-the-key)); the pane warns when both exist.
+[statusline](#which-pluginconfigs-entry-the-key)); the pane warns when both exist. Both are named `junkd`, and a
+session runs one mod of that name: with `--plugin-dir` it is the folder you pass (on 2.1.305, `/plugin` lists
+`1 mod active · junkd` with the marketplace copy installed and enabled), so an old marketplace copy such as 0.4.0
+does not draw a status line or write the line's rows next to it. Update or disable the installed copy
+(`/plugin disable junkd@junk-drawer`) all the same when you work from `--plugin-dir`: its `pluginConfigs` entry stays in
+settings.json and is the first one a script without `--config` would read.
 
 The install is live when:
 
@@ -1115,6 +1120,19 @@ stale, or `statusLine` is missing or `null`) rewrites the script and the command
 re-point the line at each session start: the one started last wins. The statusline pane shows the key
 (`config: pluginConfigs junkd@inline`) and warns `two junkd configs: <key> wins` when another `junkd@` entry exists
 in the file or the wired command reads a different one.
+
+#### The line follows the switch within a turn
+
+Turning the row off (`/junkd:statusline off`, the `a` key of the pane, `/config` → junkd → `statusline_enabled`, or
+`$.junkd.set`) removes `statusLine` from settings.json and the copy `~/.claude/junkd/statusline.sh`; on writes both
+again. Claude Code reads `statusLine` from settings.json live, so the line appears or goes within a turn, with no
+restart. One trap lived here: Claude Code keeps its own copy of settings.json and writes it back whole when a `/config`
+row changes, so a line the script had just removed came back with the row's write (and a line it had just written was
+lost), leaving the row off and the line drawn by a script that was gone. The row's write now waits until Claude Code
+has read the file the script changed (`$.settings.read` shows its copy; the wait gives up after 5 s), and after the
+write the file is checked once more and the script runs again if it does not say what the row says. The same holds at
+session start: another writer of settings.json (the output-style step of `setup.sh`, the host's first writes) can drop
+the freshly written line, so the start looks again 3 s later and wires it once more if it is gone while the row is on.
 
 The `wired` switch in the pane shows the real `statusLine` in the user's settings.json (junkd's command, with or
 without `--config`), not the `statusline_enabled` row: the row can be on while the line is gone, and a press then

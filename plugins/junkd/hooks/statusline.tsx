@@ -3,10 +3,14 @@
 // ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/statusline.sh (a copy: the plugin's own folder is a versioned cache);
 // bin/statusline-setup on|off copies it there and points settings.json's statusLine at it, or takes it out.
 // - enabled: true runs `statusline-setup on --config <key>`, false `statusline-setup off`, before the row is stored; a
-//   run that refuses (a statusLine of the person's own) or fails is the refusal, and the row stays as it was. At
-//   session start, while enabled, `on` runs again when the installed copy is missing or differs from the plugin's (a
-//   plugin update, the old plugin's path), or when settings.json has no statusLine, or one of ours whose command is
-//   not `<copy> --config <key>`; what it says is not shown.
+//   run that refuses (a statusLine of the person's own) or fails is the refusal, and the row stays as it was. Then the
+//   row waits until the host has read settings.json again (hostReadsFile: the host writes its own copy of the file back
+//   whole with the row, and would put the line back or drop it), and once it is stored the file is looked at: when it
+//   does not say what the row says, the script runs once more. At session start, while enabled, `on` runs again when
+//   the installed copy is missing or differs from the plugin's (a plugin update, the old plugin's path), or when
+//   settings.json has no statusLine, or one of ours whose command is not `<copy> --config <key>`; what it says is not
+//   shown. The start waits for the host the same way and looks again VERIFY_MS later (another writer of settings.json
+//   at the session start can drop the line).
 // - the segments: plain rows; the renderer reads them from settings.json (pluginConfigs) itself on every draw, from
 //   the entry the statusLine command names (`--config <key>`): the key this module's options are stored under.
 //   The engine does not hand a module its own key, so pluginKey derives it from the plugin's directory: an installed
@@ -150,14 +154,41 @@ async function refreshPreview($: $) {
   redraw($)
 }
 
+// The host keeps settings.json in memory and writes that copy back whole when a /config row changes. A statusLine that
+// statusline-setup has just written or removed is therefore undone by the row's own write (the line comes back after
+// `off`, goes after `on`) unless the host has read the file again, which it does a moment later on its own.
+// `$.settings.read` answers the host's copy: hostReadsFile waits until its statusLine is the file's (it gives up after
+// SETTLE_TRIES x SETTLE_MS and says so by returning false; a host that cannot say is the same as one that does not
+// catch up).
+export const SETTLE_MS = 100
+export const SETTLE_TRIES = 50
+const lineOf = (settings: Json | undefined) => JSON.stringify(settings?.statusLine ?? null)
+async function hostReadsFile($: $): Promise<boolean> {
+  for (let i = 0; i < SETTLE_TRIES; i++) {
+    const host = await $.settings.read({ source: 'user' }).catch(() => undefined)
+    if (lineOf(host) === lineOf(await userSettings($))) return true
+    await $.clock.sleep(SETTLE_MS)
+  }
+  return false
+}
+// Whether settings.json says what the enabled row says: junkd's line wired for on, none of junkd's for off.
+async function lineFollows($: $, value: boolean): Promise<boolean> {
+  return isWired(await userSettings($), await configDir($)) === value
+}
+
 // A row's write, on either path (`store` writes the row): enabled runs its script first and stores nothing when the
-// script refuses; a refused row runs the other mode to put settings.json back.
+// script refuses, waits for the host to read the file the script wrote (hostReadsFile), stores the row, and runs the
+// script once more when the file does not say what the row says after all; a refused row runs the other mode to put
+// settings.json back.
 async function storeRow<R extends { deny?: string }>($: $, field: Field, value: boolean, store: () => Promise<R>): Promise<R | { deny: string }> {
   if (field !== 'enabled') return store()
-  const run = await runSetup($, value ? 'on' : 'off')
+  const mode = value ? 'on' : 'off'
+  const run = await runSetup($, mode)
   if (run.deny !== undefined) return { deny: run.deny }
+  await hostReadsFile($)
   const r = await store()
   if (r.deny !== undefined) await runSetup($, value ? 'off' : 'on')
+  else if (!(await lineFollows($, value))) await runSetup($, mode)
   return r
 }
 
@@ -220,11 +251,10 @@ export async function statuslineHide($: $, input: HideInput = {}): Promise<void>
   if (input.owner !== undefined && input.owner !== owner) return
   await closePane($)
 }
-// While enabled: `statusline-setup on` when the installed copy is missing or is not the plugin's script, or when
-// settings.json has no statusLine, or a junkd one that does not read this session's key. A statusLine of the person's
-// own is left alone (on would only be refused). Silent.
-export async function statuslineStart($: $): Promise<void> {
-  if (!S.enabled) return
+// Whether the line needs wiring: the installed copy is missing or is not the plugin's script, or settings.json has no
+// statusLine, or a junkd one that does not read this session's key. A statusLine of the person's own is left alone
+// (on would only be refused).
+async function needsWiring($: $): Promise<boolean> {
   const cfg = await configDir($)
   const copy = `${cfg}/junkd/statusline.sh`
   const installed = await $.fs.read(copy).catch(() => undefined)
@@ -232,8 +262,21 @@ export async function statuslineStart($: $): Promise<void> {
   const line = (await userSettings($))?.statusLine
   const command = isObject(line) && typeof line.command === 'string' ? line.command : undefined
   const settled = command === commandFor(copy, pluginKey($.plugin.root)) || (line !== undefined && line !== null && !(command !== undefined && isJunkdCommand(command, cfg)))
-  if (ours !== undefined && installed === ours && settled) return
+  return !(ours !== undefined && installed === ours && settled)
+}
+// A session start runs beside the other writers of settings.json (setup.sh's output style, the host's own first
+// writes), each of which reads the file and writes it back whole: one of them can drop the line statusline-setup has
+// just written. So the line is looked at again VERIFY_MS later and wired once more if it is gone.
+export const VERIFY_MS = 3000
+// While enabled: `statusline-setup on` when needsWiring, then the host's read of the file (so its next write of a row
+// keeps the line) and the second look. Silent.
+export async function statuslineStart($: $): Promise<void> {
+  if (!S.enabled || !(await needsWiring($))) return
   await runSetup($, 'on')
+  await hostReadsFile($)
+  void $.clock.sleep(VERIFY_MS).then(async () => {
+    if (S.enabled && (await needsWiring($))) await runSetup($, 'on')
+  }).catch(() => undefined)
 }
 
 export function registerStatusline(on: On, options: Record<string, unknown>): void {
