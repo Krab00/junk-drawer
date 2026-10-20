@@ -7,7 +7,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 |---|---|
 | `/junkd:handoff` | Save a handoff of the session to disk and print its short id (`panel`, `auto [prompt]`, `off` drive the auto loop on Claude Code) |
 | `/junkd:handon [id]` | Resume a handoff in a fresh session (the newest without an id) |
-| `/junkd:ahandoff [prompt] \| off \| panel` | Arm the auto handoff loop: at a context threshold handoff, `/clear`, `/junkd:handon`, continue; resume after the 5h rate limit (Claude Code only) |
+| `/junkd:ahandoff [prompt] \| off \| panel \| status` | Arm the auto handoff loop: at a context threshold handoff, `/clear`, `/junkd:handon`, continue; resume after the 5h rate limit (Claude Code only) |
 | `/junkd:orch …` | The orchestration loop: tasks, implementer and verifier subagents, evidence gates, draft PRs (`panel` opens its settings pane) |
 | `/junkd:dashboard [close]` | Open the orch dashboard, a local HTML page with the task board, the agents' timeline, the recent events and the lessons; `close` stops its writes (`/junkd:orch dashboard` too) |
 | `/junkd:orch-init` | Write the project's `.orch/config.md` once, before the first `/junkd:orch` |
@@ -368,8 +368,9 @@ Bare `/junkd:handoff` with no argument still saves a handoff as above.
   is the task to run right now (`/junkd:orch all` runs as a command); without one the loop is only armed.
 - **`/junkd:handoff off`**: disarm the loop.
 - **`/junkd:handoff panel`**: open the pane, or close it when it is open.
-- **`/junkd:ahandoff [prompt] | off | panel`**: the short form of the three above, without the pane
-  (`/junkd:ahandoff /junkd:orch all` arms the loop and runs the command). It is a skill
+- **`/junkd:ahandoff [prompt] | off | panel | status`**: the short form of the three above, without the pane
+  (`/junkd:ahandoff /junkd:orch all` arms the loop and runs the command); `status` prints whether the loop is
+  on, the threshold and the limit as they stand, the last measurement and the path of the log (below). It is a skill
   (`skills/ahandoff`) whose text only runs when the hooks module is not loaded: it then tells you to run
   `/reload-plugins` after enabling `junkd@junk-drawer` (on other hosts, that the loop is a Claude Code
   mod feature).
@@ -380,6 +381,44 @@ turn ends it runs `/clear`, then `/junkd:handon <id>`, then sends the continuati
 after the handoff` unless you change it with `p` on the Auto tab (a `/command` runs as a command). It
 repeats until `/junkd:handoff off`. A fresh window that already starts at or over the threshold hands off
 again after that many more points of growth.
+
+#### The threshold is a percent of the window the host reports
+
+The threshold compares with the host's own `context.percent`: the last response's input tokens over the model's
+context window, as a whole number (the number the status line shows). The module counts no tokens and keeps no
+window table, so the same number means different sizes on different models: 85 is 170k tokens on a 200k window
+and 850k on a 1M window, and Claude Code compacts on its own well before that on a 1M window (a 35% threshold
+there is 350k, past the point where an automatic compaction already happened). On a 1M-window model set a lower
+number, 15 to 20.
+
+The limit is the threshold itself. Only a window the loop's own handoff started (system prompt and `/junkd:handon`
+already fill it) has a baseline: when the threshold sits at or under that fill, the limit is the threshold in points
+of growth above it. A loop armed in any other window, a fresh session or one that already ran turns, has no
+baseline, so threshold 5 at 7% hands off at the end of that turn. `/junkd:ahandoff off` drops the baseline.
+
+A reload of the plugin (a change in the `/config` menu, `/reload-plugins`, a save in a watched `--plugin-dir`
+folder) starts the module over; the armed loop, its prompt and its baseline come back from `$.state` (a toast says
+so), a new process starts with the loop off.
+
+#### The measurement log
+
+Every measurement the loop makes or skips adds one line to
+`${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/handoff/<session>.log` (appended, never read back; a new session, such as
+the one after a `/clear`, has its own file):
+
+```
+<iso time> <hook> percent=<n> limit=<n> armed=<bool> fresh=<bool> decision=<fire|skip:reason|cycle:step> base=<n> threshold=<n> phase=<p> window=<n> [note=<words>]
+```
+
+`hook` is `tool.call` (every `checkEvery` calls, and each call while a handoff is due or the window is fresh),
+`turn.complete` (every main turn), `session.measure` (after each turn, once the host reports the fill) or
+`session.start` (a loop taken back after a reload). `decision` is `fire` (the limit is reached; a handoff is
+asked for), `skip:below-limit`, `skip:fresh` (the first measurement of the window after a handoff is still
+pending), `skip:phase-<phase>` (a handoff is already under way), `skip:disarmed`, `skip:five-hour-limit`,
+`skip:measure-only`, `skip:restored`, or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
+that turn, or one was written and the clear starts). `window` is the context window the host reported, in
+tokens. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
+on the line of the turn that should have fired it.
 
 #### Resume after the 5h rate limit
 

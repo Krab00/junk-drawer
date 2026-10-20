@@ -1176,6 +1176,9 @@ test('a threshold the /config menu stores as a string is compared as a number', 
   rec.percent = 7 // '7' >= '10' as strings is true; as numbers it is not
   expect(denial(await $.tool.call(READ))).toBeUndefined()
   expect(bodies(rec).at(-1)).toContain('percent=7 limit=10 armed=true fresh=false decision=skip:below-limit')
+  rec.percent = 9 // '9' >= '10' as strings is true too, at the turn end
+  await turn($)
+  expect(bodies(rec).at(-1)).toContain('percent=9 limit=10 armed=true fresh=false decision=skip:below-limit')
   rec.percent = 12
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
 })
@@ -1407,4 +1410,72 @@ test('a loop the autoOn setting armed is not restored over', { options: { handof
   expect(rec.logs.some(l => l.line.includes('skip:restored'))).toBe(false)
   rec.percent = 6 // the kept baseline 40 was not taken
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+})
+
+test('a window that starts at the threshold itself counts growth from its baseline', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  passMeasure(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await clock.advance(1)
+  await measure($, 5) // the new window opens at 5%: the threshold itself
+  expect(bodies(rec).at(-1)).toContain('percent=5 limit=10 armed=true fresh=false decision=skip:measure-only base=5')
+  rec.percent = 9
+  expect(denial(await $.tool.call(READ))).toBeUndefined()
+  rec.percent = 10
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+})
+
+test('a measurement with no percent in it keeps the last one and says so', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  passMeasure(on)
+  mock.clock(on)
+  await start($)
+  await $.session.measure({ context: noFill().context, rateLimits: [], changed: ['context'] })
+  expect(bodies(rec).at(-1)).toBe('session.measure percent=0 limit=5 armed=false fresh=false decision=skip:measure-only base=0 threshold=5 phase=idle window=200000 note=no-percent')
+})
+
+// The module's state is one object per load; a load starts the loop's run state over. These pairs run in order: the
+// first leaves a run state behind (the test ends without disarming), the second loads again and finds none of it.
+test('load 1/4: a loop left in a fresh window, waiting for its first measurement', THRESHOLD_5, async ($, on) => {
+  world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await clock.advance(1)
+  expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto on')
+})
+test('load 2/4: a new load has no fresh flag left over', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+  expect(bodies(rec).at(-1)).toContain('fresh=false decision=fire')
+})
+test('load 3/4: a loop left with a baseline from its fresh window', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  passMeasure(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await clock.advance(1)
+  await measure($, 13)
+  expect(bodies(rec).at(-1)).toContain('base=13')
+})
+test('load 4/4: a new load has no baseline left over', THRESHOLD_5, async ($, on) => {
+  world(on)
+  mock.clock(on)
+  await start($)
+  expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('threshold 5% — limit 5%')
 })

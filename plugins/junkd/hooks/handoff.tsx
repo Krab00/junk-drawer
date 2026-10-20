@@ -449,7 +449,6 @@ async function restore($: $) {
   S.lastId = kept.lastId || null
   S.base = kept.base ?? 0
   S.fresh = kept.fresh ?? false
-  await persist($)
   await measured($, 'session.start', S.percent, 'skip:restored', 'reload')
   $.ui.toast(`handoff: the plugin reloaded — auto handoff still on, threshold ${S.threshold}%`)
 }
