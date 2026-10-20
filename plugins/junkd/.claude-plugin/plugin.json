@@ -1,6 +1,6 @@
 {
   "name": "junkd",
-  "description": "One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens, the status line and the tools pane, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:direction scores the code against the spec files the config names and lists the drift for a human decision. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd:ctx-limit sets a context-size limit a prompt hook enforces (block, warn or a command); /junkd:ctx-tokens reads the live context usage. /junkd:statusline wires a colored status line (context, branch, worktree, model, effort, rate limits; each segment a setting) into settings.json. /junkd:tools opens the tools pane: this session's agents over the repo's git worktrees, and the tools, MCP servers and skills the session used. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff, orch, statusline and tools tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr, ctx, statusline, tools) and the commands. The hooks module exports $.junkd for other mods.",
+  "description": "One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens, the status line and the tools pane, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:direction scores the code against the spec files the config names and lists the drift for a human decision. /junkd:lessons shows the pending orch lessons (local, repo and global stores) to promote, drop or move up; an orch run does not end while one is pending. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd:ctx-limit sets a context-size limit a prompt hook enforces (block, warn or a command); /junkd:ctx-tokens reads the live context usage. /junkd:statusline wires a colored status line (context, branch, worktree, model, effort, rate limits; each segment a setting) into settings.json. /junkd:tools opens the tools pane: this session's agents over the repo's git worktrees, and the tools, MCP servers and skills the session used. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff, orch, statusline, tools and lessons tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr, ctx, statusline, tools) and the commands. The hooks module exports $.junkd for other mods.",
   "version": "0.11.0",
   "author": {
     "name": "Krab00"
@@ -153,6 +153,12 @@
       "title": "Watchdog: stall after N minutes",
       "description": "Minutes a running agent may go without a tool call (none in flight) before it counts as stalled; a reviewer gets 5 more. A value under 1 is read as 1, one over 120 as 120.",
       "default": 15
+    },
+    "orch_lessons": {
+      "type": "boolean",
+      "title": "Lessons loop",
+      "description": "On: the lessons of the three stores (.orch/tasks/_lessons.md, the repo's lessons.md, ~/.claude/junkd/lessons.md) whose stack meets the repo's are injected at an orch session's start, pending ones show the 📒 segment and the lessons tab, and an orch run does not end while any is pending. Off: none of that, and the files are left as they are.",
+      "default": true
     },
     "tldr_enabled": {
       "type": "boolean",
