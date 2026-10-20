@@ -15,6 +15,8 @@
 // - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
 // - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
 // - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools).
+// - dashboard.tsx (with dashboard.ts): /junkd:dashboard, the orch dashboard's status.js beside a copy of its page.
+// - watchdog.tsx (with watchdog.ts): the agent watchdog of orch, its timer, its ⚠ segment and its prompt.submit line.
 // Settings: one userConfig row per `<group>_<field>` (settings.ts), the /config row `junkd.<group>_<field>`.
 // Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; the flag files live under its junkd/ folder.
 import type { Register } from 'claude-code'
@@ -30,6 +32,8 @@ import { SCHEMA, isKey } from './settings'
 import { registerStatusline, statuslineStart } from './statusline'
 import { registerTldr, tldrStart } from './tldr'
 import { registerTools, toolsCommandRan, toolsCount, toolsStart } from './tools-pane'
+import { dashboardStart, dashboardToolCall, registerDashboard } from './dashboard.tsx'
+import { registerWatchdog, watchCallEnd, watchCallStart, watchdogSegment, watchdogStart } from './watchdog.tsx'
 
 const NO_HOOK = 'junkd: the hooks module did not answer'
 const ROUTES: readonly JunkdHandoffRoute[] = ['auto', 'handoffs', 'settings']
@@ -98,10 +102,13 @@ export const register: Register = (on, options) => {
 
   // Every feature's start, side by side; one that fails leaves the others started, and its error is raised after.
   on('session.start', async ($, e, next) => {
+    const watched = watchdogStart($).catch(() => undefined) // the watchdog's timer, beside the features
     const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), ctxStart($), statuslineStart($), toolsStart($), panelStart($)])).find(
       r => r.status === 'rejected',
     )
+    await watched
     if (failed) throw failed.reason
+    await dashboardStart($) // after the features' starts: it reads orch's settings; never throws
     return next(e)
   })
 
@@ -111,10 +118,14 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     const deny = next.origin.plugin === 'engine' ? await orchToolDeny($, e) : undefined
     if (deny) return { deny }
+    await watchCallStart($, e, next.origin.plugin) // the watchdog: a subagent's call in flight (never throws)
     const r = await handoffToolCall($, e, next)
+    await watchCallEnd($, e, next.origin.plugin)
     if (next.origin.plugin === 'engine') await toolsCount($, e, r)
+    if (next.origin.plugin === 'engine') await dashboardToolCall($, e, r)
     return r
   }).catch(($, e, next) => {
+    void watchCallEnd($, e, next.origin.plugin) // a call the hook above started and could not end
     if (next.called) return next(e)
     const deny = orchCatchDeny(e.agentId)
     return deny ? { deny } : next(e)
@@ -133,6 +144,7 @@ export const register: Register = (on, options) => {
     const { Box } = $.ui.resolve(e)
     const below = await next(e).catch(() => undefined)
     const parts = [below, handoffSegment($, e), panelButton($, e)].filter(Boolean)
+    parts.splice(below ? 1 : 0, 0, ...[watchdogSegment($, e, () => void openPane($, 'tools', { route: 'agents' }).catch(err => $.ui.toast(`✗ ${reason(err)}`)))].filter(Boolean))
     if (parts.length === 1) return parts[0]!
     return (
       <Box flexDirection="row" gap={2}>
@@ -150,4 +162,6 @@ export const register: Register = (on, options) => {
   registerStatusline(on, options)
   registerTools(on, options)
   registerPanel(on, options)
+  registerDashboard(on, options)
+  registerWatchdog(on, options)
 }

@@ -1,7 +1,7 @@
 ---
 description: "Project-agnostic orchestration loop: pick tasks from the canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Usage: /junkd:orch <free text> | <ID...> | batch [N] | chain [N] | all [--base <b>] [--rounds R] [--deep] [--single-pr[=<b>]]"
-argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
+argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel | watchdog [on|off]] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
 ---
 
 # /junkd:orch — project-agnostic orchestration loop
@@ -9,7 +9,9 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGI
 Arguments: `$ARGUMENTS`
 
 (`/junkd:orch panel` never reaches this text: on Claude Code the plugin's hooks module answers it by
-toggling the settings pane. On any other host, `panel` is not a mode.)
+toggling the settings pane. On any other host, `panel` is not a mode. `/junkd:orch watchdog [on|off]` does not
+reach it either: the hooks module prints the agent watchdog's table or flips `orch_watchdog`; on another host,
+`watchdog` runs the skill's `./bin/orch-watch --once` and shows its table.)
 
 You are the ORCHESTRATOR. You **never implement or verify code yourself** — implementation
 goes to an `implementer` (or `lead-implementer`) subagent, and the whole verification of a
