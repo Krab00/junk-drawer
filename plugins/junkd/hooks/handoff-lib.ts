@@ -22,6 +22,7 @@ export const S = {
   prompt: DEFAULT_PROMPT, // what the fresh session is told after /junkd:handon; `p` in the pane changes it
   written: null as string | null, // handoff file written this cycle
   calls: 0,
+  asks: 0, // times this cycle asked the model for the handoff file (/junkd:handoff queued); MAX_ASKS then gives up
   count: 0,
   lastId: null as string | null,
   fresh: false, // right after /clear: usage() still reports the old window until the first response
@@ -71,6 +72,9 @@ export function loadOptions(options: Record<string, unknown>): void {
   S.segment = options.segment === undefined ? true : Boolean(options.segment)
   S.resumeAfterLimit = options.resumeAfterLimit === undefined ? true : Boolean(options.resumeAfterLimit)
 }
+
+// The user's cap: a handoff asked for this many times and still not written disarms the loop.
+export const MAX_ASKS = 3
 
 export const LIMIT_PROMPT = 'Continue where the rate limit stopped you'
 export const LIMIT_GRACE = 120_000 // 2 min after the window resets
