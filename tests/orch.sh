@@ -402,6 +402,55 @@ for pair in implementer:opus lead-implementer:opus verify-coordinator:opus ui-re
     [ "$model" = "${pair##*:}" ] || fail "agent ${pair%%:*}: model '$model', expected ${pair##*:}"
 done
 
+# ---------------------------------------------------------------- security standing check (T22)
+# The check is a prompt rule: orch.md §4 and the verify-coordinator's standing checks carry the same gate, spawn
+# and row rules, init.md proposes the block, and the orchestrator session env (ENABLE_STOP_REVIEW=0) is documented.
+orch_md="$plugin/skills/orch/commands/orch.md"
+vc_md="$plugin/agents/verify-coordinator.md"
+init_md="$plugin/skills/orch/commands/init.md"
+# section <file> <start regex> <end regex>: the lines from the start line up to (not including) the end line
+section() { awk -v a="$2" -v b="$3" '$0 ~ a {on=1} on && $0 ~ b && !($0 ~ a) {exit} on' "$1"; }
+# flat <text>: one line, leading blanks of every line dropped, so a rule wrapped across lines still matches
+flat() { printf '%s\n' "$1" | sed 's/^ *//' | tr '\n' ' '; }
+needs() {   # needs <label> <text> <needle>...: every needle appears verbatim in the text
+    local label=$1 text=$2 n; shift 2
+    for n in "$@"; do printf '%s\n' "$text" | rg -qF -- "$n" || fail "$label: no '$n'"; done
+}
+names='auth|login|session|token|secret|upload|exec|spawn|sql|query'
+security_rules=('capabilities.security' '`security-review`' '`model: sonnet`' '`model: opus`' "$names"
+    'git diff <base>...<branch>' 'the changed files plus what they call' 'file:line'
+    'injection, XSS, SSRF, IDOR, auth bypass, secret, deserialization, path traversal'
+    'at or above `severity`' '`FAIL` row' 'never rows' 'security: no findings ≥ <severity>' '`PM-REVIEW` row'
+    'never a silent skip' 'no security row at all')
+needs "orch.md §4" "$(flat "$(section "$orch_md" '^### 4[.] ' '^### 5[.] ')")" "${security_rules[@]}" \
+    'on **every** round' 'the `security` check still runs in full'
+needs "verify-coordinator standing checks" "$(flat "$(section "$vc_md" '^5[.] [*][*]Standing checks' '^## Where evidence goes')")" \
+    "${security_rules[@]}" 'every round, re-verify rounds included'
+needs "verify-coordinator step 0" "$(flat "$(section "$vc_md" '^0[.] [*][*]Plan the matrix' '^1[.] [*][*]Build the verify env')")" \
+    'spawn the security reviewer in this same step' 'overlaps the env build'
+needs "verify-coordinator inputs" "$(flat "$(section "$vc_md" '^## Inputs' '^## What you do')")" \
+    'it runs in full on every round' 'no `security` → no security reviewer'
+# the literal grep of AC1 hits all three files
+for f in "$orch_md" "$vc_md" "$init_md"; do
+    grep -q "capabilities.security\|security-review" "$f" || fail "$(basename "$f"): no capabilities.security / security-review"
+done
+# init.md: the scan condition, the proposal only under it, and the template line carrying severity: high
+needs "init.md" "$(flat "$(cat "$init_md")")" "$names" 'Any one of the three → propose the `security` block' \
+    'none → leave it out' 'only when the scan found its surface' '`capabilities.security`' '`security-review`'
+rg -q '^  security: \{ severity: high \} +# only with a web app, an api, or a security-named file; omit otherwise$' "$init_md" ||
+    fail "init.md: the config template has no 'security: { severity: high }' line"
+# §0: the orchestrator session env; README and the guide say the same, and why the commit/push review stays on
+needs "orch.md §0" "$(flat "$(section "$orch_md" '^## 0[.] ' '^## Canonical')")" '`ENABLE_STOP_REVIEW=0`' \
+    'never from a hook' 'commit/push review stays on'
+for doc in "$plugin/README.md" "$plugin/docs/orch-guide.md"; do
+    needs "$(basename "$doc")" "$(flat "$(cat "$doc")")" '`ENABLE_STOP_REVIEW=0' 'commit/push review stays on' \
+        'capabilities.security' 'security: { severity: high }'
+done
+needs "README.md" "$(flat "$(cat "$plugin/README.md")")" 'junkd does not set it from a hook.' \
+    'in the implementer at the moment it commits'
+needs "orch-guide.md" "$(flat "$(cat "$plugin/docs/orch-guide.md")")" '### Security' 'never by a hook' \
+    'in the implementer at the moment of the commit'
+
 # ---------------------------------------------------------------- bin scripts (AC4, AC5)
 for s in orch-state orch-sync orch-worktree; do bash -n "$plugin/bin/$s" || fail "bash -n $s"; done
 bin="$plugin/bin"
