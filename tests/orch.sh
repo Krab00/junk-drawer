@@ -425,7 +425,7 @@ security_rules=('capabilities.security' '`security-review`' '`model: sonnet`' '`
 needs "orch.md §4" "$(flat "$(section "$orch_md" '^### 4[.] ' '^### 5[.] ')")" "${security_rules[@]}" \
     'on **every** round' 'the `security` check still runs in full'
 needs "verify-coordinator standing checks" "$(flat "$(section "$vc_md" '^5[.] [*][*]Standing checks' '^## Where evidence goes')")" \
-    "${security_rules[@]}" 'every round, re-verify rounds included'
+    "${security_rules[@]}" 'every round, re-verify rounds included' '`security: <class> at <file>:<line>`'
 needs "verify-coordinator step 0" "$(flat "$(section "$vc_md" '^0[.] [*][*]Plan the matrix' '^1[.] [*][*]Build the verify env')")" \
     'spawn the security reviewer in this same step' 'overlaps the env build'
 needs "verify-coordinator inputs" "$(flat "$(section "$vc_md" '^## Inputs' '^## What you do')")" \
@@ -446,9 +446,9 @@ for doc in "$plugin/README.md" "$plugin/docs/orch-guide.md"; do
     needs "$(basename "$doc")" "$(flat "$(cat "$doc")")" '`ENABLE_STOP_REVIEW=0' 'commit/push review stays on' \
         'capabilities.security' 'security: { severity: high }'
 done
-needs "README.md" "$(flat "$(cat "$plugin/README.md")")" 'junkd does not set it from a hook.' \
+needs "README.md" "$(flat "$(cat "$plugin/README.md")")" 'with `ENABLE_STOP_REVIEW=0` in its environment' 'junkd does not set it from a hook.' \
     'in the implementer at the moment it commits'
-needs "orch-guide.md" "$(flat "$(cat "$plugin/docs/orch-guide.md")")" '### Security' 'never by a hook' \
+needs "orch-guide.md" "$(flat "$(cat "$plugin/docs/orch-guide.md")")" '### Security' 'runs with `ENABLE_STOP_REVIEW=0`, set by you' 'never by a hook' \
     'in the implementer at the moment of the commit'
 
 # ---------------------------------------------------------------- bin scripts (AC4, AC5)
