@@ -162,6 +162,7 @@ L_INJECT_MAX_ENTRIES=40
 L_INJECT_MAX_BYTES=4096
 
 _l_die() { echo "orch: lesson: $2" >&2; exit "$1"; }
+_l_bytes() { printf '%s' "$1" | wc -c | tr -d ' '; }
 _l_today() { echo "${ORCH_LESSON_TODAY:-$(date +%Y-%m-%d)}"; }
 _l_global() { echo "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/junkd/lessons.md"; }
 _l_file() {
@@ -434,7 +435,7 @@ $text" "$t"
       # repo store (committed by anyone) only in an orch project (.orch/config.md); the set in one fence under a line
       # that calls it data; a body line that opens a heading or a fence dropped; at most L_INJECT_MAX_ENTRIES lessons
       # and L_INJECT_MAX_BYTES of them, the rest named by count.
-      local rows stacks=$L_REPO_STACKS scope s id block body="" n=0 more=0
+      local rows stacks=$L_REPO_STACKS scope s id block body="" n=0 more=0 sep
       rows=$(_l_rows | awk -F'\t' '$8 == 1 { print $1 "\t" $2 }')
       [ -f "$config" ] || rows=$(awk -F'\t' '$1 != "repo"' <<<"$rows")
       [ -n "$rows" ] || exit 0
@@ -444,7 +445,10 @@ $text" "$t"
           block=$(awk -v id="$id" '{ sub(/\r$/, "") } /^## / { if (inb) exit; inb = index($0, "## " id " (") == 1; if (inb) print; next }
               inb && !/^[ \t]*(#{1,6}([ \t]|$)|```|~~~)/ { print }' "$(_l_file "$s")" |
             awk '{ a[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print a[i] }')
-          if [ "$n" -ge "$L_INJECT_MAX_ENTRIES" ] || [ $(( ${#body} + ${#block} + 2 )) -gt "$L_INJECT_MAX_BYTES" ]; then
+          # bytes, not characters (${#x} counts characters in a UTF-8 locale, wc -c does not): the joined set, the two
+          # newlines between blocks included, stays within L_INJECT_MAX_BYTES
+          sep=2; [ -n "$body" ] || sep=0
+          if [ "$n" -ge "$L_INJECT_MAX_ENTRIES" ] || [ $(( $(_l_bytes "$body") + sep + $(_l_bytes "$block") )) -gt "$L_INJECT_MAX_BYTES" ]; then
             more=$((more + 1)); continue
           fi
           body="$body${body:+$'\n\n'}$block"; n=$((n + 1))
@@ -509,6 +513,10 @@ $text" "$t"
           ;;
         check)
           [ -n "$tasks_dir" ] && [ -f "$config" ] || _l_die 2 "promote --to check: no .orch/config.md here"
+          # standing_checks_extra is a frontmatter key: a config without one (a first line `---` and a closing `---`)
+          # is refused, not edited, and the lesson stays
+          awk '{ sub(/\r$/, "") } NR == 1 { if ($0 !~ /^---[ \t]*$/) exit 1; next } /^---[ \t]*$/ { found = 1; exit } END { exit !found }' "$config" ||
+            _l_die 2 "promote --to check: $config has no frontmatter (--- ... ---) to hold standing_checks_extra; nothing changed, $L_SCOPE:$L_ID kept"
           if [ -z "$yes" ]; then
             echo "proposed: standing_checks_extra += $(_l_quote "$text")"
             echo "in $config; ask the person, then run again with --yes"

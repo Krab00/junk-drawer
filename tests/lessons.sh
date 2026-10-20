@@ -93,6 +93,18 @@ run "$P" lesson list --scope repo --json
 ok $(jq -e '[.[].ref] == ["repo:L1","repo:L2","repo:L3"]' <<<"$OUT" >/dev/null; echo $?) "list --scope"
 run "$P" lesson pending
 ok $([ "$OUT" = 5 ]; echo $?) "pending counts the three stores ($OUT)"
+# nothing pending: the count line 0 and exit 0 (the exit code is the segment's and the dialog's gate)
+mv "$GLOBAL" "$tmp/global.pend0"
+Z0=$(proj pend0)
+run "$Z0" lesson pending
+ok $([ "$RC" = 0 ] && [ "$OUT" = 0 ]; echo $?) "pending with no store at all: 0, exit 0 ($RC $OUT)"
+printf '## L1 (2026-10-01) scope: repo · stack: any · to: repo · from: T1\nResting in the repo store.\n' >"$Z0/lessons.md"
+run "$Z0" lesson pending
+ok $([ "$RC" = 0 ] && [ "$OUT" = 0 ]; echo $?) "pending with only a lesson resting where its to points: 0, exit 0 ($RC $OUT)"
+run "$Z0" lesson add --to smoke --from T1 "Waiting."
+run "$Z0" lesson pending
+ok $([ "$RC" = 1 ] && [ "$OUT" = 1 ]; echo $?) "and one pending lesson on top of it: 1, exit 1 ($RC $OUT)"
+mv "$tmp/global.pend0" "$GLOBAL"
 
 # ---------------------------------------------------------------- ids
 run "$P" lesson drop L2
@@ -175,6 +187,31 @@ ok $([ "$RC" = 2 ] && [[ "$ERR" == *"config.md is not writable; nothing changed"
 t "the unwritable config unchanged" cmp -s "$Q/.orch/config.md" "$tmp/ro.before"
 t "and the lesson kept" cmp -s "$Q/.orch/tasks/_lessons.md" "$tmp/rol.before"
 chmod 644 "$Q/.orch/config.md"
+# a config with no frontmatter to hold the key: refused with exit 2, with and without --yes, config and lesson as they were
+for shape in plain unclosed; do
+  Q=$(proj "chk-nofm-$shape" -)
+  mkdir -p "$Q/.orch/tasks"
+  case $shape in
+    plain) printf 'Notes only.\nstanding_checks_extra: []\n' >"$Q/.orch/config.md" ;;
+    unclosed) printf -- '---\ntasks_dir: .orch/tasks\nno closing line\n' >"$Q/.orch/config.md" ;;
+  esac
+  run "$Q" lesson add --to check --from T3 "Grep for z."
+  cp "$Q/.orch/config.md" "$tmp/nofm.before"; cp "$Q/.orch/tasks/_lessons.md" "$tmp/nofml.before"
+  for flag in "" --yes; do
+    # shellcheck disable=SC2086
+    run "$Q" lesson promote local:L1 $flag
+    ok $([ "$RC" = 2 ] && [[ "$ERR" == *"has no frontmatter"* ]] && [[ "$ERR" == *"local:L1 kept"* ]]; echo $?) "check into a $shape config ${flag:-without --yes}: exit 2 and says why ($RC $ERR)"
+    t "the $shape config is byte-identical (${flag:-no flag})" cmp -s "$Q/.orch/config.md" "$tmp/nofm.before"
+    t "and the lesson is kept (${flag:-no flag})" cmp -s "$Q/.orch/tasks/_lessons.md" "$tmp/nofml.before"
+  done
+done
+# the other end: a CRLF frontmatter is a frontmatter
+Q=$(proj chk-crlf -)
+mkdir -p "$Q/.orch/tasks"
+printf -- '---\r\ntasks_dir: .orch/tasks\r\n---\r\nnotes\r\n' >"$Q/.orch/config.md"
+run "$Q" lesson add --to check --from T3 "Grep for w."
+run "$Q" lesson promote local:L1 --yes
+ok $([ "$RC" = 0 ] && [ "$(sed -n 3,5p "$Q/.orch/config.md")" = "$(printf 'standing_checks_extra:\n  - "Grep for w."\n---')" ]; echo $?) "check into a CRLF frontmatter: the key is added ($RC)"
 
 # ---------------------------------------------------------------- test and smoke: handed to the implementer
 run "$P" lesson add --to test --from T7 "Mutant survived in the parser."
@@ -327,7 +364,9 @@ NR=$(proj inj-norepo -)
 mkdir -p "$NR/bin"; printf '#!/usr/bin/env bash\n' >"$NR/bin/t"
 run "$NR" lesson add --scope repo --stack any --to repo --from T1 "Committed by a stranger."
 out=$(cd "$NR" && "$state" lesson inject 2>/dev/null)
-ok $([[ "$out" != *"Committed by a stranger."* ]] && [[ "$out" == *"Python only here."* || "$out" == *"Any lesson."* ]]; echo $?) "no .orch/config.md: the repo store is not injected, the global one is"
+ok $([[ "$out" != *"Committed by a stranger."* ]]; echo $?) "no .orch/config.md: the repo store is not injected"
+ok $([[ "$out" == *"Any lesson."* ]] && [[ "$out" == *"Shell scripts lesson."* ]]; echo $?) "no .orch/config.md: the global store is (an any and a shell lesson)"
+ok $([[ "$out" != *"Python only here."* ]]; echo $?) "no .orch/config.md: the global lesson of another stack still is not"
 run "$NR" lesson list --json
 ok $(jq -e 'any(.[]; .text == "Committed by a stranger.")' <<<"$OUT" >/dev/null; echo $?) "no .orch/config.md: list still shows the repo store"
 mkdir -p "$NR/.orch"; printf -- '---\ntasks_dir: .orch/tasks\n---\n' >"$NR/.orch/config.md"
@@ -348,6 +387,27 @@ big=$(printf 'x%.0s' $(seq 1 1500))
 for i in 1 2 3 4; do printf '## L%s (2026-10-01) scope: local · stack: any · to: smoke · from: T1\nBig %s %s\n\n' "$i" "$i" "$big"; done >"$CP/.orch/tasks/_lessons.md"
 out=$(cd "$CP" && "$state" lesson inject 2>/dev/null)
 ok $([ "$(grep -c '^## L' <<<"$out")" = 2 ] && [[ "$out" == *"… 2 more, see /junkd:lessons"* ]]; echo $?) "the cap: 4096 bytes of lessons, then the count of the rest"
+# the cap counts bytes, not characters: 4 lessons of 1500 'ł' (2 bytes each) are ~1580 characters but ~3080 bytes apiece
+utf8=$(locale -a 2>/dev/null | grep -i -m1 '^en_US.utf-\?8$' || locale -a 2>/dev/null | grep -i -m1 'utf-\?8')
+ok $([ -n "$utf8" ]; echo $?) "a UTF-8 locale exists to run the byte-cap tests under ($utf8)"
+wide=$(printf 'ł%.0s' $(seq 1 1500))
+for i in 1 2 3 4; do printf '## L%s (2026-10-01) scope: local · stack: any · to: smoke · from: T1\nWide %s %s\n\n' "$i" "$i" "$wide"; done >"$CP/.orch/tasks/_lessons.md"
+out=$(cd "$CP" && LC_ALL=$utf8 "$state" lesson inject 2>/dev/null)
+ok $([ "$(grep -c '^## L' <<<"$out")" = 1 ] && [[ "$out" == *"… 3 more, see /junkd:lessons"* ]]; echo $?) "the cap is in bytes: 4 lessons of 1500 ł, one fits ($(grep -c '^## L' <<<"$out") in)"
+# the exact bound: two blocks joined by a blank line are 4096 bytes and both stay; 4097 and the second is cut
+h='## L1 (2026-10-01) scope: local · stack: any · to: smoke · from: T1'
+hb=$(printf '%s' "$h" | wc -c | tr -d ' ')
+for want in 4095 4096 4097; do
+  n2=$(( want - 2 * (hb + 1) - 2 - 1000 ))
+  { printf '%s\n%s\n\n' "$h" "$(printf 'a%.0s' $(seq 1 1000))"; printf '## L2 (2026-10-01) scope: local · stack: any · to: smoke · from: T1\n%s\n' "$(printf 'b%.0s' $(seq 1 "$n2"))"; } >"$CP/.orch/tasks/_lessons.md"
+  out=$(cd "$CP" && LC_ALL=$utf8 "$state" lesson inject 2>/dev/null)
+  got=$(grep -c '^## L' <<<"$out")
+  if [ "$want" -le 4096 ]; then
+    ok $([ "$got" = 2 ] && [[ "$out" != *"more, see"* ]]; echo $?) "the bound: a set of $want bytes stays whole ($got lessons)"
+  else
+    ok $([ "$got" = 1 ] && [[ "$out" == *"… 1 more, see"* ]]; echo $?) "the bound: a set of $want bytes loses the second lesson ($got lessons)"
+  fi
+done
 mv "$tmp/global.cap" "$GLOBAL"
 
 # ---------------------------------------------------------------- prune
