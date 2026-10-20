@@ -66,13 +66,6 @@ export function loadOptions(options: Record<string, unknown>): void {
   S.enabled = options.enabled === undefined ? true : Boolean(options.enabled)
   S.autoOn = Boolean(options.autoOn)
   S.armed = S.enabled && S.autoOn
-  // A load starts the loop's run state over (a reloaded module has nothing else): handoffStart takes what the
-  // session was doing back from $.state.
-  S.phase = 'idle'
-  S.fresh = false
-  S.base = 0
-  S.calls = 0
-  S.written = null
   if (S.armed) S.armedAt ??= Date.now()
   S.staleDays = num('staleDays', 30)
   S.segment = options.segment === undefined ? true : Boolean(options.segment)
