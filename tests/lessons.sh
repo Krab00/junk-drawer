@@ -120,6 +120,9 @@ ok $(! grep -q 'First lesson' "$P/lessons.md"; echo $?) "and gone from the repo 
 run "$P" lesson up repo:L2
 ok $([ "$OUT" = "repo:L2 -> global:L4" ]; echo $?) "up: one store up ($OUT)"
 t "up kept the to" has "$GLOBAL" '## L4 (2026-01-01) scope: global · stack: any · to: global · from: T6'
+run "$P" lesson add --to smoke --from T6 "Up with a smoke target."
+run "$P" lesson up "$OUT"
+t "up kept a target that is no store (to: smoke in the repo store)" has "$P/lessons.md" "scope: repo · stack: shell · to: smoke · from: T6"
 run "$P" lesson up global:L4
 ok $([ "$RC" = 1 ] && [[ "$ERR" == *"no store above"* ]]; echo $?) "up from the global store is refused"
 # promote a block without a to

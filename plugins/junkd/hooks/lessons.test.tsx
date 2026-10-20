@@ -548,6 +548,7 @@ for (const options of [{ orch_lessons: false }, { orch_enabled: false }]) {
     expect((await run$($, 'junkd:lessons', 'promote L1')).text).toBe('junkd: the lessons loop is off: /junkd → orch → Lessons loop')
     await run$($, 'junkd')
     expect(w.opened.map(o => o.id)).not.toContain('junkd-lessons')
+    expect(w.closed).not.toContain('junkd-lessons') // the set leaves the tab out: not even closed first
     await expect(frame($, 'open', { pane: 'lessons' })).rejects.toThrow(/lessons loop is off/)
     expect(w.cli).toEqual([])
     for (const [k, v] of Object.entries(before)) expect(w.files[k], k).toBe(v)
