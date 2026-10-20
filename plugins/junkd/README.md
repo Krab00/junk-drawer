@@ -15,6 +15,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 | `/junkd:ctx-tokens` | How full the context is, from the session transcript |
 | `/junkd:statusline [on \| off \| status]` | The colored status line in settings.json, a switch per segment; no argument toggles its pane (Claude Code only) |
 | `/junkd:tools [agents \| tools \| mcp \| skills]` | Open or close the tools pane: this session's agents over the repo's worktrees, and the tools, MCP servers and skills it used (Claude Code only) |
+| `/junkd:explain <topic>` | Explain a topic from the repo in the format that fits: a slider page for parameters, a Mermaid diagram for structure or flow, STE text otherwise |
 | `/junkd`, `/junkd:junkd` | Open or close the junkd set of panes (Claude Code only) |
 
 On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`, `$ctx-limit`… (the model sees them as `junkd:<name>`), on Kimi
@@ -1050,6 +1051,26 @@ out of a manifest range, so the bounds live in the module.
 Hosts: Claude Code only (a hooks-module mod). Codex, Kimi Code and OpenCode have the `tools` skill, which answers
 in one line that the pane is a Claude Code mod.
 
+## explain
+
+`/junkd:explain <topic>` explains a topic from the current repo or conversation in one of three formats, picked by
+the topic. It is Markdown only: no hook, no setting, no pane, and it never writes into the repo.
+
+| Topic | Route | Result |
+|---|---|---|
+| Numbers that can change (a config value, a formula with knobs, a rate limit, a threshold) | slider page | One self-contained HTML file with a slider per parameter and a live readout; the reply is its absolute path plus two sentences |
+| Structure or flow (modules, call graph, state machine, pipeline, request path) | Mermaid | One inline `mermaid` block of at most 25 nodes plus two sentences |
+| Anything else | STE text | At most 12 short sentences, no headers |
+
+The model looks for numbers that can change first, then for "how does X flow / what calls what / which states", else
+it writes text. When it cannot tell, it asks one question and never answers in two formats.
+
+The page has no `http(s)` load, no `fetch` and no module script. It lands in the session scratchpad
+(`$CLAUDE_SCRATCHPAD`, or the path the host names), elsewhere in `${TMPDIR:-/tmp}/junkd-explain/`. On Claude Code,
+when the Artifact tool exists, the page is also published as an Artifact; the other hosts have no such tool and stop
+at the path. Hosts: Claude Code (`/junkd:explain`), Codex (`$explain`), Kimi Code (`/skill:explain`) and OpenCode
+(`/explain`).
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
@@ -1070,7 +1091,7 @@ in one line that the pane is a Claude Code mod.
   counters, the worktree parser and the agents tree; the four tabs.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
-  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`); the real helpers live inside their skill (`skills/handoff/bin`,
+  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `explain`); the real helpers live inside their skill (`skills/handoff/bin`,
   `skills/orch/bin`, `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
   (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
   `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a
