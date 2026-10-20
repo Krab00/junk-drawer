@@ -98,11 +98,15 @@ if (m) {
     render() { ctx.rendered.push(ctx.zoomMin); ctx.geom = S.scale({ start, end, zoom: ctx.zoomMin, vis: VIEW, gaps: [], gapW: 28 }) },
   }
   ctx.geom = S.scale({ start, end, zoom: 180, vis: VIEW, gaps: [], gapW: 28 })
-  const b = { dataset: { z: '720' }, setAttribute() {} }
-  ctx.zb = [b]
+  const button = z => ({ dataset: { z }, attrs: {}, setAttribute(k, v) { this.attrs[k] = v } })
+  const b = button('720'), others = [button('60'), button('180'), button('0')]
+  ctx.zb = [others[0], others[1], b, others[2]]
   ctx.b = b
   const handler = new Function('ctx', `with (ctx) {${m[1]}}`)
+  const t0 = Date.now()
   handler(ctx)
+  ok(b.attrs['aria-pressed'] === 'true' && others.every(o => o.attrs['aria-pressed'] === 'false'), `the pressed preset is aria-pressed, the others not (${JSON.stringify(ctx.zb.map(x => x.attrs))})`)
+  ok(ctx.lastH >= t0 && ctx.lastH <= Date.now(), `the zoom counts as a scroll by hand: lastH is now (${ctx.lastH})`)
   ok(ctx.zoomMin === 720 && ctx.rendered.join() === '720', `the handler renders once, at the new zoom (${ctx.rendered})`)
   ok(ctx.views.length === 1, `the rectangle is drawn once (${ctx.views.length})`)
   const vp = ctx.views[0] || { width: NaN, left: NaN }

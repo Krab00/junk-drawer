@@ -106,6 +106,9 @@ expect "$tmp/out-sid2/status.js" 'S.agents.length === 0' "no such session: no ag
 # a session name that climbs out (../_agents/sid-new names a real folder by the back door): refused, no agents
 (cd "$proj" && ORCH_SESSION=../_agents/sid-new "$bin" --out "$tmp/out-sid3" >/dev/null 2>&1)
 expect "$tmp/out-sid3/status.js" 'S.agents.length === 0' "ORCH_SESSION with a path in it: no agents"
+# .. in the middle (aa-old/../sid-new resolves to sid-new's three records): refused all the same
+(cd "$proj" && ORCH_SESSION=aa-old/../sid-new "$bin" --out "$tmp/out-sid5" >/dev/null 2>&1)
+expect "$tmp/out-sid5/status.js" 'S.agents.length === 0' "ORCH_SESSION with .. mid-path: no agents"
 # a record that is JSON but no object is no agent
 printf '[1,2]\n' >"$CLAUDE_CONFIG_DIR/junkd/orch/_agents/sid-new/arr.json"
 (cd "$proj" && "$bin" --out "$tmp/out-sid4" >/dev/null 2>&1)
