@@ -179,6 +179,8 @@ for f in SKILL.md commands/direction.md agents/openai.yaml; do
     [ -f "$direction/$f" ] && [ ! -L "$direction/$f" ] || { echo "junkd: skills/direction/$f is not a real file"; exit 1; }
 done
 direction_md="$direction/commands/direction.md"
+rg -qxF '  default_prompt: "Use $direction to compare the code with the spec files of .orch/config.md."' "$direction/agents/openai.yaml" ||
+    { echo "junkd: skills/direction/agents/openai.yaml lacks its default_prompt"; exit 1; }
 # in_section <file> <heading line> <needle>: the needle sits between that heading and the next heading of its level
 # (a line in a fenced block is no heading).
 in_section() {
@@ -223,6 +225,14 @@ done <<'EOF'
 ## 6. Decisions: nothing happens without the user|- `## Acceptance criteria`: `- [ ] AC1: <spec path> (<place>) holds: "<the spec sentence, verbatim>" (modality: <test|api|ui|data>)`.
 ## 6. Decisions: nothing happens without the user|- **update spec**, confirmed: mark it `- [x] D1 — … → update spec`. The check does not edit the spec; the human does.
 ## 6. Decisions: nothing happens without the user|- **declined or left open**: the checkbox stays empty and no task is created.
+## 1. Config: the `specs:` key|A `<spec>` argument narrows the run to that file; an argument that is not one of the expanded files → print `direction: <spec> is not in the specs: key of .orch/config.md.` and stop.
+## 1. Config: the `specs:` key|The list expands to no file → print `direction: specs: matches no file at <head>; fix the list in .orch/config.md.` and stop.
+## 3. One pass per spec file|A row with a verdict outside the five, or a `MET`/`PARTIAL`/`CONTRADICTED` row with no evidence, goes back to its agent once, with the rule it broke.
+## 4. One pass for undocumented work|Tests, lockfiles, formatting and the `.orch/` store are no undocumented work on their own; a test counts only with the behaviour it pins.
+## 4. One pass for undocumented work|No such change → the agent returns `NONE`.
+## 5. The report|  MET % is `<met>/<total>` rounded to a whole percent; with `<total>` 0 it is `0/0 = n/a`.
+## 5. The report|- The decisions follow the order of the rows: requirement rows first, then undocumented rows.
+## 6. Decisions: nothing happens without the user|  Mark the decision in the report: `- [x] D1 — … → change code (task DIR-<n>)`.
 EOF
 for verdict in MET PARTIAL MISSING CONTRADICTED UNVERIFIABLE; do
     in_section "$direction_md" '## 3. One pass per spec file' "  - \`$verdict\`: " || { echo "junkd: direction.md section 3 does not define $verdict"; exit 1; }
