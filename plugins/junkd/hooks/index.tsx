@@ -14,7 +14,8 @@
 //   repo's worktrees and the tools, MCP servers and skills it used (counted by tool.call and command.run here).
 // - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
 // - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
-// - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools).
+// - panel.tsx (with set.ts): /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools, lessons);
+//   a × or q on any pane of the set closes the whole set.
 // - dashboard.tsx (with dashboard.ts): /junkd:dashboard, the orch dashboard's status.js beside a copy of its page.
 // - watchdog.tsx (with watchdog.ts): the agent watchdog of orch, its timer, its ⚠ segment and its prompt.submit line.
 // - lessons.tsx (with lessons.ts, lessons-views.tsx): the lessons loop of orch: its tab, its 📒 segment, the blocking

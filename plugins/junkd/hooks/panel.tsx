@@ -5,7 +5,8 @@
 // - Plugins: the marketplace's plugins, each on or off in the user's settings.json; junkd is this pane. handoff,
 //   orch, tldr, ctx and statusline are no plugins of their own: each is switched by its group's `enabled` row.
 // - The set: each feature pane through dispatch.ts's showPane/hidePane, marked as the set's (SET_OWNER), so closing
-//   the set leaves a feature pane opened on its own alone.
+//   the set leaves a feature pane opened on its own alone. set.ts holds whether the set is up and closeSet: the ×
+//   and q of any pane still the set's, and the engine's close of its tab, call it, so one press closes the whole set.
 // - Settings: the `main` rows of each group in settings.ts order (`enabled` first), read and written through
 //   dispatch.ts; a refusal is the note. `settings ▸` opens the group's pane (handoff on its Settings tab, orch,
 //   statusline, tools on its Agents tab).
@@ -14,6 +15,7 @@ import type { JunkdGroup } from '../types'
 import type { On, RenderInput } from 'claude-code'
 import { getSetting, hidePane, setSetting, showPane, type FeaturePane } from './dispatch'
 import { SET_OWNER, type $ } from './feature'
+import { PANE, SET, closeSet, hideSet, setIsOpen, setOpen } from './set'
 import { panelView, type Command, type Els, type Field, type PluginRow, type Section } from './junkd-views'
 import { GROUPS, isKey, keyOf, rowsOf } from './settings'
 import { T as Tools } from './tools'
@@ -21,15 +23,12 @@ import { O as Orch } from './orch-lib'
 
 type Json = Record<string, any>
 
-const PANE = 'junkd'
 const MARKETPLACE = 'junk-drawer'
-// The groups with a pane of their own, which `settings ▸` opens; the feature panes of the set, in tab order.
-const SET: readonly FeaturePane[] = ['handoff', 'orch', 'statusline', 'tools', 'lessons']
+// The groups with a pane of their own, which `settings ▸` opens (the feature panes of the set, set.ts).
 const hasPane = (group: string): group is FeaturePane => (SET as readonly string[]).includes(group)
 // The feature panes the set opens now: tools only while tools_enabled is on, lessons while orch and orch_lessons are.
 const opensNow = (): FeaturePane[] => SET.filter(p => (p !== 'tools' || Tools.enabled) && (p !== 'lessons' || (Orch.enabled && Orch.lessons)))
 
-let isOpen = false
 let isChanged = false
 let note = ''
 let marketplace = MARKETPLACE
@@ -199,24 +198,14 @@ async function setValue($: $, group: string, field: string, value: unknown) {
 // set closes junkd and each feature pane only while it is still the set's: one the person closed and opened again
 // on its own stays.
 export async function panelToggle($: $): Promise<void> {
-  if (isOpen) {
-    isOpen = false
-    await Promise.all([$.ui.close({ id: PANE }), ...SET.map(p => hidePane($, p, { owner: SET_OWNER }).catch(() => undefined))])
-    return
-  }
+  if (setIsOpen()) return closeSet($)
   const opened = $.ui.open({ id: PANE, title: 'junkd', focus: true })
-  isOpen = true
+  setOpen(true)
   note = ''
   void refresh($)
   const panes = opensNow()
   await Promise.all(panes.map(p => hidePane($, p).catch(() => undefined)))
   await Promise.all([opened, ...panes.map(p => showPane($, p, { owner: SET_OWNER }).catch(() => undefined))])
-}
-
-// The set's other feature panes, closed with junkd when junkd goes some other way than a second toggle (the
-// person's close, settings ▸); `hide({ owner })` closes only a pane still marked the set's.
-function hideSet($: $, except?: FeaturePane) {
-  return SET.filter(p => p !== except).map(p => hidePane($, p, { owner: SET_OWNER }).catch(() => undefined))
 }
 
 // settings ▸: the press leaves junkd holding the keys, and the engine shows and focuses another pane only while no
@@ -227,7 +216,7 @@ async function openSettings($: $, group: string) {
   if (!hasPane(group)) return
   const route = group === 'handoff' ? ({ route: 'settings' } as const) : group === 'tools' ? ({ route: 'agents' } as const) : {}
   const shown = showPane($, group, route)
-  isOpen = false
+  setOpen(false)
   await Promise.all([$.ui.close({ id: PANE }), ...hideSet($, group)])
   try {
     await shown
@@ -241,8 +230,8 @@ export async function panelStart($: $): Promise<void> {
   // No $.command.register({ name: 'junkd' }): the engine refuses a plugin's bare name that is also its own
   // /junkd:junkd, and the throw would kill the rest of session.start. /junkd:junkd (and a bare /junkd where the host
   // resolves it to the skill) reach the command.run hooks below. A failing panes() only means "not open".
-  isOpen = (await $.ui.panes().catch(() => [])).some(pane => pane.id === PANE)
-  if (isOpen) void refresh($)
+  setOpen((await $.ui.panes().catch(() => [])).some(pane => pane.id === PANE))
+  if (setIsOpen()) void refresh($)
 }
 
 // ✚ junkd, beside the rest of the prompt hint (index.tsx lays the line out).
@@ -267,11 +256,12 @@ export function registerPanel(on: On, _options: Record<string, unknown>): void {
   })
 
   // The person's closes (×, the tab's close; another plugin's $.ui.close) pass here: the set goes with junkd, each
-  // feature pane only while it is still the set's. Our own closes (panelToggle, settings ▸) clear isOpen first and
-  // close the set themselves, so one that comes back here does nothing more.
+  // feature pane only while it is still the set's (a feature pane's own hook does the same for its tab, set.ts). Our
+  // own closes (panelToggle, settings ▸) clear the set's flag first and close the set themselves, so one that comes
+  // back here does nothing more.
   on('ui.close', { id: PANE }, async ($, e, next) => {
-    const isPersons = isOpen
-    isOpen = false
+    const isPersons = setIsOpen()
+    setOpen(false)
     const r = await next(e)
     if (isPersons) await Promise.all(hideSet($))
     return r

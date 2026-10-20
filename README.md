@@ -144,7 +144,8 @@ Code and `/direction` on OpenCode: it scores the code against the spec files of 
 The mod parts (the pane, the auto handoff loop, the guard) and the status line are Claude Code only.
 
 `/junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs (junkd, handoff's,
-orch's, statusline's) and closes them together. The junkd pane has three sections:
+orch's, statusline's) and closes them together: `×` or `q` in any pane of the set closes the whole set at once, while
+a pane opened on its own (`/junkd:orch panel`, a `settings ▸` jump) closes alone. The junkd pane has three sections:
 
 - **Plugins**: every plugin of the marketplace, on or off at user scope; a number flips one, then
   `/reload-plugins`.

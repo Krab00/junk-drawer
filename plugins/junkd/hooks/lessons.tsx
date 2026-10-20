@@ -9,6 +9,7 @@
 // - Off (orch_enabled or orch_lessons off): no tab, no segment, no dialog, no line; the files are left alone.
 import type { On, RenderInput } from 'claude-code'
 import type { $, HideInput, ShowInput } from './feature'
+import { isSets, shutSet } from './set'
 import { orchRoot, tasksDirOf } from './dashboard.ts'
 import { O } from './orch-lib'
 import {
@@ -310,17 +311,20 @@ export function registerLessons(on: On, _options: Record<string, unknown>): void
   })
 
   // The person's closes (q, ×) pass here; ours go through closePane.
-  on('ui.close', { id: LESSONS_PANE_ID }, (_$, e, next) => {
+  on('ui.close', { id: LESSONS_PANE_ID }, async ($, e, next) => {
+    const isSet = isSets(owner)
     L.open = false
     L.confirm = ''
     owner = undefined
-    return next(e)
+    const r = await next(e)
+    if (isSet) await shutSet($)
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: LESSONS_PANE_ID }, ($, e: RenderInput<'Pane'>, next) => {
     if (e.surface === 'mobile' || !lessonsOn()) return next(e)
     return lessonsView($.ui.resolve(e) as Els, e.props, {
-      close: () => void closePane($),
+      close: () => void (isSets(owner) ? shutSet($) : closePane($)),
       promote: () => press($, 'promote'),
       drop: () => press($, 'drop'),
       up: () => press($, 'up'),

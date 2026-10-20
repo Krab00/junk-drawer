@@ -7,6 +7,7 @@ import type { Next, On, RenderInput, RenderSurface, ToolCallInput } from 'claude
 
 import type { JunkdAhandoff as Ahandoff } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
+import { isSets, shutSet } from './set'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
@@ -558,9 +559,12 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
 
   // The person's closes (q, ✕) pass here; ours go through closePane.
   on('ui.close', { id: PANE }, async ($, e, next) => {
+    const isSet = isSets(owner)
     S.paneOpen = false
     owner = undefined
-    return next(e)
+    const r = await next(e)
+    if (isSet) await shutSet($)
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e, next) => {
@@ -574,7 +578,7 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     const rows = e.props.placement === 'dock' ? e.props.scroll?.bodyRows : undefined
     return (
       <ui.Box flexDirection="column" paddingRight={EDGE} minHeight={rows}>
-        <Tabs c={c} close={() => void closePane($)} />
+        <Tabs c={c} close={() => void (isSets(owner) ? shutSet($) : closePane($))} />
         <Rule c={c} />
         <ui.Box flexDirection="column" flexGrow={1} marginTop={1}>
           {screen.body}

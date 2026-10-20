@@ -6,6 +6,7 @@
 import type { EngineInterface, On, RenderInput, ToolCallInput } from 'claude-code'
 import type { JunkdOrchField as OrchField, JunkdOrchGuard as OrchGuard } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
+import { isSets, shutSet } from './set'
 import { O, PREFIX, applyOrchSettings, coerce, guardActive, isField, orchGuard, orchSpawn, transcriptTokens, type AgentRecord, type OrchState } from './orch-lib'
 import { orchView, type Els } from './orch-views'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
@@ -361,16 +362,19 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
   })
 
   // The person's closes (q, ×) pass here; ours go through closePane.
-  on('ui.close', { id: PANE }, (_$, e, next) => {
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const isSet = isSets(owner)
     paneOpen = false
     owner = undefined
-    return next(e)
+    const r = await next(e)
+    if (isSet) await shutSet($)
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e: RenderInput<'Pane'>, next) => {
     if (e.surface === 'mobile') return next(e)
     return orchView($.ui.resolve(e) as Els, e.props, { ...O }, note, {
-      close: () => void closePane($),
+      close: () => void (isSets(owner) ? shutSet($) : closePane($)),
       set: (key, value) => void setOption($, key, value),
       focus: key => void $.ui.focus({ requestId: PANE, key }).catch(() => undefined), // a refused ring is no error
       refuse: text => {

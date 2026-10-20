@@ -750,12 +750,14 @@ test('the /junkd set shows the handoff pane without the keys, and closes it only
   await junkd()
   expect(rec.closed.slice(ownCloses)).not.toContain('ahandoff')
 
-  // The person's close clears the mark: closing the set closes nothing of handoff's again.
+  // The person's close of the set's handoff pane takes the whole set down: handoff closes once (the person's), the
+  // set's own close of it finds the mark cleared and the set is not up to close again.
   await junkd()
-  await shut($)
   const shutCloses = rec.closed.length
-  await junkd()
-  expect(rec.closed.slice(shutCloses)).not.toContain('ahandoff')
+  await shut($)
+  expect(rec.closed.slice(shutCloses).filter(id => id === 'ahandoff')).toEqual(['ahandoff'])
+  expect(isUp(rec, 'ahandoff')).toBe(false)
+  expect(rec.closed.slice(shutCloses)).toContain('junkd')
 
   // Opened again by /junkd:handoff auto while the set's pane is up: the person's now.
   await junkd()

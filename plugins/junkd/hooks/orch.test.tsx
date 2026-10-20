@@ -1426,29 +1426,32 @@ test('closing the /junkd set closes the orch pane only while it is still the set
   await junkdCmd($)
   expect(orchCloses(rec)).toBe(2)
 
-  // The person's close clears the mark too.
+  // The person's close of the set's orch pane takes the whole set down (junkd.test.tsx): orch closes once, the set
+  // is down, and the next /junkd opens it again (orch closed first, then shown as the set's).
   await junkdCmd($) // the set again: its feature pane closes first, then opens as the set's
   expect(orchCloses(rec)).toBe(3)
   await shut($)
-  expect(orchCloses(rec)).toBe(4)
+  expect(orchCloses(rec)).toBe(4) // the person's close, once: the set's own close of orch finds the mark cleared
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(4)
+  expect(orchCloses(rec)).toBe(5)
+  await junkdCmd($)
+  expect(orchCloses(rec)).toBe(6)
 
   // Shown but not placed (a narrow terminal), then opened by /junkd:orch panel: the person's now.
   rec.notPlaced = true
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(5)
+  expect(orchCloses(rec)).toBe(7)
   await orchCmd($, 'panel')
   expect(rec.opened.at(-1)).toBe('orch')
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(5)
+  expect(orchCloses(rec)).toBe(7)
 
   // Shown and left as the set's: closing the set closes it.
   rec.notPlaced = false
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(6)
+  expect(orchCloses(rec)).toBe(8)
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(7)
+  expect(orchCloses(rec)).toBe(9)
 })
 
 // Every word drawn: the Texts and the Buttons' labels (a field's title is its hotkey Button).
