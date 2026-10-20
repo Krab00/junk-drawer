@@ -162,6 +162,8 @@ world
 known_source "{\"source\": \"directory\", \"path\": \"$tmp/afile\"}"
 run
 expect 1 3 2 "directory source pointing at a file"
+rg -q "^FAIL +marketplace .*afile', which is not a folder" <<<"$out" || fail "file path: wrong line:
+$out"
 world
 rm "$checkout/.claude-plugin/marketplace.json"
 run
