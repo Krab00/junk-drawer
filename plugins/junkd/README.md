@@ -493,12 +493,32 @@ capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }        # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if none
   tests: { api: "npm test" }  # use `root` for a repo-level suite; omit absent runners
+  security: { severity: high } # omit unless there is a web app, an api, or a security-named file
 standing_checks_extra: []     # project lessons promoted to standing checks
 github: { label: "orch" }     # github-issues backend only
 ---
 Free-form project notes the orchestrator should know (conventions, gotchas, the visual spec path,
 calibration values that must never be guessed).
 ```
+
+`capabilities.security` turns on the security standing check. `/junkd:orch-init` proposes it with
+`severity: high` when the repo has a web app, an api, or a file whose name matches
+`auth|login|session|token|secret|upload|exec|spawn|sql|query`. Declared, every verify round (fix rounds
+too) has the `verify-coordinator` spawn one fresh reviewer (Sonnet; Opus when the diff touches such a
+file) that runs Claude Code's built-in `security-review` skill over `git diff <base>...<branch>`. Each
+finding at or above `severity` is a `FAIL` row with `file:line` and the class; a lower finding is a note
+under the table; no finding is one `PASS` row; a reviewer that cannot run is a `PM-REVIEW` row. Absent,
+no security check runs.
+
+### Recommended env for the orchestrator session
+
+Start the session that runs `/junkd:orch` with `ENABLE_STOP_REVIEW=0` in its environment (for example
+`ENABLE_STOP_REVIEW=0 claude`). junkd does not set it from a hook. The variable belongs to the `security-guidance` plugin and turns off only its
+Stop-time diff review. In an orch run that review fires in whichever agent stops, reads a diff that
+other agents change between its turns, and its findings stay in that agent: the orchestrator never sees
+them and they block nothing. The commit/push review stays on: it runs in the implementer at the moment
+it commits, on that commit alone, so it is still a useful first warning. The `security` standing check
+above is what gates `done`.
 
 ### Modes
 

@@ -402,6 +402,88 @@ for pair in implementer:opus lead-implementer:opus verify-coordinator:opus ui-re
     [ "$model" = "${pair##*:}" ] || fail "agent ${pair%%:*}: model '$model', expected ${pair##*:}"
 done
 
+# ---------------------------------------------------------------- security standing check (T22)
+# The check is a prompt rule: orch.md §4 and the verify-coordinator's standing checks carry the same gate, spawn
+# and row rules, init.md proposes the block, and the orchestrator session env (ENABLE_STOP_REVIEW=0) is documented.
+# Every needle is a whole clause of the rule, so a flipped model, gate, row kind or threshold fails the test.
+orch_md="$plugin/skills/orch/commands/orch.md"
+vc_md="$plugin/agents/verify-coordinator.md"
+init_md="$plugin/skills/orch/commands/init.md"
+# section <file> <start regex> <end regex>: the lines from the start line up to (not including) the end line
+section() { awk -v a="$2" -v b="$3" '$0 ~ a {on=1} on && $0 ~ b && !($0 ~ a) {exit} on' "$1"; }
+# flat <text>: one line, leading blanks of every line dropped, so a rule wrapped across lines still matches
+flat() { printf '%s\n' "$1" | sed 's/^ *//' | tr '\n' ' '; }
+needs() {   # needs <label> <text> <needle>...: every needle appears verbatim in the text
+    local label=$1 text=$2 n; shift 2
+    for n in "$@"; do printf '%s\n' "$text" | rg -qF -- "$n" || fail "$label: no '$n'"; done
+}
+names='auth|login|session|token|secret|upload|exec|spawn|sql|query'
+classes='injection, XSS, SSRF, IDOR, auth bypass, secret, deserialization, path traversal, …'
+s4=$(flat "$(section "$orch_md" '^### 4[.] ' '^### 5[.] ')")
+needs "orch.md §4" "$s4" \
+    '**`security` declared** (`capabilities.security: { severity: <low|medium|high> }`) → the coordinator spawns ONE fresh security reviewer, no new agent type: a general-purpose subagent on' \
+    "\`model: sonnet\`, or \`model: opus\` when a path in \`git diff --name-only <base>...<branch>\` matches \`$names\` (case-insensitive)." \
+    'It runs the built-in `security-review` skill against `git diff <base>...<branch>` in the verify worktree; scope: the changed files plus what they call.' \
+    "Every finding at or above \`severity\` is its own \`FAIL\` row naming \`file:line\` and the class ($classes)." \
+    'Findings below `severity` are notes under the table, never rows.' \
+    'No finding at or above it → one `PASS` row `security: no findings ≥ <severity>`.' \
+    'A reviewer that cannot run (the skill is missing on the host) → one `PM-REVIEW` row with the reason, never a silent skip.' \
+    'It runs on **every** round, re-verify rounds too: a fix round changes the diff.' \
+    '`security` absent from the config → no reviewer and no security row at all.' \
+    'A `severity` that is missing or not one of `low`, `medium`, `high` is read as `high`, with the note `security: severity <value> read as high` under the table.' \
+    '**only the failing criteria** (the `security` check still runs in full).'
+vc_checks=$(flat "$(section "$vc_md" '^5[.] [*][*]Standing checks' '^## Where evidence goes')")
+needs "verify-coordinator standing checks" "$vc_checks" \
+    '**Security (`capabilities.security` declared, `{ severity: <low|medium|high> }`):** spawn ONE fresh security reviewer in step 0 — no new agent type: a general-purpose subagent on' \
+    "\`model: sonnet\`, or \`model: opus\` when a path in \`git diff --name-only <base>...<branch>\` matches \`$names\` (case-insensitive)." \
+    'Brief it to run the built-in `security-review` skill against `git diff <base>...<branch>` in the verify worktree, scope: the changed files plus what they call, and to return each finding with `file:line`, class and severity.' \
+    "every finding at or above \`severity\` → its own \`FAIL\` row, \`security: <class> at <file>:<line>\`; the class is one of $classes (the reviewer's word when none fits);" \
+    '- findings below `severity` → listed as notes under the table, never rows;' \
+    '- no finding at or above it → one `PASS` row `security: no findings ≥ <severity>`;' \
+    '- the reviewer cannot run (the `security-review` skill is missing on the host, the spawn fails) → one `PM-REVIEW` row with the reason, never a silent skip, and never a self-review standing in for it.' \
+    'It runs on every round, re-verify rounds included. `security` absent from the config → no reviewer and no security row at all.' \
+    'A `severity` that is missing or not one of `low`, `medium`, `high` is read as `high`, with the note `security: severity <value> read as high` under the table.'
+needs "verify-coordinator step 0" "$(flat "$(section "$vc_md" '^0[.] [*][*]Plan the matrix' '^1[.] [*][*]Build the verify env')")" \
+    '**`security` declared → spawn the security reviewer in this same step** (see the standing check below), so it too overlaps the env build: run `<bin>/orch-worktree add` first'
+needs "verify-coordinator inputs" "$(flat "$(section "$vc_md" '^## Inputs' '^## What you do')")" \
+    'The `security` standing check is not narrowed by it: it runs in full on every round, because a fix round changes the diff.' \
+    'no test runner → build/behaviour checks stand in; no `security` → no security reviewer).'
+needs "verify-coordinator evidence" "$(flat "$(section "$vc_md" '^## Where evidence goes' '^## Teardown')")" \
+    'The `security` rows join the same table; the findings below `severity` go under it as `Security notes (below <severity>)`.'
+# the literal grep of AC1 hits all three files
+for f in "$orch_md" "$vc_md" "$init_md"; do
+    grep -q "capabilities.security\|security-review" "$f" || fail "$(basename "$f"): no capabilities.security / security-review"
+done
+# init.md: the scan condition, the proposal only under it, and the template line carrying severity: high
+needs "init.md" "$(flat "$(cat "$init_md")")" \
+    "- **Security surface** — does the repo have a **web** app, an **api**, or any file whose name matches \`$names\` (case-insensitive, \`git ls-files\`)? Any one of the three → propose the \`security\` block (step 3); none → leave it out." \
+    'The same holds for `security`: propose it with `severity: high` only when the scan found its surface (step 1)' \
+    'Declared, it makes every verify round run the built-in `security-review` skill over the task diff (`capabilities.security`, see `/junkd:orch` §4); without it no security check runs.'
+rg -q '^  security: \{ severity: high \} +# only with a web app, an api, or a security-named file; omit otherwise$' "$init_md" ||
+    fail "init.md: the config template has no 'security: { severity: high }' line"
+needs "orch-init SKILL.md" "$(flat "$(cat "$plugin/skills/orch-init/SKILL.md")")" \
+    '- The spec'"'"'s `security` block is proposed by the same scan on every host. On Codex, Kimi Code and OpenCode a declared `security` needs a `security-review` skill on that host for the verify leg to run it; without one each verify round gives a `PM-REVIEW` row, so say that when you propose the block. On Claude Code `security-review` is a built-in skill.'
+# the orchestrator session env: orch.md §0, the rule sheet, README and the guide, and why the commit/push review stays on
+needs "orch.md §0" "$(flat "$(section "$orch_md" '^## 0[.] ' '^## Canonical')")" \
+    '**Session env:** the orchestrator session runs with `ENABLE_STOP_REVIEW=0` (recommended, set by the user where the session starts, never from a hook).' \
+    'Its commit/push review stays on, in the agent that commits. The check that gates `done` is the `security` standing check (§4).'
+needs "ORCHESTRATOR.md" "$(flat "$(cat "$sheet")")" \
+    '- An orch session starts with `ENABLE_STOP_REVIEW=0` in its env, set by the user, never from a hook: the `security-guidance` Stop review stays off, its commit/push review stays on, and the verify leg'"'"'s `security` standing check gates `done`'
+readme=$(flat "$(cat "$plugin/README.md")")
+needs "README.md" "$readme" \
+    'security: { severity: high } # omit unless there is a web app, an api, or a security-named file' \
+    'Each finding at or above `severity` is a `FAIL` row with `file:line` and the class; a lower finding is a note under the table; no finding is one `PASS` row; a reviewer that cannot run is a `PM-REVIEW` row. Absent, no security check runs.' \
+    'Start the session that runs `/junkd:orch` with `ENABLE_STOP_REVIEW=0` in its environment (for example `ENABLE_STOP_REVIEW=0 claude`). junkd does not set it from a hook.' \
+    'The commit/push review stays on: it runs in the implementer at the moment it commits, on that commit alone, so it is still a useful first warning.'
+guide=$(flat "$(cat "$plugin/docs/orch-guide.md")")
+needs "orch-guide.md" "$guide" '### Security' \
+    '| **Security review of the diff** — one fresh reviewer runs the built-in `security-review` skill; each finding at or above `severity` is a FAIL row | `security` declared |' \
+    'a reviewer that cannot run (no such skill on the host) is one `PM-REVIEW` row with the reason. The check runs on every round, because a fix round changes the diff. Without the block there is no security row at all.' \
+    'The orchestrator session itself runs with `ENABLE_STOP_REVIEW=0`, set by you where the session starts (`ENABLE_STOP_REVIEW=0 claude`), never by a hook.' \
+    'Its commit/push review stays on, because it runs in the implementer at the moment of the commit, on that commit alone, and is a cheap early warning.' \
+    'security: { severity: high } # omit unless there is a web app, an api, or a security-named file' \
+    '| `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row; a missing or other value is read as `high`, with a note under the table. Absent → no security check'
+
 # ---------------------------------------------------------------- bin scripts (AC4, AC5)
 for s in orch-state orch-sync orch-worktree; do bash -n "$plugin/bin/$s" || fail "bash -n $s"; done
 bin="$plugin/bin"
