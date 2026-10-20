@@ -1,6 +1,6 @@
 ---
 name: ahandoff
-description: Arm the auto handoff loop (at a context threshold - handoff, /clear, /junkd:handon, continue; and resume after the 5h rate limit), optionally running a prompt now; off disarms it, panel toggles its pane. A Claude Code mod feature of the junkd plugin.
+description: Arm the auto handoff loop (at a context threshold - handoff, /clear, /junkd:handon, continue; and resume after the 5h rate limit), optionally running a prompt now; off disarms it, panel toggles its pane, status shows the last measurement and the log path. A Claude Code mod feature of the junkd plugin.
 argument-hint: "[prompt] | off | panel | status"
 ---
 
