@@ -151,6 +151,41 @@ head -n1 <<<"$out" | grep -qF 'session s1' && grep -q '^impl-T17 ' <<<"$out" || 
 out=$(run --once --session nope)
 [ "$(grep -cE '^(impl|verify|trev|helper|pr|ui)-' <<<"$out")" = 0 ] || fail "--session nope lists records: $out"
 
+# an implementer by its task's status: blocked is stopped at once, idle or not; todo (left in_progress) goes by the
+# idle minutes alone, kept under them, due over them; a process only pwdx can read (no lsof answer) still counts
+printf -- '---\nid: T27\nstatus: blocked\n---\n' >"$repo/.orch/tasks/T27.md"
+printf -- '---\nid: T28\nstatus: todo\n---\n' >"$repo/.orch/tasks/T28.md"
+printf -- '---\nid: T29\nstatus: todo\n---\n' >"$repo/.orch/tasks/T29.md"
+s3="$CLAUDE_CONFIG_DIR/junkd/orch/_agents/s3"
+mkdir -p "$s3"
+printf '{"type":"junkd:implementer","tokens":1}\n' >"$s3/impl-T27.json"
+printf '{"type":"junkd:implementer","tokens":1}\n' >"$s3/impl-T28.json"
+printf '{"type":"junkd:lead-implementer","tokens":1}\n' >"$s3/impl-T29.json"
+touch -t "$OLD" "$s3/impl-T29.json"
+cp "$stubs/ps" "$tmp/ps.main"
+cp "$stubs/lsof" "$tmp/lsof.main"
+printf '#!/usr/bin/env bash\nprintf "  201 claude\\n  202 claude\\n  203 claude\\n  204 claude\\n"\n' >"$stubs/ps"
+cat >"$stubs/lsof" <<EOF
+#!/usr/bin/env bash
+pid=''
+while [ \$# -gt 0 ]; do [ "\$1" = -p ] && pid=\$2; shift; done
+case "\$pid" in 201) d="$wt/T27" ;; 202) d="$wt/T28" ;; 203) d="$wt/T29" ;; *) exit 1 ;; esac
+printf 'p%s\nfcwd\nn%s\n' "\$pid" "\$d"
+EOF
+cat >"$stubs/pwdx" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = 204 ] && echo "204: $wt/T30" || exit 1
+EOF
+chmod +x "$stubs/ps" "$stubs/lsof" "$stubs/pwdx"
+out=$(run --once --session s3 --idle-minutes 5) || fail "s3 exited non-zero"
+row impl-T27 | grep -qE '^impl-T27\|implementer\|idle \(pid 201\)\|0m\|stop, report only \(T27 is blocked\)$' || fail "impl-T27 (blocked): $(row impl-T27)"
+row impl-T28 | grep -qE '^impl-T28\|implementer\|idle \(pid 202\)\|0m\|kept \(idle under 5 min\)$' || fail "impl-T28 (todo, fresh): $(row impl-T28)"
+row impl-T29 | grep -qE '^impl-T29\|lead-implementer\|idle \(pid 203\)\|[0-9]+m\|stop, report only \(idle over 5 min\)$' || fail "impl-T29 (todo, old): $(row impl-T29)"
+row 'claude:204' | grep -qE '^claude:204 \(T30\)\|-\|running\|-\|ok$' || fail "claude:204 (pwdx): $(row 'claude:204')"
+mv "$tmp/ps.main" "$stubs/ps"
+mv "$tmp/lsof.main" "$stubs/lsof"
+rm "$stubs/pwdx"
+
 # AC5: no records, no agents: the header and exit 0
 empty="$tmp/empty-cfg"
 mkdir -p "$empty"

@@ -295,6 +295,44 @@ test('tick: a failed agent list keeps the last verdict, raises nothing and drops
   expect(run(first.st, [snap(listed, { settings: { ...S, on: false } })]).st).toEqual(emptyState())
 })
 
+test('tick: an agent resumed from done (SendMessage) moved: its idle alarm is cleared, its stall clock starts at the resume', () => {
+  const off = { ...S, idleStop: false }
+  const done = [agent('a1', 'completed', { type: 'general-purpose', name: 'scout' })]
+  const back = [agent('a1', 'running', { type: 'general-purpose', name: 'scout' })]
+  let r = run(emptyState(), [snap(done, { settings: off })])
+  r = run(r.st, [snap(done, { settings: off })], T0 + 11 * MINUTE)
+  expect(r.events.map(e => e.kind)).toEqual(['idle'])
+  r = run(r.st, [snap(back, { settings: off })], T0 + 30 * MINUTE)
+  expect(r.events).toEqual([]) // no stall from the old finish: the resume is movement
+  expect(r.st.alarms.a1).toBe(undefined)
+  expect(r.st.agents.a1!.finishedAt).toBe(undefined)
+  expect(r.st.verdicts.a1).toEqual({ kind: 'running', idleMs: 0 })
+  r = run(r.st, [snap(back, { settings: off })], T0 + 45 * MINUTE)
+  expect(r.events).toEqual([])
+  r = run(r.st, [snap(back, { settings: off })], T0 + 45 * MINUTE + 1)
+  expect(r.events.map(e => e.kind)).toEqual(['stall'])
+  // done again: a new idle leftover from the new finish, reported again
+  r = run(r.st, [snap(done, { settings: off })], T0 + 50 * MINUTE)
+  expect(r.events).toEqual([])
+  r = run(r.st, [snap(done, { settings: off })], T0 + 60 * MINUTE + 1)
+  expect(r.events.map(e => e.kind)).toEqual(['idle'])
+})
+
+test('tick: a listed agent with no name takes its spawn name: its task, its verify round, its class', () => {
+  const listed = [agent('a1', 'completed'), agent('v1', 'waiting', { type: 'junkd:verify-coordinator' })] // no names
+  const spawns = { a1: { at: T0 - 5, name: 'impl-T17' }, v1: { at: T0 - 5, name: 'verify-T17' } }
+  let r = run(emptyState(), [snap(listed, { spawns, tasks: { T17: 'in_progress' } })])
+  r = run(r.st, [snap(listed, { spawns })], T0 + 99 * MINUTE)
+  expect(r.events).toEqual([])
+  expect([r.st.agents.a1!.name, r.st.agents.v1!.name]).toEqual(['impl-T17', 'verify-T17'])
+  expect(r.st.verdicts.a1).toMatchObject({ kind: 'kept', why: 'T17 in verify' })
+  // a pr- name only the spawn knows: a reviewer, stopped at once
+  const pr = run(emptyState(), [snap([agent('p1', 'completed', { type: 'general-purpose' })], { spawns: { p1: { at: T0, name: 'pr-12' } } })])
+  expect(pr.events.map(e => [e.kind, e.agent])).toEqual([['idle-stopped', 'pr-12']])
+  // no name anywhere: the description
+  expect(run(emptyState(), [snap([agent('a1', 'completed')])]).st.agents.a1!.name).toBe('task a1')
+})
+
 test('the injected lines are taken once', () => {
   const st = emptyState()
   st.pending.push('a', 'b')
@@ -408,6 +446,9 @@ function world(on: On, o: Opts = {}) {
     opened: [] as string[],
     runs: [] as string[][],
     hold: undefined as Promise<void> | undefined, // a subagent call waits on it while set
+    stopThrow: '', // TaskStop throws this while set
+    noRepo: false, // the toplevel lookup fails: the session is outside a repo
+    missingDirs: new Set<string>(), // a write into one of these fails until mkdir -p makes it
   }
   mock.store(on)
   mock.env(on, { CLAUDE_CONFIG_DIR: CFG, HOME })
@@ -443,9 +484,11 @@ function world(on: On, o: Opts = {}) {
   on('tool.call', async (_$, e) => {
     if (e.tool === 'TaskStop') {
       rec.stops.push((e as { task_id?: string }).task_id)
+      if (rec.stopThrow) throw new Error(rec.stopThrow)
       return rec.stopAnswer as never
     }
     if ((e as { hold?: boolean }).hold) await rec.hold
+    if ((e as { boom?: boolean }).boom) throw new Error('boom')
     return { result: 'ok', text: 'ok' }
   })
   on('fs.exists', (_$, e) => ({ value: e.path in rec.files }))
@@ -458,14 +501,20 @@ function world(on: On, o: Opts = {}) {
     if (!(e.path in rec.files)) throw new Error(`ENOENT ${e.path}`)
     return { value: rec.files[e.path]! }
   })
-  on('fs.write', (_$, e) => { rec.files[e.path] = e.text; rec.mtimes[e.path] = clock.now(); return { value: undefined } })
+  on('fs.write', (_$, e) => {
+    if (rec.missingDirs.has(e.path.slice(0, e.path.lastIndexOf('/')))) throw new Error(`ENOENT ${e.path}`)
+    rec.files[e.path] = e.text
+    rec.mtimes[e.path] = clock.now()
+    return { value: undefined }
+  })
   on('fs.list', () => ({ value: [] }))
   on('process.run', (_$, e) => {
     const argv = [...e.argv]
     rec.runs.push(argv)
-    if (argv[0] === 'git' && argv.includes('--show-toplevel')) return done(`${REPO}\n`)
+    if (argv[0] === 'git' && argv.includes('--show-toplevel')) return rec.noRepo ? done('', 128) : done(`${REPO}\n`)
     if (argv[0] === 'git' && argv.includes('--show-current')) return done('task/T17-tools-pane\n')
     if (argv[0] === 'git') return done('', 128)
+    if (argv[0] === 'mkdir') rec.missingDirs.delete(argv.at(-1)!)
     if (argv[0] === 'rm') delete rec.files[argv.at(-1)!]
     return done()
   })
@@ -967,4 +1016,139 @@ test('the ⚙ orch pane draws the four rows and edits them: h and i flip the swi
   expect(await words()).toMatch(/stall_minutes takes a whole number 1–120, not "soon"/)
   expect(w.rec.config.length).toBe(writes)
   await ui.unmount()
+})
+
+// fix round 1 ------------------------------------------------------------------------------------------------------
+
+test('two calls in flight at once: the short one ending leaves the long one in flight, no stall until both ended', async ($, on) => {
+  const w = world(on)
+  await start($)
+  await spawn($, { name: 'impl-T19' })
+  w.rec.agents = [agent('a1', 'running', { name: 'impl-T19' })]
+  let release!: () => void
+  w.rec.hold = new Promise<void>(r => { release = r })
+  const long = $.tool.call(sub('Bash', 'a1', { command: 'sleep 1800', hold: true }))
+  await $.tool.call(sub('Read', 'a1', { file_path: '/a.ts' })) // a parallel short call, done at once
+  await w.clock.advance(30 * MINUTE)
+  expect(w.rec.toasts).toEqual([])
+  release()
+  await long
+  await w.clock.settle()
+  await w.clock.advance(15 * MINUTE + TICK_MS)
+  expect(w.rec.toasts.filter(t => /stalled/.test(t))).toHaveLength(1)
+})
+
+test('a call that throws still ends: the agent is no longer in flight and can stall', async ($, on) => {
+  const w = world(on)
+  await start($)
+  await spawn($, { name: 'impl-T19' })
+  w.rec.agents = [agent('a1', 'running', { name: 'impl-T19' })]
+  await $.tool.call(sub('Bash', 'a1', { command: 'false', boom: true })).catch(() => undefined)
+  await w.clock.settle()
+  await w.clock.advance(15 * MINUTE + TICK_MS)
+  expect(w.rec.toasts.filter(t => /stalled/.test(t))).toEqual(['⚠ impl-T19 stalled: idle 15 min · last: Bash false'])
+})
+
+test('calls that ended with no start seen (begun before /clear) leave no negative count: a later long call is in flight', async ($, on) => {
+  const w = world(on)
+  await start($)
+  await spawn($, { name: 'impl-T19' })
+  w.rec.agents = [agent('a1', 'running', { name: 'impl-T19' })]
+  let release!: () => void
+  w.rec.hold = new Promise<void>(r => { release = r })
+  const two = [$.tool.call(sub('Bash', 'a1', { command: 'x', hold: true })), $.tool.call(sub('Bash', 'a1', { command: 'y', hold: true }))]
+  await $.session.end({ reason: 'clear', sessionId: SID, resume: {} as never })
+  release()
+  await Promise.all(two) // two ends, no start known
+  w.rec.hold = new Promise<void>(() => {}) // the next call never ends
+  void $.tool.call(sub('Bash', 'a1', { command: 'sleep 9999', hold: true }))
+  await w.clock.settle()
+  await w.clock.advance(60 * MINUTE)
+  expect(w.rec.toasts).toEqual([])
+})
+
+const CALLER: Plugin = {
+  name: 'caller',
+  register(on) {
+    on('command.run', { command: 'poke' }, async $ => {
+      await $.tool.call({ tool: 'Read', agentId: 'a1', file_path: '/x' } as never)
+      return { text: 'poked' }
+    })
+  },
+}
+test('a call another plugin makes in an agent\'s name is no movement of the agent', { plugins: [CALLER] }, async ($, on) => {
+  const w = world(on)
+  await start($)
+  await spawn($, { name: 'impl-T19' })
+  w.rec.agents = [agent('a1', 'running', { name: 'impl-T19' })]
+  await ticks(w, 1)
+  await w.clock.advance(16 * MINUTE)
+  expect(w.rec.toasts.filter(t => /stalled/.test(t))).toHaveLength(1)
+  expect((await run$($, 'poke')).text).toBe('poked')
+  await w.clock.advance(20 * MINUTE)
+  expect(w.rec.toasts.filter(t => /stalled/.test(t))).toHaveLength(1) // the stall stands: not cleared, not raised again
+  expect(await hintText($)).toMatch(/⚠ 1 stalled/)
+})
+
+test('ACX3: a TaskStop that throws is a failed stop, said and logged; the rest of the tick still acts', async ($, on) => {
+  const w = world(on)
+  await start($)
+  w.rec.stopThrow = 'engine gone'
+  w.rec.agents = [agent('v1', 'completed', { type: 'ui-reviewer', name: 'ui-T17' }), agent('v2', 'completed', { type: 'ui-reviewer', name: 'ui-T18' })]
+  await ticks(w, 1)
+  expect(w.rec.stops).toEqual(['v1', 'v2'])
+  // the thrown call rejects $.tool.call (the engine words the reason): a failed stop, never a stopped one
+  expect(w.rec.toasts).toHaveLength(2)
+  expect(w.rec.toasts[0]).toMatch(/^⚠ could not stop ui-T17: \S/)
+  expect(w.rec.toasts[1]).toMatch(/^⚠ could not stop ui-T18: \S/)
+  expect(logLines(w).map(l => [l.agent, l.kind])).toEqual([['ui-T17', 'stop-failed'], ['ui-T18', 'stop-failed']])
+  await ticks(w, 3)
+  expect(w.rec.stops).toEqual(['v1', 'v2'])
+})
+
+test('the first log line of a session makes the watchdog folder (mkdir -p) when the write finds none', async ($, on) => {
+  const w = world(on)
+  await start($)
+  const dir = `${CFG}/junkd/orch/watchdog`
+  w.rec.missingDirs.add(dir)
+  w.rec.agents = [agent('v1', 'completed', { type: 'ui-reviewer', name: 'ui-T17' })]
+  await ticks(w, 1)
+  expect(w.rec.runs).toContainEqual(['mkdir', '-p', '--', dir])
+  expect(logLines(w).map(l => [l.agent, l.kind])).toEqual([['ui-T17', 'idle-stopped']])
+})
+
+test('an implementer listed with no name is matched to its task by its spawn name (a cwd outside the worktrees)', async ($, on) => {
+  const w = world(on)
+  await start($)
+  w.rec.files[TASK] = taskFile('done')
+  await spawn($, { name: 'impl-T17', cwd: '/tmp/x' })
+  w.rec.agents = [agent('a1', 'completed')] // the list has no name for it
+  await ticks(w, 1)
+  expect(w.rec.stops).toEqual(['a1'])
+  expect(w.rec.toasts).toEqual(['⚠ stopped impl-T17: reported 0 min ago'])
+})
+
+test('outside a repo there are no task files: an implementer goes by the idle minutes alone', async ($, on) => {
+  const w = world(on)
+  w.rec.noRepo = true
+  await start($)
+  await spawn($, { name: 'impl-T17' })
+  w.rec.agents = [agent('a1', 'completed', { name: 'impl-T17' })]
+  await ticks(w, 1)
+  await w.clock.advance(10 * MINUTE)
+  expect(w.rec.stops).toEqual([])
+  await ticks(w, 1)
+  expect(w.rec.stops).toEqual(['a1'])
+})
+
+test('a session id that is not a plain name writes no file: no log, no deadNote; the toasts still come', async ($, on) => {
+  const w = world(on, { sessionId: '../evil' })
+  await start($)
+  await spawn($, { name: 'impl-T17' })
+  w.rec.agents = [agent('a1', 'running', { name: 'impl-T17' }), agent('v1', 'completed', { type: 'ui-reviewer', name: 'ui-T17' })]
+  await ticks(w, 1)
+  w.rec.agents = []
+  await ticks(w, 1)
+  expect(w.rec.toasts).toEqual(['⚠ stopped ui-T17: reported 0 min ago', '⚠ impl-T17 died: no SubagentStop record · last: no tool call seen'])
+  expect(Object.keys(w.rec.files)).toEqual([])
 })
