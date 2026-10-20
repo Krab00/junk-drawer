@@ -7,7 +7,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { AgentInfo, Args, On } from 'claude-code'
 import {
-  HOUR, MAX_EVENTS, buildStatus, columnOf, ctxText, isTaskFile, kindOf, mergePhases, openArgv, orchRoot, parseLessons, parseTask,
+  HOUR, MAX_AGENT_EVENTS, MAX_EVENTS, buildStatus, columnOf, ctxText, isTaskFile, kindOf, mergePhases, openArgv, orchRoot, parseLessons, parseTask,
   parseVerification, readStatusJs, relTo, roleOf, shortModel, stateOf, statusJs, stepOf, taskOf, tasksDirOf,
   type Phase, type Status,
 } from './dashboard.ts'
@@ -208,7 +208,7 @@ test('openArgv: open on macOS, xdg-open elsewhere', () => {
 // the module --------------------------------------------------------------------------------------------------------
 
 type Opts = { os?: string; cwd?: string; top?: Record<string, string> }
-type Fail = { mv?: boolean; open?: 'exit' | 'deny'; hash?: boolean; list?: boolean }
+type Fail = { mv?: boolean | 'throw'; open?: 'exit' | 'deny'; hash?: boolean; list?: boolean; read?: string; agents?: boolean; usage?: boolean; write?: string }
 type Rec = ReturnType<typeof world>
 const TASK = (id: string, status: string, more = '') => `---\nid: ${id}\ntitle: task ${id}\nstatus: ${status}\ndeps: []\n---\n${more}`
 
@@ -244,14 +244,17 @@ function world(on: On, o: Opts = {}) {
     spawnModel: 'claude-haiku-5-5',
     rateLimits: [{ kind: 'five_hour', percentUsed: 41.6 }, { kind: 'seven_day', percentUsed: 12 }],
     fail: {} as Fail,
+    hashes: {} as Record<string, string>, // a toplevel's own folder hash (else HASH)
   }
   const done = (stdout = '', exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   const isDir = (p: string) => Object.keys(files).some(f => f.startsWith(`${p.replace(/\/+$/, '')}/`))
   on('fs.read', (_$, e) => {
+    if (rec.fail.read === e.path) throw new Error(`EACCES ${e.path}`)
     if (!(e.path in files)) throw new Error(`ENOENT ${e.path}`)
     return { value: files[e.path]! }
   })
   on('fs.write', (_$, e) => {
+    if (rec.fail.write === e.path) throw new Error(`ENOSPC ${e.path}`)
     rec.writes.push(e.path)
     files[e.path] = e.text
     return { value: undefined }
@@ -274,7 +277,7 @@ function world(on: On, o: Opts = {}) {
   on('process.run', (_$, e) => {
     const argv = [...e.argv]
     rec.runs.push(argv)
-    if (argv[0] === 'bash' && argv[2]?.includes('jd_hash8')) return rec.fail.hash ? done('', 1) : done(`${HASH}\n`)
+    if (argv[0] === 'bash' && argv[2]?.includes('jd_hash8')) return rec.fail.hash ? done('', 1) : done(`${rec.hashes[argv.at(-1)!] ?? HASH}\n`)
     if (argv[0] === 'git' && argv.includes('--show-toplevel')) {
       const top = rec.top[argv[2]!]
       return top === undefined ? done('', 128) : done(`${top}\n`)
@@ -284,6 +287,7 @@ function world(on: On, o: Opts = {}) {
     if (argv[0] === 'uname') return done(`${o.os ?? 'Darwin'}\n`)
     if (argv[0] === 'sh') return done('\n')
     if (argv[0] === 'mv') {
+      if (rec.fail.mv === 'throw') throw new Error('mv: no such tool')
       if (rec.fail.mv) return done('', 1)
       const [from, to] = argv.slice(-2) as [string, string]
       files[to] = files[from]!
@@ -316,11 +320,17 @@ function world(on: On, o: Opts = {}) {
   on('session.cwd', () => ({ value: rec.cwd }))
   on('session.id', () => ({ value: SID }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: { breakdown: { mcpTools: [] } }, rateLimits: rec.rateLimits } as never }))
+  on('session.usage', () => {
+    if (rec.fail.usage) throw new Error('no usage')
+    return { value: { startedAt: 0, context: { breakdown: { mcpTools: [] } }, rateLimits: rec.rateLimits } as never }
+  })
   on('turn.complete', (_$, e) => ({ text: e.answer }) as never)
-  on('agent.list', () => ({ value: rec.agents }))
+  on('agent.list', () => {
+    if (rec.fail.agents) throw new Error('no list')
+    return { value: rec.agents }
+  })
   on('agent.spawn', (_$, e) => ({ model: e.model ?? rec.spawnModel, agentId: rec.nextAgent }))
-  on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+  on('tool.call', (_$, e) => ((e as { tool?: string }).tool === 'Denied' ? { deny: 'refused' } : { result: 'ok', text: 'ok' }) as never)
   on('command.run', (_$, e) => ({ text: `ran ${e.command}` }))
   on('classic.SubagentStop', () => ({}))
   on('ui.render', ($, e) => $.ui.resolve(e).Box({ key: 'engine' }))
@@ -836,4 +846,192 @@ test('the orch pane\'s `dashboard: open ▸` takes the same open path', async ($
   expect(rec.runs.find(r => r[0] === 'open')).toEqual(['open', PAGE])
   expect(rec.toasts).toContain(`✓ dashboard: ${PAGE}`)
   expect(status(rec).tasks.length).toBe(4)
+})
+
+// fix round 1: one test per path the round-0 mutants showed unpinned -------------------------------------------------
+
+test('parseVerification: verdicts in any case count (pass, Fail, pm-review); a table with no Verdict column counts nothing', () => {
+  const lower = TABLE(1, ['| AC1 a | x | pass |', '| AC2 b | x | Fail: crash |', '| AC3 c | x | pm-review |', '| ACX1 d | x | Pass (note) |'])
+  expect(parseVerification(lower)).toEqual({ round: 1, ac: [1, 3], acx: [1, 1], note: 'round 1: FAIL: AC2 · PM-REVIEW: AC3' })
+  const noVerdict = ['## Verification round 4', '| Criterion | Evidence |', '|---|---|', '| AC1 a | PASS |', '| ACX1 b | FAIL |'].join('\n')
+  expect(parseVerification(noVerdict)).toEqual({ round: 4 })
+})
+
+test('one task file that cannot be read is left out, the others are on the board', async ($, on) => {
+  const rec = world(on)
+  rec.fail.read = `${TASKS}/T3.md`
+  await start($)
+  expect(await dash($)).toEqual({})
+  expect(status(rec).tasks.map(t => t.id)).toEqual(['T1', 'T2', 'T10'])
+})
+
+test('an agent list that cannot be read changes nothing: the running agent stays running, its phase open', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await dash($)
+  rec.nextAgent = 'r1'
+  rec.agents = [{ id: 'r1', type: 'junkd:implementer', name: 'impl-T3', description: '', status: 'running' }]
+  await spawn($, { name: 'impl-T3' })
+  rec.fail.agents = true
+  await rec.clock.advance(SEC)
+  await turnEnd($)
+  await rec.clock.settle()
+  expect(status(rec).generatedAt).toBe(T0 + SEC) // written all the same
+  expect(task(rec, 'T3')!.phases![0]).toMatchObject({ open: true, end: T0 + SEC })
+  expect(task(rec, 'T3')!.phases![0]!.killed).toBe(undefined)
+  expect(status(rec).agents.find(a => a.id === 'r1')!.status).toBe('running')
+  expect(status(rec).events.some(e => e.kind === 'fail')).toBe(false)
+})
+
+test('usage that cannot be read: status.js is written with no usage', async ($, on) => {
+  const rec = world(on)
+  rec.fail.usage = true
+  await start($)
+  await dash($)
+  expect(status(rec).usage).toEqual({})
+  expect(status(rec).tasks.length).toBe(4)
+})
+
+test('a write that fails is `failed`: the open still answers, the timer keeps going and the next tick writes', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  rec.fail.write = `${STATUS}.tmp`
+  expect(await dash($)).toEqual({})
+  expect(STATUS in rec.files).toBe(false)
+  expect(rec.toasts).toEqual([`✓ dashboard: ${PAGE}`])
+  await rec.clock.advance(30 * SEC)
+  await rec.clock.settle()
+  expect(STATUS in rec.files).toBe(false) // failed again: still no file, the timer not stopped
+  delete rec.fail.write
+  await rec.clock.advance(30 * SEC)
+  await rec.clock.settle()
+  expect(status(rec).generatedAt).toBe(T0 + 60 * SEC)
+})
+
+test('a page that cannot be copied: the answer is ✗ dashboard with the error, nothing opened', async ($, on) => {
+  const rec = world(on)
+  delete rec.files[`${PAGE_SRC}/orch-dashboard.html`]
+  await start($)
+  const r = await dash($)
+  expect(r.text).toMatch(/^✗ dashboard: \S/) // the engine's error for the read, as it words it
+  expect(rec.runs.some(x => x[0] === 'open')).toBe(false)
+  expect(rec.toasts).toEqual([])
+})
+
+test('an mv that throws (no such tool) writes status.js whole and removes the .tmp', async ($, on) => {
+  const rec = world(on)
+  rec.fail.mv = 'throw'
+  await start($)
+  await dash($)
+  expect(rec.writes.filter(p => p.startsWith(STATUS))).toEqual([`${STATUS}.tmp`, STATUS])
+  expect(`${STATUS}.tmp` in rec.files).toBe(false)
+  expect(status(rec).tasks.length).toBe(4)
+})
+
+test('only this folder\'s own flag opens it: another repo\'s open dashboard writes nothing here', async ($, on) => {
+  const rec = world(on)
+  rec.files[`${CFG}/junkd/orch/dashboard/other123/open`] = ''
+  await start($)
+  await turnEnd($)
+  await rec.clock.advance(10 * 60 * SEC)
+  await rec.clock.settle()
+  expect(STATUS in rec.files).toBe(false)
+  expect(statusWrites(rec)).toBe(0)
+})
+
+test('reload: an open phase read back whose agent left a SubagentStop record ends done, not killed', async ($, on) => {
+  const rec = world(on)
+  const before = { tasks: [{ id: 'T3', title: 'old', column: 'in_progress', phases: [phase({ agent: 'impl-T3', id: 'rec2', start: T0 - 600 * SEC, end: T0 - 300 * SEC, open: true })] }] }
+  rec.files[STATUS] = `window.ORCH = ${JSON.stringify(before)};\n`
+  rec.files[`${RECORDS}/rec2.json`] = record(5000)
+  await start($)
+  await dash($)
+  const p = task(rec, 'T3')!.phases![0]!
+  expect(p).toMatchObject({ open: false, end: T0 })
+  expect(p.killed).toBe(undefined)
+  expect(p.note).toBe(undefined)
+})
+
+test('reload: an agent read back that the module sees again is listed once, by id and by name', async ($, on) => {
+  const rec = world(on)
+  const before = {
+    agents: [
+      { id: 'n1', name: 'renamed-since', role: 'implementer', model: 'opus', status: 'running', lastCallSec: 1, ctx: '1k' },
+      { id: 'zz', name: 'impl-T3', role: 'implementer', model: 'opus', status: 'done', lastCallSec: 1, ctx: '1k' },
+      { id: 'kept', name: 'ver-T1', role: 'verify-coordinator', model: 'opus', status: 'done', lastCallSec: 1, ctx: '1k' },
+    ],
+  }
+  rec.files[STATUS] = `window.ORCH = ${JSON.stringify(before)};\n`
+  await start($)
+  rec.nextAgent = 'n1'
+  rec.agents = [{ id: 'n1', type: 'junkd:implementer', name: 'impl-T1-r2', description: '', status: 'running' }]
+  await spawn($, { name: 'impl-T1-r2' })
+  rec.nextAgent = 'n2'
+  rec.agents = [...rec.agents, { id: 'n2', type: 'junkd:implementer', name: 'impl-T3', description: '', status: 'running' }]
+  await spawn($, { name: 'impl-T3' })
+  await dash($)
+  const agents = status(rec).agents
+  expect(agents.map(a => a.name).sort()).toEqual(['impl-T1-r2', 'impl-T3', 'ver-T1'])
+  expect(agents.find(a => a.name === 'impl-T3')!.id).toBe('n2')
+})
+
+test('reload: an event both in memory and in the status.js read back is listed once', async ($, on) => {
+  const rec = world(on)
+  rec.files[STATUS] = `window.ORCH = ${JSON.stringify({ events: [{ t: T0, text: 'impl-T2 started', kind: 'info' }, { t: T0 - 1, text: 'older', kind: 'info' }] })};\n`
+  await start($)
+  rec.nextAgent = 'e1'
+  rec.agents = [{ id: 'e1', type: 'junkd:implementer', name: 'impl-T2', description: '', status: 'running' }]
+  await spawn($, { name: 'impl-T2' }) // before the open: its event is in memory only
+  await dash($)
+  expect(status(rec).events).toEqual([{ t: T0, text: 'impl-T2 started', kind: 'info' }, { t: T0 - 1, text: 'older', kind: 'info' }])
+})
+
+test('a spawn killed before the dashboard opened is placed killed', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  rec.nextAgent = 'kb'
+  rec.agents = [{ id: 'kb', type: 'junkd:implementer', name: 'impl-T3', description: '', status: 'running' }]
+  await spawn($, { name: 'impl-T3' })
+  await rec.clock.advance(5 * SEC)
+  rec.agents = [{ id: 'kb', type: 'junkd:implementer', name: 'impl-T3', description: '', status: 'killed' }]
+  await dash($)
+  expect(task(rec, 'T3')!.phases).toEqual([{ agent: 'impl-T3', model: 'haiku', kind: 'implement', start: T0, end: T0 + 5 * SEC, ctx: '—', id: 'kb', open: false, killed: true, note: 'killed' }])
+})
+
+test('a session moving to another repo starts that folder\'s history afresh: no event of the first repo leaks in', async ($, on) => {
+  const OTHER = '/other'
+  const rec = world(on, { top: { [REPO]: REPO, [OTHER]: OTHER } })
+  rec.hashes[OTHER] = 'eeee0000'
+  const OTHER_DIR = `${CFG}/junkd/orch/dashboard/eeee0000`
+  rec.files[`${OTHER_DIR}/status.js`] = `window.ORCH = ${JSON.stringify({ events: [{ t: 1, text: 'other repo event', kind: 'info' }] })};\n`
+  await start($)
+  await dash($)
+  rec.nextAgent = 'f1'
+  rec.agents = [{ id: 'f1', type: 'junkd:implementer', name: 'impl-T3', description: '', status: 'running' }]
+  await spawn($, { name: 'impl-T3' })
+  expect(status(rec).events.map(e => e.text)).toContain('impl-T3 started')
+  rec.cwd = OTHER
+  await dash($)
+  const s = readStatusJs(rec.files[`${OTHER_DIR}/status.js`])!
+  expect(s.events.map(e => e.text)).toEqual(['other repo event'])
+})
+
+test('a subagent\'s denied call is a fail event; its events stop at MAX_AGENT_EVENTS, newest first', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await dash($)
+  rec.nextAgent = 'd1'
+  rec.agents = [{ id: 'd1', type: 'junkd:implementer', name: 'impl-T3', description: '', status: 'running' }]
+  await spawn($, { name: 'impl-T3' })
+  await $.tool.call({ tool: 'Denied', agentId: 'd1' } as never)
+  await turnEnd($)
+  await rec.clock.settle()
+  expect(status(rec).agents.find(a => a.id === 'd1')!.events).toEqual([{ t: T0, text: 'Denied', kind: 'fail' }])
+  for (let i = 0; i < 45; i++) await $.tool.call({ tool: 'Bash', command: `echo ${i}`, agentId: 'd1' } as never)
+  await turnEnd($)
+  await rec.clock.settle()
+  const evs = status(rec).agents.find(a => a.id === 'd1')!.events!
+  expect(evs.length).toBe(MAX_AGENT_EVENTS)
+  expect(evs[0]!.text).toBe('Bash echo 44')
+  expect(evs.at(-1)!.text).toBe(`Bash echo ${45 - MAX_AGENT_EVENTS}`)
 })
