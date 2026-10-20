@@ -5,7 +5,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { configNote, pluginKey } from './statusline'
+import { SETTLE_MS, SETTLE_TRIES, VERIFY_MS, configNote, pluginKey } from './statusline'
 import { FIELDS, SEGMENTS, plain } from './statusline-views'
 
 const HOME = '/home/u'
@@ -35,6 +35,12 @@ type Opts = {
   copy?: string
   script?: string
   panes?: { id: string }[]
+  // The host keeps its own copy of settings.json (the `statusLine` of its snapshot) and writes it back whole with a /config
+  // row (`config.set`). hostLag: how many settle sleeps (SETTLE_MS) it takes to read the file again after
+  // statusline-setup changed it: 0 (default) at once, Infinity never.
+  hostLag?: number
+  // No `settings.read` beneath the plugin: the call rejects, as it does in a world that does not model the host.
+  noSettingsRead?: boolean
 }
 function world(on: On, o: Opts = {}) {
   mock.store(on)
@@ -45,7 +51,20 @@ function world(on: On, o: Opts = {}) {
     toasts: [] as string[],
     log: [] as string[],
     files: new Map<string, string>(),
+    // Everything the module asked of the world in order, for the tests that pin an order: `setup <mode>`, `sleep <ms>`,
+    // `config.set <key>`.
+    order: [] as string[],
+    // The host's snapshot of the user's statusLine (undefined: none), what `settings.read` answers and what a row's write
+    // puts back into the file.
+    host: { line: undefined as unknown, behind: 0 },
+    // Releases the sleeps of VERIFY_MS the module started and lets what follows them run.
+    verify: async () => {},
     o,
+  }
+  const verifying: (() => void)[] = []
+  rec.verify = async () => {
+    verifying.splice(0).forEach(release => release())
+    for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 0))
   }
   const cfg = o.env?.CLAUDE_CONFIG_DIR ?? CFG
   if (o.copy !== undefined) rec.files.set(`${cfg}/junkd/statusline.sh`, o.copy)
@@ -57,6 +76,15 @@ function world(on: On, o: Opts = {}) {
     change(s)
     rec.files.set(settingsPath, JSON.stringify(s))
   }
+  const fileLine = () => (JSON.parse(rec.files.get(settingsPath) ?? '{}') as Record<string, unknown>).statusLine
+  const lag = o.hostLag ?? 0
+  rec.host.line = fileLine()
+  // What the host holds: the file as it is now when it keeps up (lag 0), else its snapshot, which statusline-setup's change
+  // of the file brings up to date after `lag` settle sleeps.
+  const hostLine = () => (lag === 0 ? fileLine() : rec.host.line)
+  const changed = () => {
+    rec.host.behind = lag === 0 ? 0 : lag
+  }
   const result = (exitCode = 0, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
   on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
@@ -65,10 +93,28 @@ function world(on: On, o: Opts = {}) {
   on('ui.focus', () => ({}))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('command.list', () => ({ value: [] }))
-  on('settings.read', () => ({ value: {} }))
+  if (!o.noSettingsRead) {
+    on('settings.read', () => {
+      const line = hostLine()
+      return { value: line === undefined ? {} : { statusLine: line } }
+    })
+  }
+  on('clock.sleep', (_$, e) => {
+    rec.order.push(`sleep ${e.ms}`)
+    if (e.ms === VERIFY_MS) return new Promise<{ value: undefined }>(release => verifying.push(() => release({ value: undefined })))
+    if (rec.host.behind > 0 && --rec.host.behind === 0) rec.host.line = fileLine()
+    return { value: undefined }
+  })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/work/proj' }))
-  on('config.set', (_$, e) => { rec.config.push({ key: e.key, value: e.value }); return { value: e.value } })
+  on('config.set', (_$, e) => {
+    rec.order.push(`config.set ${e.key}`)
+    rec.config.push({ key: e.key, value: e.value })
+    // The host writes its copy of the file back whole: its statusLine replaces the file's.
+    const line = hostLine()
+    if (line !== fileLine()) edit(s => { if (line === undefined) delete s.statusLine; else s.statusLine = line })
+    return { value: e.value }
+  })
   on('fs.stat', () => ({ value: { kind: 'other', size: 0, mtimeMs: 0 } as never }))
   on('fs.exists', (_$, e) => ({ value: rec.files.has(e.path) }))
   on('fs.write', (_$, e) => { rec.files.set(e.path, e.text); return { value: undefined } })
@@ -86,6 +132,7 @@ function world(on: On, o: Opts = {}) {
     const bin = e.argv[0] ?? ''
     if (bin.endsWith('/bin/statusline-setup')) {
       const mode = e.argv[1] as 'on' | 'off' | 'status'
+      rec.order.push(`setup ${mode}`)
       const a = o.setup?.[mode]
       if (a === 'throw') throw new Error('spawn EACCES')
       const ok = (a?.exitCode ?? 0) === 0
@@ -93,10 +140,12 @@ function world(on: On, o: Opts = {}) {
         rec.files.set(`${cfg}/junkd/statusline.sh`, o.script ?? SCRIPT)
         const key = e.argv[2] === '--config' ? e.argv[3] : undefined
         edit(s => { s.statusLine = { type: 'command', command: key ? `${cfg}/junkd/statusline.sh --config ${key}` : `${cfg}/junkd/statusline.sh` } })
+        changed()
       }
       if (ok && mode === 'off') {
         rec.files.delete(`${cfg}/junkd/statusline.sh`)
         edit(s => { delete s.statusLine })
+        changed()
       }
       return result(a?.exitCode ?? 0, a?.stdout ?? (a ? '' : mode === 'status' ? 'on\n' : `statusline: ${mode}\n`), a?.stderr ?? '')
     }
@@ -604,4 +653,170 @@ test('wired: a statusLine of the person\'s own is not "wired" (off) even with th
   await command($, '')
   const pane = await mount($)
   expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' off ')
+})
+
+// ------------------------------------------------------------------ T29 round 2: the host writes its copy of settings.json back
+
+// Seen live: `off` removed the statusLine and the copy, and the row's own write (the host writes the whole file from its
+// copy, which still held the line) put the line back; `on` lost it the same way. The world's host (Opts.hostLag) holds a
+// snapshot of the statusLine and reads the file again only after some settle sleeps.
+const lineIn = (rec: { files: Map<string, string> }) => (JSON.parse(rec.files.get(`${CFG}/settings.json`) ?? '{}') as { statusLine?: { command?: string } }).statusLine
+const at = (order: string[], what: string) => order.findIndex(o => o.startsWith(what))
+
+test('set enabled false with a host that reads the file two sleeps late: the row waits for it, the statusLine stays removed', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: 2 })
+  await start($)
+  rec.order.length = 0
+  expect(await set($, 'statusline_enabled', false)).toBe(false)
+  expect(rec.order).toEqual(['setup off', `sleep ${SETTLE_MS}`, `sleep ${SETTLE_MS}`, 'config.set junkd.statusline_enabled'])
+  expect(lineIn(rec), 'the row\'s write did not bring the line back').toBeUndefined()
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['off'])
+})
+test('set enabled true with a host that reads the file late: the statusLine stays, one run of on', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { hostLag: 3 })
+  await start($)
+  rec.order.length = 0
+  expect(await set($, 'statusline_enabled', true)).toBe(true)
+  expect(rec.order).toEqual(['setup on', `sleep ${SETTLE_MS}`, `sleep ${SETTLE_MS}`, `sleep ${SETTLE_MS}`, 'config.set junkd.statusline_enabled'])
+  expect(lineIn(rec)?.command).toBe(WIRED)
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['on'])
+})
+test('the /config menu path waits for the host the same way: off keeps the line out, on keeps it in', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: 1 })
+  await start($)
+  rec.order.length = 0
+  expect(await menu($, 'statusline_enabled', false)).toEqual({ value: false })
+  expect(rec.order).toEqual(['setup off', `sleep ${SETTLE_MS}`, 'config.set junkd.statusline_enabled'])
+  expect(lineIn(rec)).toBeUndefined()
+  rec.order.length = 0
+  expect(await menu($, 'statusline_enabled', true)).toEqual({ value: true })
+  expect(rec.order).toEqual(['setup on', `sleep ${SETTLE_MS}`, 'config.set junkd.statusline_enabled'])
+  expect(lineIn(rec)?.command).toBe(WIRED)
+})
+test('the pane\'s wired switch and /junkd:statusline off|on wait too', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: 1 })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  rec.order.length = 0
+  await pane.press({ key: 'set:enabled' })
+  expect(lineIn(rec)).toBeUndefined()
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' off ')
+  await command($, 'on')
+  expect(lineIn(rec)?.command).toBe(WIRED)
+  await command($, 'off')
+  expect(lineIn(rec)).toBeUndefined()
+  expect(rec.order.filter(o => o.startsWith('sleep'))).toHaveLength(3) // one per flip: the host is one sleep late each time
+})
+test('a host that already holds the file is not waited for: no sleep', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  rec.order.length = 0
+  await set($, 'statusline_enabled', false)
+  expect(rec.order).toEqual(['setup off', 'config.set junkd.statusline_enabled'])
+})
+test('a segment row waits for nothing and runs no script', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: 5 })
+  await start($)
+  rec.order.length = 0
+  await set($, 'statusline_model', false)
+  expect(rec.order).toEqual(['config.set junkd.statusline_model'])
+})
+test('a host that never reads the file: the wait ends after SETTLE_TRIES sleeps, the row is stored, and the script runs once more', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: Infinity })
+  await start($)
+  rec.order.length = 0
+  expect(await set($, 'statusline_enabled', false)).toBe(false)
+  expect(rec.order.filter(o => o === `sleep ${SETTLE_MS}`)).toHaveLength(SETTLE_TRIES)
+  expect(at(rec.order, 'config.set')).toBeGreaterThan(at(rec.order, 'sleep'))
+  expect(setups(rec).map(r => r.argv[1]), 'the row\'s write brought the line back: off runs again').toEqual(['off', 'off'])
+  expect(rec.order.slice(-1)).toEqual(['setup off'])
+  expect(lineIn(rec), 'the second off took it out after the row\'s write').toBeUndefined()
+  expect(await get($, 'statusline_enabled')).toBe(false)
+})
+test('after the row is stored the file is looked at: on that is lost to the host runs on again, with the key', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { hostLag: Infinity })
+  await start($)
+  expect(await set($, 'statusline_enabled', true)).toBe(true)
+  expect(setups(rec).map(r => r.argv.slice(1))).toEqual([['on', '--config', KEY], ['on', '--config', KEY]])
+  expect(lineIn(rec)?.command).toBe(WIRED)
+})
+test('a file that already says what the row says is not run a second time (the host kept up or never undid it)', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: 1 })
+  await start($)
+  await set($, 'statusline_enabled', false)
+  await set($, 'statusline_enabled', true)
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['off', 'on'])
+})
+test("off with a statusLine of the person's own: the file never says wired, so it is not run again after the row", W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, settings: { statusLine: { type: 'command', command: '/my/line.sh' } }, hostLag: Infinity })
+  await start($)
+  expect(await set($, 'statusline_enabled', false)).toBe(false)
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['off'])
+  expect(lineIn(rec)?.command).toBe('/my/line.sh')
+})
+test('a host that cannot say what it holds (settings.read rejects) is waited for like one that never catches up, and the row is stored', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { noSettingsRead: true })
+  await start($)
+  rec.order.length = 0
+  expect(await set($, 'statusline_enabled', true)).toBe(true)
+  expect(rec.order.filter(o => o === `sleep ${SETTLE_MS}`)).toHaveLength(SETTLE_TRIES)
+  expect(rec.config).toEqual([{ key: 'junkd.statusline_enabled', value: true }])
+  expect(lineIn(rec)?.command).toBe(WIRED)
+})
+test('a refused run of on waits for nothing: no sleep, no row', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { hostLag: 4, setup: { on: { exitCode: 1, stdout: `${REFUSED}\n` } } })
+  await start($)
+  await expect(set($, 'statusline_enabled', true)).rejects.toThrow(REFUSED)
+  expect(rec.order.filter(o => o.startsWith('sleep'))).toEqual([])
+  expect(rec.config).toEqual([])
+})
+
+// ------------------------------------------------------------------ T29 round 2: the wiring at session start is looked at again
+
+test('session start wires the line, waits for the host to read the file, and looks again VERIFY_MS later: still there, nothing more runs', W, async ($, on) => {
+  const rec = world(on, { hostLag: 2 })
+  await start($)
+  expect(rec.order).toEqual(['setup on', `sleep ${SETTLE_MS}`, `sleep ${SETTLE_MS}`, `sleep ${VERIFY_MS}`])
+  await rec.verify()
+  expect(setups(rec).map(r => r.argv.slice(1))).toEqual([['on', '--config', KEY]])
+})
+test("session start: a writer that undid the line meanwhile (setup.sh's output style, the host's first write) is answered by on again", W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  expect(lineIn(rec)?.command).toBe(WIRED)
+  const file = JSON.parse(rec.files.get(`${CFG}/settings.json`)!)
+  delete file.statusLine
+  rec.files.set(`${CFG}/settings.json`, JSON.stringify({ ...file, outputStyle: 'junkd:STE' }))
+  await rec.verify()
+  expect(setups(rec).map(r => r.argv.slice(1))).toEqual([['on', '--config', KEY], ['on', '--config', KEY]])
+  expect(lineIn(rec)?.command).toBe(WIRED)
+})
+test('session start: the second look runs nothing when the row was switched off in between', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await set($, 'statusline_enabled', false)
+  await rec.verify()
+  expect(setups(rec).map(r => r.argv[1]), 'enabled is off: no wiring behind the person\'s back').toEqual(['on', 'off'])
+})
+test("session start: the second look leaves a statusLine of the person's own alone", W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  rec.files.set(`${CFG}/settings.json`, JSON.stringify({ statusLine: { type: 'command', command: '/my/line.sh' } }))
+  await rec.verify()
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['on'])
+  expect(lineIn(rec)?.command).toBe('/my/line.sh')
+})
+test('session start with nothing to wire (the copy is current, the line is ours) sleeps and runs nothing', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await rec.verify()
+  expect(rec.order).toEqual([])
+  expect(setups(rec)).toEqual([])
+})
+test('session start with the row off sleeps and runs nothing', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await rec.verify()
+  expect(rec.order).toEqual([])
 })
