@@ -190,7 +190,28 @@ exist.
 | **FE actually calls the live API** on data-backed routes, verified **E2E through the UI** | `web` + `api` declared | The frontend really consumes the backend end to end — not static content with a silent mock behind it. |
 | **`ui-reviewer` drives the real browser** — a screenshot per criterion, every state | `web` declared | Screen/flow/state criteria are proven visually, at the project's target viewport, against the design tokens — not taken on the implementer's word. |
 | **Every path from `test-planner`'s matrix** — happy + each edge (empty/loading/error/no-permission/boundary), each induced for real | always (scaled to declared layers) | The branches a lucky random run skips are actually hit. A state that genuinely can't be reached this run is a visible FAIL/PM-REVIEW row with a reason — never a silently missing line. |
+| **Security review of the diff** — one fresh reviewer runs the built-in `security-review` skill; each finding at or above `severity` is a FAIL row | `security` declared | The change adds no injection, XSS, SSRF, IDOR, auth bypass, leaked secret, unsafe deserialization or path traversal at the declared severity. See *Security* below. |
 | **Everything in `standing_checks_extra`** | project config | Project-specific lessons already promoted to permanent checks (see [§5](#5-learning--the-retro--_lessonsmd)). |
+
+### Security
+
+Security is a standing check of the verify leg, not a new agent and not the implementer's own business.
+With `capabilities.security: { severity: high }` in the config (`/junkd:orch-init` proposes it when the
+repo has a web app, an api, or a file named like `auth|login|session|token|secret|upload|exec|spawn|sql|query`),
+the `verify-coordinator` spawns one fresh reviewer in step 0, beside `test-planner`: Sonnet, or Opus when
+the diff touches such a file. It runs Claude Code's built-in `security-review` skill over
+`git diff <base>...<branch>` in the verify worktree, on the changed files and what they call. Each
+finding at or above `severity` is its own `FAIL` row with `file:line` and the class; lower findings are
+notes under the table; no finding is one `PASS` row `security: no findings ≥ high`; a reviewer that
+cannot run (no such skill on the host) is one `PM-REVIEW` row with the reason. The check runs on every
+round, because a fix round changes the diff. Without the block there is no security row at all.
+
+The orchestrator session itself runs with `ENABLE_STOP_REVIEW=0`, set by you where the session starts
+(`ENABLE_STOP_REVIEW=0 claude`), never by a hook. The variable belongs to the `security-guidance` plugin
+and turns off only its Stop-time diff review: in a multi-agent run that review fires in whichever agent
+stops, on a diff other agents move, and its findings stay in that agent where nothing blocks on them.
+Its commit/push review stays on, because it runs in the implementer at the moment of the commit, on that
+commit alone, and is a cheap early warning. The verdict that gates `done` is the standing check above.
 
 ---
 
@@ -401,6 +422,7 @@ capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }              # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if no api
   tests: { api: "npm test" }   # use `root` for a repo-level suite; omit absent runners
+  security: { severity: high } # omit unless there is a web app, an api, or a security-named file
 standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
 github: { label: "orch" }      # github-issues backend only; drop otherwise
 ---
@@ -416,6 +438,7 @@ calibration values that must never be guessed, etc.
 | `branch_prefix` | Per-task branch name = `<branch_prefix><id>-<slug>`. |
 | `capabilities.web` / `.api` | `run` (dev-server command), `port_base`, `health` path. **Omit the whole block if the layer doesn't exist** — its standing checks are then skipped. |
 | `capabilities.tests` | Test command map (`{ pkg: "cmd" }`); use `root` for a repo-level suite. |
+| `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row. Absent → no security check (see [§4](#4-standing-checks-gated-by-capabilities)). |
 | `standing_checks_extra` | Project-specific checks promoted from `_lessons.md` (starts empty). |
 | `github.label` | Only for the `github-issues` backend — the label to pull. |
 | *(prose below the frontmatter)* | Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed. |

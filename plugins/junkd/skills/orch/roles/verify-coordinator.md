@@ -24,9 +24,11 @@ not a fix. You are always spawned fresh: never resumed for a second round.
 - the **config capabilities**: the dev-server run commands, ports, health paths, and per-package
   test commands — you verify only the layers the config declares; never invent a check for a layer
   it doesn't (no api → skip the malformed-body check; no web → no `ui-reviewer`; no test runner →
-  build/behaviour checks stand in).
+  build/behaviour checks stand in; no `security` → no security reviewer).
 - the current **lessons** (fold them into your checks and the prompts you spawn).
-- on a re-verify round: the list of **only the failing criteria** to recheck.
+- on a re-verify round: the list of **only the failing criteria** to recheck. The `security`
+  standing check is not narrowed by it: it runs in full on every round, because a fix round changes
+  the diff.
 
 ## What you do
 
@@ -37,6 +39,10 @@ not a fix. You are always spawned fresh: never resumed for a second round.
    Those rows are **mandatory verdict rows**, on top of the acceptance criteria: an edge row
    "covered" only by a `?state=`-style preview, or an api change "verified" only by isolated curl,
    is a FAIL — the recipe says how to induce it for real / through the UI.
+   **`security` declared → spawn the security reviewer in this same step** (see the standing check
+   below), so it too overlaps the env build: run `<bin>/orch-worktree add` first (it only checks the
+   branch out; the installs and boots of step 1 are what the two reviewers overlap) and hand it that
+   dir.
 1. **Build the verify env** from `branch`: `<bin>/orch-worktree add <id> <branch>` gives you the
    worktree dir (detached at the branch: the implementer's own worktree may still hold it) + the
    `web_port`/`api_port` for your slot. Install deps, boot the declared servers on those
@@ -91,6 +97,23 @@ not a fix. You are always spawned fresh: never resumed for a second round.
      in-worktree gate yet vanish on a fresh checkout. And `git diff --name-only <base>...<branch>`
      must not contain vendored/dependency paths (e.g. `node_modules`) — symlinked dependency
      dirs have entered committed diffs before despite `.gitignore`.
+   - **Security (`capabilities.security` declared, `{ severity: <low|medium|high> }`):** spawn
+     ONE fresh security reviewer in step 0 — no new agent type: a general-purpose subagent on
+     `model: sonnet`, or `model: opus` when a path in `git diff --name-only <base>...<branch>`
+     matches `auth|login|session|token|secret|upload|exec|spawn|sql|query` (case-insensitive). Brief
+     it to run the built-in `security-review` skill against `git diff <base>...<branch>` in the
+     verify worktree, scope: the changed files plus what they call, and to return each finding with
+     `file:line`, class and severity. Rows:
+     - every finding at or above `severity` → its own `FAIL` row, `security: <class> at
+       <file>:<line>`; the class is one of injection, XSS, SSRF, IDOR, auth bypass, secret,
+       deserialization, path traversal, … (the reviewer's word when none fits);
+     - findings below `severity` → listed as notes under the table, never rows;
+     - no finding at or above it → one `PASS` row `security: no findings ≥ <severity>`;
+     - the reviewer cannot run (the `security-review` skill is missing on the host, the spawn
+       fails) → one `PM-REVIEW` row with the reason, never a silent skip, and never a self-review
+       standing in for it.
+     It runs on every round, re-verify rounds included. `security` absent from the config → no
+     reviewer and no security row at all.
 
 ## Where evidence goes (critical — you are NOT worktree-isolated)
 
@@ -106,7 +129,8 @@ teardown. Write into the **real checkout**, never `.worktrees/<id>`:
   ```
   The table is **happy + edge**: beyond the criteria rows it carries one row per matrix entry (each
   non-happy state, e.g. `screen X — error`, `… — empty`, `… — no-permission`), each with its own
-  verdict — a skipped state is a visible FAIL row, never an absent line.
+  verdict — a skipped state is a visible FAIL row, never an absent line. The `security` rows join
+  the same table; the findings below `severity` go under it as `Security notes (below <severity>)`.
 - Append the implementer's 5-section report to the same file if the orchestrator passed it.
 
 ## Teardown (always, even on FAIL)
