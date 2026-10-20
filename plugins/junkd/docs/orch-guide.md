@@ -248,6 +248,14 @@ commit alone, and is a cheap early warning. The verdict that gates `done` is the
   orchestrator proposes promoting it into `standing_checks_extra` in the config — where it becomes a
   permanent, always-on check for every future task. This **asks you first; the loop never edits the
   config silently.**
+- **Rules need checks.** A rule written in `CLAUDE.md` ("never", "always", "must", "only", a
+  "Binding rules" section) holds only on the prompt until a tool checks it. `/junkd:orch-init` scans
+  every `CLAUDE.md`/`AGENTS.md` and proposes, per rule, a `standing_checks_extra` row with a concrete
+  recipe (grep / test / curl), a pointer to the test that already pins it, or "stays prose". You confirm
+  each row; re-runs propose only new rules. The starter `TEST-POLICY.md` it offers makes this a
+  standing rule: a task that adds a binding rule adds its check in the same branch. The retro
+  shortcut: a lesson that names a rule already in `CLAUDE.md` is proposed for promotion at once
+  ("rule exists in CLAUDE.md §X, no check"), without waiting for a second task.
 
 This is the missing feedback loop in naive agent runs: without it, the same class of bug gets
 re-litigated task after task.
@@ -302,6 +310,27 @@ BACKLOG: BLOCKED   — remaining tasks need a human: <ids + one-line reasons>
 `BLOCKED` (not `REMAINING`) is used when every remaining task is ineligible for a *human* reason —
 `blocked` after the round cap, or a `deps` entry that isn't a known task id (a human prerequisite).
 A `/loop` driver stops on both `DRAINED` and `BLOCKED`.
+
+### The direction check: the sum of the tasks against the specs
+
+Each task passes its own frozen criteria, and nothing in the loop compares the sum of the tasks with the
+project's requirement documents. A long `all` run can drift: a task minted from a wrong recon, a `derived`
+criterion nobody read. `/junkd:direction` is that comparison. It reads the spec files of the config's `specs:`
+key, sends one read-only agent per file (on Claude Code an `Explore` agent on `model: sonnet`), and gets back one
+row per requirement: `MET`, `PARTIAL`, `MISSING`, `CONTRADICTED` or `UNVERIFIABLE` (prose with no checkable claim,
+never "did not look"), with evidence (`path:line`, a test, a task id). One more agent lists the undocumented work:
+changes in `git diff --stat <since>..<head>` that no spec row claims.
+
+The report, `.orch/direction/<YYYY-MM-DD>-<short-sha>.md`, holds a scorecard per spec, the merged table, the
+undocumented-work table and a Decisions list: one checkbox per `MISSING`, `CONTRADICTED` or undocumented row, with
+the two options "change code" and "update spec". The human decides which side moves; a confirmed "change code"
+becomes an `orch-state new` task whose criterion quotes the spec sentence verbatim. The reply ends with
+`DIRECTION: <met>/<total> MET — <n> decisions in <path>`.
+
+An `all` or `--single-pr` run whose config declares `specs:` runs the check at the end, before the PR step and the
+push, and quotes the `DIRECTION:` line in its summary above the `BACKLOG:` line; the decisions stay open for the
+human. `batch`, `chain` and single-task runs run it only when asked. `--since` defaults to the head of the newest
+report (when it is an ancestor), else to the run's base commit; the report names both ends.
 
 ---
 
@@ -444,6 +473,7 @@ capabilities:
   tests: { api: "npm test" }   # use `root` for a repo-level suite; omit absent runners
   security: { severity: high } # omit unless there is a web app, an api, or a security-named file
 standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
+specs: [PRD.md, specs/*.md]    # spec files /junkd:direction checks; omit when none
 github: { label: "orch" }      # github-issues backend only; drop otherwise
 ---
 Free-form project notes /junkd:orch should know: conventions, gotchas, where the visual spec lives,
@@ -460,6 +490,7 @@ calibration values that must never be guessed, etc.
 | `capabilities.tests` | Test command map (`{ pkg: "cmd" }`); use `root` for a repo-level suite. |
 | `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row; a missing or other value is read as `high`, with a note under the table. Absent → no security check (see [§4](#4-standing-checks-gated-by-capabilities)). |
 | `standing_checks_extra` | Project-specific checks promoted from `_lessons.md` (starts empty). |
+| `specs` | Paths or globs of the requirement documents `/junkd:direction` scores the code against. `/junkd:orch-init` proposes them from `PRD*`, `SPEC*`, `specs/`, `docs/ARCHITECTURE*`, `docs/PLAN*` and writes no key when none exist; without it the direction check stops and an `all` run skips it. |
 | `github.label` | Only for the `github-issues` backend — the label to pull. |
 | *(prose below the frontmatter)* | Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed. |
 

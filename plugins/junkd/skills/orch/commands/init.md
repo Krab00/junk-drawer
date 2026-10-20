@@ -1,7 +1,7 @@
 ---
 description: "Scan this repo and generate .orch/config.md — the adapter /junkd:orch reads for every project fact (task backend, branch naming, dev-server run commands, ports, test runners). Run once before /junkd:orch."
 argument-hint: "(no arguments)"
-allowed-tools: Bash(git:*), Bash(cat:*), Bash(ls:*), Bash(test:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Read, Write, Glob
+allowed-tools: Bash(git:*), Bash(cat:*), Bash(ls:*), Bash(test:*), Bash(cp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Read, Write, Glob, Grep
 ---
 
 # /junkd:orch-init — generate the project config for `/junkd:orch`
@@ -27,6 +27,10 @@ Gather, quietly:
 - **Security surface** — does the repo have a **web** app, an **api**, or any file whose name matches
   `auth|login|session|token|secret|upload|exec|spawn|sql|query` (case-insensitive, `git ls-files`)?
   Any one of the three → propose the `security` block (step 3); none → leave it out.
+- **Spec files** — the requirement documents `/junkd:direction` scores the code against. Candidates:
+  `PRD*` and `SPEC*` at the root, the `specs/` folder, `docs/ARCHITECTURE*` and `docs/PLAN*`.
+  Propose the ones found as the `specs:` list (a folder as `specs/*.md`); the user confirms or edits it.
+  None found → write no `specs:` key and say nothing about it.
 
 ## 2. Pick the backend (ask — this is a real choice)
 
@@ -62,6 +66,7 @@ capabilities:
   tests: { <pkg>: "<test cmd>" }   # use key `root` for a repo-level suite; omit absent runners
   security: { severity: high }     # only with a web app, an api, or a security-named file; omit otherwise
 standing_checks_extra: []          # project lessons promoted to standing checks (starts empty)
+specs: [PRD.md, specs/*.md]        # spec files /junkd:direction checks; omit when none were found
 github: { label: "orch" }          # github-issues backend only; drop otherwise
 ---
 Free-form project notes /junkd:orch should know: conventions, gotchas, where the visual spec lives,
@@ -80,3 +85,34 @@ After the user confirms:
    store is fine), then tell the user how to start: `/junkd:orch <free text>` for an adhoc task, or
    `/junkd:orch batch` once tasks exist. If `.orch/config.md` already exists, show the diff and
    ask before overwriting — never clobber a hand-tuned config silently.
+
+## 5. Binding rules → checks
+
+A rule written into CLAUDE.md holds only on the prompt until a tool checks it.
+This step turns each written rule into a row of `standing_checks_extra`, a pointer to a test that already pins it, or an explicit "prose".
+Run it after the config is written (§4), before the "how to start" message.
+
+1. **Find the candidates.**
+   Read every `CLAUDE.md` and `AGENTS.md` in the repo (root and per package).
+   A candidate is (a) any rule in a section whose heading matches `/binding|non-negotiable|never|must|invariant/i`, or (b) any list item anywhere that contains `never`, `always`, `must` or `only`.
+   Keep the file, the heading and the rule text for each.
+2. **Pick one outcome per candidate:**
+   - **row**: a `standing_checks_extra` row with a concrete tool recipe: a `grep`/`rg` over the source (what must or must not match, in which paths), a test command, or a `curl` against the dev server.
+     The recipe states the expected result, so the verify-coordinator can run it and show the output.
+   - **covered by test `<path>`**: a test already pins the rule.
+     Grep the test tree for the rule's key nouns and name the file (and test) that asserts it.
+     No row is written.
+   - **not tool-checkable, stays prose**: no tool can decide it (taste, architecture intent, naming).
+     No row is written.
+3. **Show the table** (`rule | source | outcome | row or test path`).
+   Write only the rows the user confirms.
+   A row is never added silently; a declined row stays in the table as prose.
+4. **Re-runs propose only what is new.**
+   A candidate with outcome row is new unless a `standing_checks_extra` row already holds its recipe or names its source rule.
+   A candidate that re-derives as covered by a test, or as prose, is not new: it writes nothing, so it is not proposed again and the second table lists nothing for it (at most a one-line count).
+   If nothing is new, say so and write nothing.
+5. **Offer the starter test policy only when `.orch/TEST-POLICY.md` is absent.**
+   Then offer to copy the orch skill's `templates/TEST-POLICY.md` there (`${CLAUDE_PLUGIN_ROOT}/skills/orch/templates/TEST-POLICY.md` on Claude Code, the sibling `orch` skill's `./templates/TEST-POLICY.md` elsewhere).
+   Its seventh rule is this step: every binding rule has a test or a row.
+   Copy only after the user agrees.
+   When the file exists, leave it alone and do not offer.

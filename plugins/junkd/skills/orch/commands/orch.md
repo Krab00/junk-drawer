@@ -234,6 +234,7 @@ tell it which apply; never ask for a check on an undeclared layer):
 - `chain`: after a task resolves, select the next eligible task and branch it **from the branch
   just finished**; stop after N.
 - `all`: like `chain`, drain until no eligible `todo` remains.
+- **Direction check, `all` or `--single-pr` only, end of run:** when `.orch/config.md` declares `specs:`, run the direction check (`/junkd:direction`; `$direction` on Codex, `/skill:direction` on Kimi Code, `/direction` on OpenCode) after the last task resolves and before the PR step and the push, with `--head` the branch that holds the run's code (the last finished branch; in `batch --single-pr`, the integration branch once merged). `batch`, `chain` and single-task runs do not run it unless the user asks. Its decisions stay open for the human; §8 quotes its last line.
 - **`--single-pr` only, end of run:** build the single PR (see **Single-PR mode**) before the push.
 - **End of run (all modes):** `orch-sync push` — reflect statuses + post the verification tables
   (no-op for `adhoc`/`manifest`; `github-issues` comments via `gh`; `linear-mcp` you push via MCP).
@@ -248,6 +249,7 @@ tell it which apply; never ask for a check on an undeclared layer):
 already fed these lessons into the plan (§3) and the verify-coordinator (§4), so the loop learns
 within a run. When the **same pattern recurs across ≥2 tasks**, propose promoting it into
 `standing_checks_extra` in the config — **ask the user; never edit the config silently.**
+Shortcut: when a lesson names a rule already written in a `CLAUDE.md`/`AGENTS.md`, do not wait for the recurrence: propose the promotion at once and say so ("rule exists in CLAUDE.md §X, no check").
 
 ## Deep mode (`--deep` / large tasks)
 
@@ -278,7 +280,8 @@ and listed. Never merge, never mark ready.
 ## 8. Final summary
 
 Print: tasks completed (id → branch → PR URL → status), escalations (id + reason), every
-PM-REVIEW criterion awaiting a human, and `deps` prerequisites that need a human call. End with
+PM-REVIEW criterion awaiting a human, and `deps` prerequisites that need a human call.
+When §6 ran the direction check, quote its `DIRECTION:` line verbatim in the summary, above the `BACKLOG:` line. End with
 **exactly one** of these lines (a `/loop` driver keys off it):
 
 ```
