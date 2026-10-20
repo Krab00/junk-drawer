@@ -337,7 +337,8 @@ for skill_md in "$installed"/*/SKILL.md; do
         echo "escapes skill dir with ../ : $skill_md"; exit 1
     fi
     # junkd, ahandoff and tools reference no skill-local path at all: their text is only the fallback for a host or
-    # session where the hooks module did not answer the command, and it runs nothing.
+    # session where the hooks module did not answer the command, and it runs nothing. explain is the same case for a
+    # different reason: it runs no helper (its text only tells the model how to answer), so it has no ./bin to resolve.
     case "$(basename "$skill_dir")" in junkd | ahandoff | tools | explain) continue ;; esac
     # Every skill-local path it does reference must exist after the copy. No look-around
     # here -- ripgrep's default engine rejects it and would exit 2, silently checking
@@ -402,9 +403,13 @@ done
 # explain routes by topic type: its SKILL.md names the three routes, keeps the page free of network loads, and never
 # writes into the repo.
 explain_md="$root/plugins/junkd/skills/explain/SKILL.md"
-for route in slider mermaid STE; do
-    rg -qF "$route" "$explain_md" || { echo "junkd: skills/explain/SKILL.md does not name the $route route"; exit 1; }
+for route in 'Route 1: slider' 'Route 2: mermaid' 'Route 3: STE'; do
+    rg -q "^## $route" "$explain_md" || { echo "junkd: skills/explain/SKILL.md has no '## $route' section"; exit 1; }
 done
+rg -qF 'no `<script type="module">`, no `import`' "$explain_md" || { echo "junkd: skills/explain/SKILL.md lost the no-module-script rule for the page"; exit 1; }
+rg -q '^Run this test once' "$explain_md" && rg -qF 'ask one question and wait' "$explain_md" ||
+    { echo "junkd: skills/explain/SKILL.md lost the detection rule or the one-question tie-break"; exit 1; }
+[ -f "$root/plugins/junkd/skills/explain/agents/openai.yaml" ] || { echo "junkd: skills/explain/agents/openai.yaml is missing"; exit 1; }
 rg -qF 'No `http://` or `https://` load, no `fetch`' "$explain_md" || { echo "junkd: skills/explain/SKILL.md lost the no-network rule for the page"; exit 1; }
 rg -qF 'The skill never writes into the repo.' "$explain_md" || { echo "junkd: skills/explain/SKILL.md lost the never-write-into-the-repo rule"; exit 1; }
 rg -qF -e '- Claude Code: when the Artifact tool exists' "$explain_md" || { echo "junkd: skills/explain/SKILL.md lost the Claude Code Artifact line"; exit 1; }
