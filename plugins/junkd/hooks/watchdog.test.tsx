@@ -985,7 +985,7 @@ test('the rows by the /config menu: each spelling of a switch, the minutes clamp
   expect(w.rec.toasts.filter(t => /stalled/.test(t))).toEqual(['⚠ impl-T19 stalled: idle 1 min · last: no tool call seen'])
 })
 
-test('the ⚙ orch pane draws the four rows and edits them: h and i flip the switches, a minutes field saves clamped, a word is refused', W_, async ($, on) => {
+test('the ⚙ orch pane draws the four rows and edits them: j and k flip the switches, a minutes field saves clamped, a word is refused', W_, async ($, on) => {
   const w = world(on)
   await start($)
   await run$($, 'junkd:orch', 'panel')
@@ -996,14 +996,15 @@ test('the ⚙ orch pane draws the four rows and edits them: h and i flip the swi
   for (const title of ['Agent watchdog', 'Watchdog: stop idle leftovers', 'Watchdog: idle minutes before a stop', 'Watchdog: stall after N minutes']) expect(t, title).toContain(title)
   expect(t).toContain('1–120')
   const buttons = await ui.findAll({ type: 'Button' })
-  expect(['h', 'i', 'j', 'k'].map(k => buttons.find(b => b.props.hotkey === k)?.key)).toEqual(['orch:watchdog', 'orch:idle_stop', 'orch:idle_stop_minutes-focus', 'orch:stall_minutes-focus'])
+  // the two dashboard rows come first in the pane and take h and i; the watchdog rows follow on j to m
+  expect(['j', 'k', 'l', 'm'].map(k => buttons.find(b => b.props.hotkey === k)?.key)).toEqual(['orch:watchdog', 'orch:idle_stop', 'orch:idle_stop_minutes-focus', 'orch:stall_minutes-focus'])
   const press = async (key: string) => ui.press({ key: (await ui.findAll({ type: 'Button' })).find(b => b.props.hotkey === key)!.key! })
-  await press('h')
+  await press('j')
   expect(w.rec.config.at(-1)).toEqual({ key: 'junkd.orch_watchdog', value: false })
   expect(await frame($, 'get', { key: 'orch_watchdog' })).toBe(false)
-  await press('h')
+  await press('j')
   expect(w.rec.config.at(-1)).toEqual({ key: 'junkd.orch_watchdog', value: true })
-  await press('i')
+  await press('k')
   expect(w.rec.config.at(-1)).toEqual({ key: 'junkd.orch_idle_stop', value: false })
   expect(await frame($, 'get', { key: 'orch_idle_stop' })).toBe(false)
   const field = async (name: string) => (await ui.findAll({ type: 'Input' })).find(i => new RegExp(`^orch:${name}`).test(i.key ?? ''))!.key!
