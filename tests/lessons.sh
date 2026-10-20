@@ -192,7 +192,7 @@ for shape in plain unclosed; do
   Q=$(proj "chk-nofm-$shape" -)
   mkdir -p "$Q/.orch/tasks"
   case $shape in
-    plain) printf 'Notes only.\nstanding_checks_extra: []\n' >"$Q/.orch/config.md" ;;
+    plain) printf 'Notes only.\nstanding_checks_extra: []\n---\nrule above\n' >"$Q/.orch/config.md" ;;
     unclosed) printf -- '---\ntasks_dir: .orch/tasks\nno closing line\n' >"$Q/.orch/config.md" ;;
   esac
   run "$Q" lesson add --to check --from T3 "Grep for z."
@@ -406,6 +406,17 @@ for want in 4095 4096 4097; do
     ok $([ "$got" = 2 ] && [[ "$out" != *"more, see"* ]]; echo $?) "the bound: a set of $want bytes stays whole ($got lessons)"
   else
     ok $([ "$got" = 1 ] && [[ "$out" == *"… 1 more, see"* ]]; echo $?) "the bound: a set of $want bytes loses the second lesson ($got lessons)"
+  fi
+done
+# and a first lesson alone: no separator is counted before it
+for want in 4096 4097; do
+  printf '%s\n%s\n' "$h" "$(printf 'a%.0s' $(seq 1 $(( want - hb - 1 ))))" >"$CP/.orch/tasks/_lessons.md"
+  out=$(cd "$CP" && LC_ALL=$utf8 "$state" lesson inject 2>/dev/null)
+  got=$(grep -c '^## L' <<<"$out")
+  if [ "$want" -le 4096 ]; then
+    ok $([ "$got" = 1 ]; echo $?) "the bound: one lesson of $want bytes stays ($got in)"
+  else
+    ok $([ "$got" = 0 ] && [[ "$out" == *"… 1 more, see"* ]]; echo $?) "the bound: one lesson of $want bytes is cut ($got in)"
   fi
 done
 mv "$tmp/global.cap" "$GLOBAL"

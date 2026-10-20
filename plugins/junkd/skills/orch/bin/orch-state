@@ -515,7 +515,7 @@ $text" "$t"
           [ -n "$tasks_dir" ] && [ -f "$config" ] || _l_die 2 "promote --to check: no .orch/config.md here"
           # standing_checks_extra is a frontmatter key: a config without one (a first line `---` and a closing `---`)
           # is refused, not edited, and the lesson stays
-          awk '{ sub(/\r$/, "") } NR == 1 { if ($0 !~ /^---[ \t]*$/) exit 1; next } /^---[ \t]*$/ { found = 1; exit } END { exit !found }' "$config" ||
+          _fm_ok "$config" ||
             _l_die 2 "promote --to check: $config has no frontmatter (--- ... ---) to hold standing_checks_extra; nothing changed, $L_SCOPE:$L_ID kept"
           if [ -z "$yes" ]; then
             echo "proposed: standing_checks_extra += $(_l_quote "$text")"
