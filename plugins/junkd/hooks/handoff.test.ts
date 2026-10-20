@@ -1481,6 +1481,7 @@ test('a written handoff gives the next cycle its 3 tries again', THRESHOLD_5, as
   await clock.advance(1) // cleared and resumed
   await measure($, 7) // the new window opens at 7%: the limit is 12
   rec.percent = 12
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // due at a tool call this time: no ask yet
   for (let i = 0; i < 6; i++) {
     await turn($)
     await clock.advance(1)
