@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # orch-state — canonical task-file store CRUD. Frontmatter is the source of truth
 # (no separate manifest). Zero deps (bash + coreutils). ALL status edits go through here.
-#   orch-state list                 # id (file name) | status | deps table; status `invalid` = the file
+#   orch-state list                 # id (file name) | status | ! | deps table; status `invalid` = the file
 #                                   # has no closed --- frontmatter block (never selected; `set` refuses it).
+#                                   # `!` marks a task whose frontmatter has `critical: true` (True, TRUE)
 #                                   # Files starting with `_` (_lessons.md, _notes.md) are not tasks: hidden
 #   orch-state set <id> <status>    # status in: todo|in_progress|done|blocked (a CRLF file is rewritten LF)
 #   orch-state reset-stale [--blocked]
@@ -138,11 +139,13 @@ case "$cmd" in
     ;;
   tasks-dir) echo "$tasks_dir" ;;
   list)
-    printf '%-18s %-13s %s\n' ID STATUS DEPS
+    printf '%-18s %-13s %-1s %s\n' ID STATUS '!' DEPS
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       if _fm_ok "$f"; then st=$(_fm_get "$f" status); st=${st:-todo}; else st=invalid; fi
-      printf '%-18s %-13s %s\n' "$(basename "$f" .md)" "$st" "$(_fm_get "$f" deps)"
+      crit=""
+      case "$(_fm_get "$f" critical)" in true|True|TRUE) crit='!' ;; esac
+      printf '%-18s %-13s %-1s %s\n' "$(basename "$f" .md)" "$st" "$crit" "$(_fm_get "$f" deps)"
     done < <(_task_files)
     ;;
   set)

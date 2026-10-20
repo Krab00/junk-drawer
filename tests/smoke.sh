@@ -308,6 +308,13 @@ CONFIG
     "$root/plugins/junkd/bin/orch-state" set TEST-1 in_progress >/dev/null
     state_list=$("$root/plugins/junkd/bin/orch-state" list)
     rg -q 'TEST-1[[:space:]]+in_progress' <<<"$state_list"
+    # `critical: true` puts the ! marker on that row only
+    "$root/plugins/junkd/bin/orch-state" new TEST-2 "Critical smoke" >/dev/null
+    awk '{ print } /^status: todo$/ { print "critical: true" }' .orch/tasks/TEST-2.md > .orch/tasks/TEST-2.tmp
+    mv .orch/tasks/TEST-2.tmp .orch/tasks/TEST-2.md
+    state_list=$("$root/plugins/junkd/bin/orch-state" list)
+    rg -q '^TEST-2[[:space:]]+todo[[:space:]]+![[:space:]]' <<<"$state_list" || { echo "orch-state list: no ! on the critical TEST-2: $state_list"; exit 1; }
+    ! rg -q '^TEST-1[[:space:]].*!' <<<"$state_list" || { echo "orch-state list: ! on the non-critical TEST-1: $state_list"; exit 1; }
 )
 
 # The orch plugin's own tests: the SessionStart rule-sheet hook, the agent roster, the bin scripts.

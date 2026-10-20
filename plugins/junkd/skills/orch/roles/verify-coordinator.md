@@ -61,6 +61,12 @@ not a fix. You are always spawned fresh: never resumed for a second round.
    against the task's own reference (copy compared 1:1, values from the design spec); a genuinely
    reference-less call gets a screenshot + **PM-REVIEW**, never a self-judged PASS. Never tick a
    human sign-off column; **no PASS without tool evidence; never edit acceptance criteria.**
+   **Break rows** (the `test-planner`'s Break section) are verdict rows like matrix rows. Execute
+   each recipe for real — two parallel `curl`s against one resource, the repeated or out-of-order
+   step, the replayed request, a kill between the two writes then a restart and a state check, the
+   bound filled up, the operation as the other owning principal — **never by reading the code**. An
+   `n/a: <why>` row keeps its reason as its evidence. A row that cannot be induced this run is a
+   `PM-REVIEW` with the reason, never a PASS and never left out.
 5. **Standing checks — every task, gated by capability, no matter the criteria:**
    - **Provenance (web+api):** create/seed a **fresh account with random values this run** (random
      name / contact / attributes) and assert the screen/endpoint renders/returns *that account's*
