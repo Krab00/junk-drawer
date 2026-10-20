@@ -1035,3 +1035,70 @@ test('a subagent\'s denied call is a fail event; its events stop at MAX_AGENT_EV
   expect(evs[0]!.text).toBe('Bash echo 44')
   expect(evs.at(-1)!.text).toBe(`Bash echo ${45 - MAX_AGENT_EVENTS}`)
 })
+
+// fix round 2 --------------------------------------------------------------------------------------------------------
+
+test('a failed write at session start starts no timer: with the write fixed, nothing writes until a turn ends', async ($, on) => {
+  const rec = world(on)
+  rec.files[FLAG] = ''
+  rec.fail.write = `${STATUS}.tmp`
+  await start($)
+  await rec.clock.settle()
+  expect(STATUS in rec.files).toBe(false)
+  delete rec.fail.write
+  await rec.clock.advance(10 * 60 * SEC)
+  await rec.clock.settle()
+  expect(statusWrites(rec)).toBe(0) // no timer was started by the failed write
+  await turnEnd($)
+  await rec.clock.settle()
+  expect(statusWrites(rec)).toBe(1)
+  await rec.clock.advance(30 * SEC)
+  await rec.clock.settle()
+  expect(statusWrites(rec)).toBe(2) // the turn's good write started it
+})
+
+test('a failed write at a turn\'s end after session.end restarts no timer', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await dash($)
+  await $.session.end({ sessionId: SID, reason: 'other' } as never)
+  rec.fail.write = `${STATUS}.tmp`
+  await turnEnd($)
+  await rec.clock.settle()
+  delete rec.fail.write
+  await rec.clock.advance(10 * 60 * SEC)
+  await rec.clock.settle()
+  expect(statusWrites(rec)).toBe(1) // the open's write only
+})
+
+test('the orch pane\'s dashboard fields: a number is set (clamped), "abc" and "" are refused with a note and no write', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await run($, 'junkd:orch', 'panel')
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', component: 'Pane', requestId: 'orch', props: { title: 'orch', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } } as never)
+  const input = async (field: string, text: string) => {
+    const f = (await ui.findAll({ type: 'Input' })).find(i => (i.key ?? '').startsWith(`orch:${field}`))
+    expect(f?.key, field).toBeDefined()
+    await ui.input({ key: f!.key!, text })
+    await rec.clock.settle()
+  }
+  const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  try {
+    await input('dashboard_refresh', '700')
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_dashboard_refresh', value: 600 })
+    await input('dashboard_refresh', ' 12 ')
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_dashboard_refresh', value: 12 })
+    await input('dashboard_window_h', '0')
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_dashboard_window_h', value: 1 })
+    const writes = rec.config.length
+    await input('dashboard_refresh', 'abc')
+    expect(await texts()).toContain('✗ dashboard_refresh takes a number 5–600, not "abc"')
+    await input('dashboard_window_h', '')
+    expect(await texts()).toContain('✗ dashboard_window_h takes a number 1–168, not ""')
+    await input('dashboard_window_h', '   ')
+    expect(await texts()).toContain('✗ dashboard_window_h takes a number 1–168, not "   "')
+    expect(rec.config.length).toBe(writes)
+  } finally {
+    await ui.unmount()
+  }
+})
