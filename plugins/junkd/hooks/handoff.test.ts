@@ -1585,3 +1585,136 @@ test('a slash continuation prompt is handed to the model as a command to run, in
   expect(rec.contexts.at(-1)?.join('\n')).toContain('run this slash command (the Skill tool, the command name as the skill and the rest as its arguments): /junkd:orch all')
   expect(rec.contexts.at(-1)?.join('\n')).toContain('do not stop after loading it or wait for them')
 })
+
+// ---------------------------------------------------------------------------------------------------------------------
+// T30 verify round 0: the survivors of the verifier's mutants, one test each, and the sync → $.state → restore round trip.
+
+// The state sync() writes for the loop, as the host would keep it across a reload: part 1 of the round trip captures it,
+// parts 2a and 2b hand it back to a module that starts over. (Tests run in file order; 2a and 2b read what part 1 stored.)
+const written: Record<string, unknown>[] = []
+const captured: { fresh?: Record<string, unknown>; base?: Record<string, unknown> } = {}
+const capture = (on: On) => on('state.set', KEPT, (_$, e, next) => { written.push({ ...(e.value as object) }); return next(e) })
+
+test('round trip 1/3: what sync() writes while the loop runs a cycle (the fresh window, then its baseline)', { ...THRESHOLD_5 }, async ($, on) => {
+  const rec = world(on)
+  passMeasure(on)
+  capture(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await handonRuns($, rec, clock, [])
+  captured.fresh = written.at(-1)
+  await measure($, 13)
+  captured.base = written.at(-1)
+  expect(captured.fresh).toMatchObject({ on: true, fresh: true, base: 0, count: 1, lastId: 'abcdef12' })
+  expect(captured.base).toMatchObject({ on: true, fresh: false, base: 13, count: 1, lastId: 'abcdef12', prompt: 'Continue after the handoff', threshold: 5 })
+})
+
+test('round trip 2/3: a module that starts over takes the baseline, the count and the last id back', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  capture(on)
+  mock.clock(on)
+  expect(captured.base, 'round trip 1/3 ran first').toBeDefined()
+  seed(on, captured.base!)
+  written.length = 0
+  await start($)
+  expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto on — threshold 5% — limit 18%') // 13 + 5
+  expect(written.at(-1)).toMatchObject({ on: true, base: 13, fresh: false, count: 1, lastId: 'abcdef12' }) // and mirrors them again
+  rec.percent = 17
+  expect(denial(await $.tool.call(READ))).toBeUndefined()
+  rec.percent = 18
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+})
+
+test('round trip 3/3: a module that starts over in a fresh window keeps waiting for its first measurement', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  expect(captured.fresh, 'round trip 1/3 ran first').toBeDefined()
+  seed(on, captured.fresh!)
+  await start($)
+  rec.percent = 30
+  expect(denial(await $.tool.call(READ))).toBeUndefined()
+  expect(bodies(rec).at(-1)).toContain('fresh=true decision=skip:fresh')
+})
+
+test('a turn end exactly at the threshold hands off (>=, as a tool call does)', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 4
+  await turn($)
+  expect(bodies(rec).at(-1)).toContain('decision=skip:below-limit')
+  rec.percent = 5
+  await turn($)
+  expect(bodies(rec).at(-1)).toBe('turn.complete percent=5 limit=5 armed=true fresh=false decision=fire base=0 threshold=5 phase=idle window=200000')
+  await clock.advance(1000) // the handoff asked for runs before the test ends
+  expect(rec.commands).toContain('junkd:handoff')
+})
+
+test('a measurement with no percent leaves the fresh window waiting: no baseline, the flag stays', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  passMeasure(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await handonRuns($, rec, clock, [])
+  await $.session.measure({ context: noFill().context, rateLimits: [], changed: ['context'] })
+  expect(bodies(rec).at(-1)).toBe('session.measure percent=0 limit=5 armed=true fresh=true decision=skip:measure-only base=0 threshold=5 phase=idle window=200000 note=no-percent')
+  await measure($, 13)
+  expect(bodies(rec).at(-1)).toContain('fresh=false decision=skip:measure-only base=13')
+})
+
+test('a read of $.state that fails at startup leaves the loop off and the session starting', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  let first = true
+  on('state.get', KEPT, (_$, e, next) => {
+    if (!first) return next(e)
+    first = false
+    throw new Error('state unavailable')
+  })
+  await start($) // resolves: the restore's read is allowed to fail
+  expect(rec.toasts.some(t => /reloaded/.test(t))).toBe(false)
+  expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto off')
+})
+
+test('only the word status is the status command: a prompt that starts with it is a prompt', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  expect(((await ahandoff($, 'status report of the build')) as { text: string }).text).toBe('handoff auto on — threshold 5% — running: status report of the build')
+  await clock.advance(1000)
+  expect(rec.prompts).toEqual(['status report of the build'])
+})
+
+test('the log writer makes the folder before it appends', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  await $.tool.call(READ)
+  const script = rec.runs.find(r => r.includes('>>')) ?? ''
+  expect(script).toContain('mkdir -p -- "$1" && printf')
+})
+
+test('a fresh window that leaves exactly 100 as the limit disarms too (nothing above 100 is reachable, 100 only at the very end)', { options: { handoff_threshold: 50, handoff_checkEvery: 1 } }, async ($, on) => {
+  const rec = world(on)
+  passMeasure(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 60
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await clock.advance(1000)
+  await new Promise(r => setTimeout(r, 20))
+  await measure($, 50) // the window opens at the threshold: 50 + 50 = 100
+  expect(bodies(rec).at(-1)).toContain('note=base-set,fresh-cleared,auto-disarmed')
+})

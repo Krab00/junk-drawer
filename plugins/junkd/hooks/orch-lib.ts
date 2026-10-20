@@ -118,6 +118,7 @@ export function applyOrchSettings(v: Record<string, unknown>): void {
 const ALLOW = new Set([
   'ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill',
   'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger',
+  'ReadNotifications', // the session's own notification queue (the handoff chain reads it): nothing to delegate
 ])
 const REVIEWER = /^(junkd:)?(verify-coordinator|ui-reviewer|test-planner)$/
 const MODELS = new Set(['opus', 'sonnet', 'haiku']) // an Agent's `model`: never inherit; fable only as below
