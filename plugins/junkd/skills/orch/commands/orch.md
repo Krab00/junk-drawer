@@ -201,6 +201,7 @@ tell it which apply; never ask for a check on an undeclared layer):
 - `chain`: after a task resolves, select the next eligible task and branch it **from the branch
   just finished**; stop after N.
 - `all`: like `chain`, drain until no eligible `todo` remains.
+- **Direction check, `all` or `--single-pr` only, end of run:** when `.orch/config.md` declares `specs:`, run the direction check (`/junkd:direction`; `$direction` on Codex, `/skill:direction` on Kimi Code, `/direction` on OpenCode) after the last task resolves and before the PR step and the push, with `--head` the branch that holds the run's code (the last finished branch; in `batch --single-pr`, the integration branch once merged). `batch`, `chain` and single-task runs do not run it unless the user asks. Its decisions stay open for the human; §8 quotes its last line.
 - **`--single-pr` only, end of run:** build the single PR (see **Single-PR mode**) before the push.
 - **End of run (all modes):** `orch-sync push` — reflect statuses + post the verification tables
   (no-op for `adhoc`/`manifest`; `github-issues` comments via `gh`; `linear-mcp` you push via MCP).
@@ -246,7 +247,8 @@ and listed. Never merge, never mark ready.
 ## 8. Final summary
 
 Print: tasks completed (id → branch → PR URL → status), escalations (id + reason), every
-PM-REVIEW criterion awaiting a human, and `deps` prerequisites that need a human call. End with
+PM-REVIEW criterion awaiting a human, and `deps` prerequisites that need a human call.
+When §6 ran the direction check, quote its `DIRECTION:` line verbatim in the summary, above the `BACKLOG:` line. End with
 **exactly one** of these lines (a `/loop` driver keys off it):
 
 ```

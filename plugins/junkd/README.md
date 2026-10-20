@@ -10,6 +10,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 | `/junkd:ahandoff [prompt] \| off \| panel` | Arm the auto handoff loop: at a context threshold handoff, `/clear`, `/junkd:handon`, continue; resume after the 5h rate limit (Claude Code only) |
 | `/junkd:orch …` | The orchestration loop: tasks, implementer and verifier subagents, evidence gates, draft PRs (`panel` opens its settings pane) |
 | `/junkd:orch-init` | Write the project's `.orch/config.md` once, before the first `/junkd:orch` |
+| `/junkd:direction [<spec>…] [--since <ref>] [--head <ref>]` | Score the code against the spec files `.orch/config.md` names; one decision per gap: change code or update spec |
 | `/junkd:tldr [N \| on \| off \| status]` | Summarize the last substantive reply in at most N sentences, or keep every reply terse |
 | `/junkd:ctx-limit [<tokens> \| on \| off \| status \| action <m> \| cmd <shell>]` | A context-size limit a per-prompt hook enforces: block, warn, or run a command |
 | `/junkd:ctx-tokens` | How full the context is, from the session transcript |
@@ -492,6 +493,7 @@ capabilities:
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if none
   tests: { api: "npm test" }  # use `root` for a repo-level suite; omit absent runners
 standing_checks_extra: []     # project lessons promoted to standing checks
+specs: [PRD.md, specs/*.md]   # spec files /junkd:direction checks; omit when none
 github: { label: "orch" }     # github-issues backend only
 ---
 Free-form project notes the orchestrator should know (conventions, gotchas, the visual spec path,
@@ -511,6 +513,10 @@ calibration values that must never be guessed).
 Flags (any mode): `--rounds R` (fix-loop cap, default the `rounds` setting) · `--base <branch>` · `--deep` (fan-out a
 big task via `lead-implementer`) · `--single-pr[=<branch>]` (one integration branch + one draft PR
 for the whole run).
+
+An `all` or `--single-pr` run whose config declares `specs:` ends with the direction check (see
+[direction](#direction)) before the PR step and the push, and its summary quotes the `DIRECTION:` line. `batch`,
+`chain` and single-task runs skip it unless you ask.
 
 ### How a task is driven
 
@@ -1050,6 +1056,38 @@ out of a manifest range, so the bounds live in the module.
 Hosts: Claude Code only (a hooks-module mod). Codex, Kimi Code and OpenCode have the `tools` skill, which answers
 in one line that the pane is a Claude Code mod.
 
+## direction
+
+`/junkd:direction [<spec>…] [--since <ref>] [--head <ref>]` scores the code against the project's requirement
+documents: the files of the `specs:` key in `.orch/config.md` (`/junkd:orch-init` proposes it from `PRD*`, `SPEC*`,
+`specs/`, `docs/ARCHITECTURE*` and `docs/PLAN*`). With no `specs:` key it says so in one line and stops.
+
+One read-only agent per spec file (on Claude Code an `Explore` agent on `model: sonnet`, never `junkd:implementer`)
+gets the file, the repo root, `git log --oneline <since>..<head>` and the `done` tasks of the range. It returns one
+row per requirement (heading or numbered item) with the sentence verbatim, a verdict, the evidence (`path:line`, a
+test name or a task id) and one line of reasoning:
+
+| Verdict | Means |
+|---|---|
+| `MET` | The code does what the sentence says, with evidence |
+| `PARTIAL` | Part of it holds; the reasoning names the rest |
+| `MISSING` | Nothing in the code does it |
+| `CONTRADICTED` | The code does the opposite |
+| `UNVERIFIABLE` | Prose with no checkable claim, never "did not look" |
+
+One more agent reads `git diff --stat <since>..<head>` and the done tasks for **undocumented work**: changes no spec
+row claims. The report lands in `.orch/direction/<YYYY-MM-DD>-<short-sha>.md`: a scorecard per spec (counts per
+verdict, MET over the rows that are not `UNVERIFIABLE`), the merged table, the undocumented-work table, and a
+Decisions list with one checkbox per `MISSING`, `CONTRADICTED` or undocumented row: change code or update spec.
+Nothing else is written. A confirmed "change code" becomes an `orch-state new` task (`DIR-<n>`) whose criterion
+quotes the spec sentence verbatim; "update spec" is left to you; nothing happens without your confirmation. The last
+line of the reply is `DIRECTION: <met>/<total> MET — <n> decisions in <path>`.
+
+`--head` is the code under review (default `HEAD`), read through `git show`/`git grep` when it is not checked out.
+`--since` defaults to the head of the newest report when it is an ancestor of `--head`, else to the run's base
+commit (outside a run, the merge-base with `default_base`); the report names both ends. Hosts: Claude Code
+(`/junkd:direction`), Codex (`$direction`), Kimi Code (`/skill:direction`) and OpenCode (`/direction`).
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
@@ -1070,7 +1108,7 @@ in one line that the pane is a Claude Code mod.
   counters, the worktree parser and the agents tree; the four tabs.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
-  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`); the real helpers live inside their skill (`skills/handoff/bin`,
+  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `direction`); the real helpers live inside their skill (`skills/handoff/bin`,
   `skills/orch/bin`, `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
   (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
   `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a

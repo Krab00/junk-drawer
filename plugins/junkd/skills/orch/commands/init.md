@@ -24,6 +24,10 @@ Gather, quietly:
 - **Test runners** — per package: the `test` script, else the runner in use (jest / vitest /
   mocha / pytest / `go test` / `cargo test`). A layer with **no** runner is recorded as absent,
   never forced to grow one.
+- **Spec files** — the requirement documents `/junkd:direction` scores the code against. Candidates:
+  `PRD*` and `SPEC*` at the root, the `specs/` folder, `docs/ARCHITECTURE*` and `docs/PLAN*`.
+  Propose the ones found as the `specs:` list (a folder as `specs/*.md`); the user confirms or edits it.
+  None found → write no `specs:` key and say nothing about it.
 
 ## 2. Pick the backend (ask — this is a real choice)
 
@@ -54,6 +58,7 @@ capabilities:
   api:  { run: "<dev-server cmd>", port_base: 3180, health: "/health" }  # omit if no api
   tests: { <pkg>: "<test cmd>" }   # use key `root` for a repo-level suite; omit absent runners
 standing_checks_extra: []          # project lessons promoted to standing checks (starts empty)
+specs: [PRD.md, specs/*.md]        # spec files /junkd:direction checks; omit when none were found
 github: { label: "orch" }          # github-issues backend only; drop otherwise
 ---
 Free-form project notes /junkd:orch should know: conventions, gotchas, where the visual spec lives,
