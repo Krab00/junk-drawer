@@ -145,6 +145,17 @@ ok $([ "$OUT" = "dropped repo:L3" ]; echo $?) "promote --to drop deletes"
 run "$P" lesson promote repo:L1 --to later
 ok $([ "$RC" = 1 ]; echo $?) "promote --to a bad target"
 
+# ---------------------------------------------------------------- the reader and hooks/lessons.ts read the same lessons
+# The fixture is the one hooks/lessons.test.tsx feeds parseLessons: one store text, the lessons both must read from it
+# (CRLF, a blank line, a tab and double blanks in a body, a lone CR, other headings, a bad date, no `to`, an empty stack).
+fx="$root/plugins/junkd/hooks/lessons-parity.ts"
+sed '1,/^export default$/d' "$fx" >"$tmp/parity.json"
+ok $(jq -e '(.lessons | length) > 4 and (.store | contains("\r\n") and contains("\t"))' "$tmp/parity.json" >/dev/null; echo $?) "the shared fixture is readable here"
+PR=$(proj parity -)
+jq -j .store "$tmp/parity.json" >"$PR/lessons.md"
+run "$PR" lesson list --scope repo --json
+ok $(jq -e --slurpfile fx "$tmp/parity.json" 'map(del(.matches)) == $fx[0].lessons' <<<"$OUT" >/dev/null; echo $?) "list --json reads the shared fixture into the lessons hooks/lessons.ts reads ($(jq -c 'map(.ref)' <<<"$OUT"))"
+
 # ---------------------------------------------------------------- check: consent first
 cfg="$P/.orch/config.md"
 cp "$cfg" "$tmp/cfg.before"

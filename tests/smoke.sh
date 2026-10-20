@@ -414,6 +414,11 @@ rg -qF '**Lessons.** The lessons are a queue that empties itself, not a diary.' 
 for needle in '## lessons' '| `orch_lessons` | boolean | `true` |' '- `hooks/lessons.tsx`, `lessons.ts`, `lessons-views.tsx`'; do
     rg -qF -- "$needle" "$junkd/README.md" || { echo "junkd: README.md lacks: $needle"; exit 1; }
 done
+# the signal rule in the pipeline summaries too, and the old "every resolve appends" diary rule nowhere
+rg -qF '5. **Retro:** a resolve with a signal (a fix round, a surviving mutant, a PM-REVIEW that found a bug,' "$junkd/README.md" || { echo "junkd: README.md step 5 lacks the signal rule"; exit 1; }
+if rg -qi -e 'every resolve appends' -e 'appends a lesson to `_lessons.md` at every resolve' -e 'Retro \(§7\)\*\* at every resolve' "$junkd/README.md" "$junkd/docs" "$junkd/skills/orch/commands/orch.md" "$junkd/skills/orch/ORCHESTRATOR.md"; then
+    echo "junkd: a doc still says every resolve appends a lesson (the signal rule replaced it)"; exit 1
+fi
 
 catalog=$(JUNK_DRAWER_RUNTIME=codex "$root/plugins/junk-drawer/bin/junk-drawer")
 rg -q '\$orch' <<<"$catalog"

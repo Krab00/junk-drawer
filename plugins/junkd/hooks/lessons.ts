@@ -34,18 +34,20 @@ export const nextStore = (scope: Scope): Scope | undefined => (scope === 'local'
 
 const HEAD = /^## (L\d+) \((\d{4}-\d{2}-\d{2})\)(.*)$/
 
-// One store's text to its lessons, in file order. CRLF reads as LF; a heading of another shape ends the block above
-// and starts none.
+// One store's text to its lessons, in file order. A line's trailing CR is dropped (CRLF reads as LF; a lone CR inside a
+// line is blank space, no line break); the body's runs of blanks are one space; a heading of another shape ends the
+// block above and starts none. lessons-parity.ts pins this parser and bin/orch-state's awk to the same output.
 export function parseLessons(text: string, scope: Scope): Lesson[] {
   const out: Lesson[] = []
   let cur: Lesson | undefined
   const body: string[] = []
   const flush = () => {
-    if (cur) out.push({ ...cur, text: body.join(' ').replace(/\s+/g, ' ').trim() })
+    if (cur) out.push({ ...cur, text: body.join(' ').replace(/[ \t\r]+/g, ' ').replace(/^ | $/g, '') })
     cur = undefined
     body.length = 0
   }
-  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\r$/, '')
     if (line.startsWith('## ')) {
       flush()
       const m = HEAD.exec(line)

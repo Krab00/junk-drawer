@@ -213,7 +213,7 @@ _l_rows() {
       }
       function flush(  t, pend) {
         if (id == "") return
-        t = trim(text); gsub(/\t/, " ", t)
+        t = text; gsub(/[ \t\r]+/, " ", t); t = trim(t)
         pend = !((to == "repo" || to == "global") && rank(scope) >= rank(to))
         print scope "\t" id "\t" date "\t" stack "\t" to "\t" from "\t" pend "\t" meets(stack) "\t" t
         id = ""
