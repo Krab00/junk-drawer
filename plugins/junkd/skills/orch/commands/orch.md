@@ -46,8 +46,7 @@ without the `orch_` prefix. Use them for the whole run:
 user where the session starts, never from a hook). It turns off only the Stop-time diff review of the
 `security-guidance` plugin: that review runs in whichever agent stops, sees a diff other agents move
 between its turns, and its findings never reach you. Its commit/push review stays on, in the agent that
-commits. The finding that gates `done` is the `security` standing check (§4). When the variable is not
-`0`, say so once at the start of the run and go on.
+commits. The check that gates `done` is the `security` standing check (§4).
 
 The config's `capabilities` block **gates** which checks run (§4/§6). A capability the
 project doesn't declare is silently skipped — never invent a check for a layer that doesn't
