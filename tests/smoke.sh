@@ -79,7 +79,7 @@ bash "$root/tests/ctx.sh" >/dev/null 2>&1 || { echo "tests/ctx.sh failed; run it
 bash "$root/tests/statusline.sh" >/dev/null 2>&1 || { echo "tests/statusline.sh failed; run it alone for the reason"; exit 1; }
 # Again with a TMPDIR that ends in `/`, as stock macOS sets it: no path a test derives may carry a `//`.
 mkdir -p "$tmp/slash"
-for t in ctx statusline; do
+for t in ctx statusline doctor; do
     TMPDIR="$tmp/slash/" bash "$root/tests/$t.sh" >/dev/null 2>&1 ||
         { echo "tests/$t.sh failed with TMPDIR ending in /; run it alone with TMPDIR=\$TMPDIR/ for the reason"; exit 1; }
 done
@@ -244,6 +244,22 @@ rg -q '^name: STE$' "$junkd/output-styles/STE.md" && rg -qF '"junkd:STE"' "$junk
 
 # Host detection and handoff ids: every helper lands in the detected host's data root, no signal exits 2.
 bash "$root/tests/hosts.sh" >/dev/null 2>&1 || { echo "tests/hosts.sh failed; run it alone for the reason"; exit 1; }
+# junkd-doctor: a real file in skills/junkd/bin, reached from the plugin root through bin -> skills/junkd/bin, and its
+# five checks over fixture config dirs (enabled, installed, directory marketplace, the three links, _agents).
+doctor_real="$junkd/skills/junkd/bin/junkd-doctor"
+[ -f "$doctor_real" ] && [ ! -L "$doctor_real" ] && [ -x "$doctor_real" ] && [ "$junkd/bin/junkd-doctor" -ef "$doctor_real" ] ||
+    { echo "junkd: skills/junkd/bin/junkd-doctor is not a real executable reached through bin/"; exit 1; }
+bash "$root/tests/doctor.sh" >/dev/null 2>&1 || { echo "tests/doctor.sh failed; run it alone for the reason"; exit 1; }
+# Both READMEs tell the directory-marketplace install and its three liveness signs, inside that section (from its
+# heading to the next heading).
+for readme in "$root/README.md" "$junkd/README.md"; do
+    section=$(awk '/^### Develop from a checkout$/ { on = 1; next } on && /^#/ { exit } on' "$readme")
+    [ -n "$section" ] || { echo "junkd: $readme has no '### Develop from a checkout' section"; exit 1; }
+    for want in '/plugin marketplace add /abs/path/to/junk-drawer' '/plugin install junkd@junk-drawer' \
+        '/reload-plugins' '`✚ junkd`' '`junkd:implementer`' '/junkd/orch/_agents/<session>/' 'junkd-doctor'; do
+        rg -qF -- "$want" <<<"$section" || { echo "junkd: Develop from a checkout in $readme has no '$want'"; exit 1; }
+    done
+done
 # The OpenCode command wrappers: one per skill, descriptions cut on a word boundary.
 bash "$root/tests/opencode-commands.sh" >/dev/null 2>&1 || { echo "tests/opencode-commands.sh failed; run it alone for the reason"; exit 1; }
 
