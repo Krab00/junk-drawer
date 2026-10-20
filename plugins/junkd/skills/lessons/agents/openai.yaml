@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orch lessons"
+  short_description: "The pending orch lessons of the three stores: list, promote, drop, move up"
+  default_prompt: "Use $lessons to show the pending orch lessons."
