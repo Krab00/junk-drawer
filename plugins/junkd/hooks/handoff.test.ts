@@ -1502,6 +1502,29 @@ test('a written handoff gives the next cycle its 3 tries again', THRESHOLD_5, as
   expect(bodies(rec).filter(l => l.includes('give-up')).length).toBe(1)
 })
 
+test('a handoff written on the 3rd (last) ask is continued, not given up: no give-up line, no toast, the loop stays armed', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  passMeasure(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  await turn($) // fire: ask 1
+  await turn($) // miss: ask 2
+  await turn($) // miss: ask 3
+  await clock.advance(1000)
+  expect(asked(rec)).toBe(3)
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($) // the 3rd ask was answered: the turn end continues, it does not give up
+  await clock.advance(1000)
+  expect(bodies(rec).filter(l => l.includes('give-up')).length).toBe(0)
+  expect(bodies(rec).filter(l => l.includes('decision=cycle:continue')).length).toBe(1)
+  expect(rec.toasts).not.toContain('ahandoff: handoff not written after 3 tries — disarmed')
+  expect(rec.commands).toContain('junkd:handon abcdef12')
+  expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto on')
+  expect(asked(rec)).toBe(3) // no fourth ask either
+})
+
 // ---------------------------------------------------------------------------------------------------------------------
 // T30: a turn that really starts, and one turn after the handon.
 
