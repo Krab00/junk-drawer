@@ -28,7 +28,7 @@ import { registerCache } from './cache'
 import { coreStart, registerCore } from './core'
 import { ctxStart, registerCtx } from './ctx'
 import { allSettings, getSetting, openPane, setSetting } from './dispatch'
-import { handoffSegment, handoffStart, handoffStatus, handoffToolCall, registerHandoff } from './handoff'
+import { handoffContinuation, handoffSegment, handoffStart, handoffStatus, handoffToolCall, registerHandoff } from './handoff'
 import { orchCatchDeny, orchGuardState, orchStart, orchToolDeny, registerOrch } from './orch'
 import { panelButton, panelStart, panelToggle, registerPanel } from './panel'
 import { SCHEMA, isKey } from './settings'
@@ -122,7 +122,8 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     const lines = watchdogLines()
     const lesson = await lessonsPromptLine($).catch(() => undefined)
-    const context = [...lines.length ? [lines.join('\n')] : [], ...lesson ? [lesson] : []]
+    const continuation = handoffContinuation(e) // the handon turn of the auto loop carries its continuation prompt
+    const context = [...lines.length ? [lines.join('\n')] : [], ...lesson ? [lesson] : [], ...continuation ? [continuation] : []]
     if (!context.length) return next(e)
     const r = await next({ ...e, context: [...(e.context ?? []), ...context] })
     if (r.drop !== undefined && lines.length) watchdogKeep(lines)

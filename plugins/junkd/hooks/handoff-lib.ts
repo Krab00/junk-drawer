@@ -22,6 +22,7 @@ export const S = {
   prompt: DEFAULT_PROMPT, // what the fresh session is told after /junkd:handon; `p` in the pane changes it
   written: null as string | null, // handoff file written this cycle
   calls: 0,
+  pending: null as { id: string; text: string; delivered: boolean } | null, // the continuation the handon turn carries (handoffContinuation)
   asks: 0, // times this cycle asked the model for the handoff file (/junkd:handoff queued); MAX_ASKS then gives up
   count: 0,
   lastId: null as string | null,
@@ -72,6 +73,11 @@ export function loadOptions(options: Record<string, unknown>): void {
   S.segment = options.segment === undefined ? true : Boolean(options.segment)
   S.resumeAfterLimit = options.resumeAfterLimit === undefined ? true : Boolean(options.resumeAfterLimit)
 }
+
+// How long /junkd:ahandoff waits before it submits its prompt. Submitted while the slash command is still running, the host
+// parks the prompt and starts its turn only when the person types something next (seen on 2.1.305 in a terminal: 1 start in 4
+// with no wait, 5 in 5 after one second).
+export const PROMPT_DELAY_MS = 1000
 
 // The user's cap: a handoff asked for this many times and still not written disarms the loop.
 export const MAX_ASKS = 3

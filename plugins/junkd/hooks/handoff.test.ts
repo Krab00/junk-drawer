@@ -59,6 +59,9 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
     noFill: false, // usage() answers no percent (a window before its first response)
     logs: [] as { dir: string; path: string; line: string }[], // the measurement log's appends, in order
     logFails: false, // the append itself fails
+    contexts: [] as (readonly string[] | undefined)[], // each submission's context, beside rec.prompts
+    handonHold: undefined as Promise<void> | undefined, // /junkd:handon does not end until this resolves
+    dropPrompt: undefined as string | undefined, // the prompt.submit bottom refuses with this reason
   }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.usage', () => ({ value: rec.noFill ? noFill() : usage(rec.percent) }))
@@ -71,11 +74,16 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
   on('tool.call', () => ({ result: 'ok', text: 'ok' }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('command.list', () => ({ value: o.commands ?? COMMANDS }))
-  on('command.run', (_$, e) => {
+  on('command.run', async (_$, e) => {
     rec.commands.push(`${e.command} ${e.args ?? ''}`.trim())
+    if (rec.handonHold && /(^|:)handon$/.test(e.command)) await rec.handonHold // the host raises its submission meanwhile
     return { text: `downstream ${e.command}` }
   })
-  on('prompt.submit', (_$, e) => { rec.prompts.push(e.text); return { text: e.text } })
+  on('prompt.submit', (_$, e) => {
+    rec.prompts.push(e.text)
+    rec.contexts.push(e.context)
+    return rec.dropPrompt === undefined ? { text: e.text } : { drop: rec.dropPrompt }
+  })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('ui.panes', () => ({ value: [] }))
   on('ui.open', (_$, e) => {
@@ -185,7 +193,7 @@ test('auto arms, denies tools past the threshold, lets the handoff through', OPT
   const clock = mock.clock(on)
   await start($)
   await handoff($, 'auto do X')
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(rec.prompts.at(-1)).toBe('do X')
 
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
@@ -204,7 +212,7 @@ test('off disarms: tools pass again past the threshold', OPTIONS, async ($, on) 
   const clock = mock.clock(on)
   await start($)
   await handoff($, 'auto do X')
-  await clock.advance(1)
+  await clock.advance(1000)
   rec.percent = 90
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
   await handoff($, 'off')
@@ -227,13 +235,13 @@ for (const stop of ['off', 'enabled off'] as const) {
       await set($, 'enabled', true)
     }
     await $.turn.complete({ answer: 'stopped', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
-    await clock.advance(1)
+    await clock.advance(1000)
 
     await handoff($, 'auto')
     expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
     const before = rec.commands.length
     await $.turn.complete({ answer: 'no write', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
-    await clock.advance(1)
+    await clock.advance(1000)
     const ran = rec.commands.slice(before)
     expect(ran, ran.join(' | ')).toContain('junkd:handoff') // the new handoff is asked for
     expect(ran.some(c => c.startsWith('junkd:handon') || c === 'clear'), ran.join(' | ')).toBe(false)
@@ -248,7 +256,7 @@ test('off while the fresh window is unmeasured: re-armed, the loop checks usage 
   rec.percent = 90
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
-  await clock.advance(1) // clear → handon: the fresh-window guard is up until session.measure
+  await clock.advance(1000) // clear → handon: the fresh-window guard is up until session.measure
   await handoff($, 'off')
   await handoff($, 'auto')
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
@@ -259,11 +267,11 @@ test('/junkd:ahandoff <prompt> | off | panel is the short form', OPTIONS, async 
   const clock = mock.clock(on)
   await start($)
   expect((await ahandoff($, '/junkd:orch all') as { text?: string }).text).toBe('handoff auto on — threshold 80% — running: /junkd:orch all')
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(rec.commands.at(-1)).toBe('junkd:orch all') // a slash prompt runs as the command
   expect(rec.opened).toEqual([]) // the short form opens no pane
   await ahandoff($, 'fix the flaky test')
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(rec.prompts.at(-1)).toBe('fix the flaky test')
   rec.percent = 90
   expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toMatch(/handoff/i)
@@ -284,16 +292,19 @@ test('the written handoff ends the turn into clear → junkd:handon <id> → con
   const clock = mock.clock(on)
   await start($)
   await handoff($, 'auto do X')
+  await clock.advance(1000)
   rec.percent = 90
 
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
-  await clock.advance(1)
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
 
   const clear = rec.commands.indexOf('clear')
   expect(clear).toBeGreaterThanOrEqual(0)
   expect(rec.commands.indexOf('junkd:handon abcdef12')).toBeGreaterThan(clear)
-  expect(rec.prompts.at(-1)).toBe('Continue after the handoff') // the task text is not the continuation
+  // one turn: the handon submission carries the continuation (the task text is not the continuation); no prompt of its own
+  expect(rec.prompts.filter(p => p !== 'do X')).toEqual(['/junkd:handon abcdef12'])
+  expect(rec.contexts.at(-1)?.join('\n')).toContain('continue as they asked: Continue after the handoff')
 })
 
 // findCommand: junkd's own /junkd:handon (and /junkd:handoff) first, even where another plugin lists one of the
@@ -310,11 +321,11 @@ for (const [listed, want] of [
     await handoff($, 'auto')
     rec.percent = 90
     await $.turn.complete({ answer: 'no write', durationMs: 1, isAborted: false, turnId: 't0', reason: 'answer' })
-    await clock.advance(1)
+    await clock.advance(1000)
     expect(rec.commands, rec.commands.join(' | ')).toContain(`${want}:handoff`)
     await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
     await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
-    await clock.advance(1)
+    await clock.advance(1000)
     expect(rec.commands, rec.commands.join(' | ')).toContain(`${want}:handon abcdef12`)
   })
 }
@@ -325,12 +336,12 @@ test('a fresh window over the threshold keeps the loop armed with a raised limit
   const clock = mock.clock(on)
   await start($)
   await handoff($, 'auto do X')
-  await clock.advance(1)
+  await clock.advance(1000)
   rec.percent = 12
 
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(rec.commands.includes('junkd:handon abcdef12')).toBe(true)
 
   // the new window starts at 13% (system prompt + handon), over the 10% threshold
@@ -347,21 +358,22 @@ test('a slash task runs now; after clear → handon the default continuation is 
   const clock = mock.clock(on)
   await start($)
   await handoff($, 'auto /junkd:orch all')
-  await clock.advance(1)
+  await clock.advance(1000)
   rec.percent = 90
   const before = rec.commands.length
 
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await $.turn.complete({ answer: 'saved', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
   const prompts = rec.prompts.length
-  await clock.advance(1)
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
 
   const chain = rec.commands.slice(before)
   const handon = chain.indexOf('junkd:handon abcdef12')
   expect(handon).toBeGreaterThan(chain.indexOf('clear'))
   expect(chain.includes('junkd:orch all')).toBe(false) // the task ran once, at arm time
-  expect(rec.prompts.length).toBe(prompts + 1)
-  expect(rec.prompts.at(-1)).toBe('Continue after the handoff')
+  expect(rec.prompts.length).toBe(prompts + 1) // the handon submission only
+  expect(rec.prompts.at(-1)).toBe('/junkd:handon abcdef12')
+  expect(rec.contexts.at(-1)?.join('\n')).toContain('continue as they asked: Continue after the handoff')
 })
 
 test('panel toggles the pane; no argument goes on to the junkd:handoff skill', async ($, on) => {
@@ -392,7 +404,7 @@ test('the 🪃 segment sits beside ✚ junkd in the prompt line, shows usage or 
   }
 
   await handoff($, 'auto do X')
-  await clock.advance(1)
+  await clock.advance(1000)
   await handoff($, 'panel') // auto opened it; close it so the press below opens it again
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'junkd', surface, ...HINT })
@@ -789,7 +801,7 @@ test('$.junkd.handoffStatus mirrors armed, percent and phase', { ...WITH_CALLER,
   expect(await status($)).toEqual({ armed: false, percent: 0, phase: 'idle' })
 
   await handoff($, 'auto')
-  await clock.advance(1)
+  await clock.advance(1000)
   rec.percent = 42
   await $.tool.call({ tool: 'Read', file_path: '/tmp/a' })
   expect(await status($)).toEqual({ armed: true, percent: 42, phase: 'idle' })
@@ -824,7 +836,7 @@ test('enabled false: autoOn arms nothing, auto refuses, no deny past the thresho
 
   expect(text(await handoff($, 'auto do X'))).toMatch(/auto handoff is disabled/)
   expect(text(await ahandoff($, 'do Y'))).toMatch(/auto handoff is disabled/)
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(rec.prompts).toEqual([]) // neither prompt ran
   expect(rec.opened).toEqual([]) // `auto` opens no pane while disabled
   expect(await status($)).toMatchObject({ armed: false })
@@ -832,7 +844,7 @@ test('enabled false: autoOn arms nothing, auto refuses, no deny past the thresho
   rec.percent = 95
   for (let i = 0; i < 3; i++) expect(denial(await $.tool.call({ tool: 'Read', file_path: '/tmp/a' }))).toBeUndefined()
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't0', reason: 'done' })
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(rec.commands.filter(c => c.startsWith('junkd:handoff'))).toEqual([]) // no handoff queued at the threshold
 
   const hour = 3_600_000
@@ -1128,11 +1140,11 @@ test('percent 7 with threshold 5, armed after an earlier turn: the turn end hand
   await turn($) // not armed yet
   await measure($, 7) // the first measurement of the session: it must not become the baseline
   await ahandoff($, 'read the README')
-  await clock.advance(1)
+  await clock.advance(1000)
   await turn($) // the arming turn ends at 7%
 
   expect(bodies(rec).at(-1)).toBe('turn.complete percent=7 limit=5 armed=true fresh=false decision=fire base=0 threshold=5 phase=idle window=200000')
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(rec.commands).toContain('junkd:handoff') // the next turn writes the handoff
   expect(rec.logs.every(l => LOG_LINE.test(l.line)), rec.logs.map(l => l.line).join('\n')).toBe(true)
 })
@@ -1142,13 +1154,13 @@ test('percent 4 with threshold 5: no handoff, and the log names the skip', THRES
   const clock = mock.clock(on)
   await start($)
   await ahandoff($, 'x')
-  await clock.advance(1)
+  await clock.advance(1000)
   rec.percent = 4
   await turn($)
   expect(bodies(rec).at(-1)).toBe('turn.complete percent=4 limit=5 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000')
   expect(denial(await $.tool.call(READ))).toBeUndefined()
   expect(bodies(rec).at(-1)).toBe('tool.call percent=4 limit=5 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000')
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(rec.commands).not.toContain('junkd:handoff')
   rec.percent = 5 // the threshold itself is enough
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
@@ -1258,7 +1270,7 @@ test('the whole cycle is logged: fire, the denied calls, the retry, the continue
   const clock = mock.clock(on)
   await start($)
   await ahandoff($, 'do X')
-  await clock.advance(1)
+  await clock.advance(1000)
   rec.percent = 7
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
   expect(bodies(rec).at(-1)).toContain('decision=fire')
@@ -1269,7 +1281,7 @@ test('the whole cycle is logged: fire, the denied calls, the retry, the continue
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await turn($)
   expect(bodies(rec).at(-1)).toContain('decision=cycle:continue')
-  await clock.advance(1) // clear → handon → continue: fresh until the first measurement of the new window
+  await clock.advance(1000) // clear → handon → continue: fresh until the first measurement of the new window
 
   await $.tool.call(READ)
   expect(bodies(rec).at(-1)).toBe('tool.call percent=0 limit=5 armed=true fresh=true decision=skip:fresh base=0 threshold=5 phase=idle window=200000')
@@ -1300,7 +1312,7 @@ test('a fresh window no threshold can reach disarms the loop and the log says so
   rec.percent = 95
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await turn($)
-  await clock.advance(1)
+  await clock.advance(1000)
   await measure($, 95) // 95 + 90 can never be reached
   expect(bodies(rec).at(-1)).toContain('note=base-set,fresh-cleared,auto-disarmed')
   expect(bodies(rec).at(-1)).toContain('armed=false')
@@ -1369,8 +1381,8 @@ test('a reload keeps the fresh window\'s pending measurement and the continuatio
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_cdef1234.md`, content: '# h' })
   await turn($)
-  await clock.advance(1)
-  expect(rec.prompts.at(-1)).toBe('keep going')
+  await handonRuns($, rec, clock, [handonOf('cdef1234')])
+  expect(rec.contexts.at(-1)?.join('\n')).toContain('continue as they asked: keep going')
 })
 
 test('a kept loop that was off stays off after a reload', THRESHOLD_5, async ($, on) => {
@@ -1421,7 +1433,7 @@ test('a window that starts at the threshold itself counts growth from its baseli
   rec.percent = 7
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await turn($)
-  await clock.advance(1)
+  await clock.advance(1000)
   await measure($, 5) // the new window opens at 5%: the threshold itself
   expect(bodies(rec).at(-1)).toContain('percent=5 limit=10 armed=true fresh=false decision=skip:measure-only base=5')
   rec.percent = 9
@@ -1451,7 +1463,7 @@ for (const via of ['the turn end', 'a tool call'] as const) {
     if (via === 'a tool call') expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
     for (let i = 0; i < 6; i++) {
       await turn($)
-      await clock.advance(1)
+      await clock.advance(1000)
     }
     expect(asked(rec)).toBe(3)
     expect(bodies(rec).filter(l => l.includes('decision=cycle:ask-handoff')).length).toBe(via === 'a tool call' ? 3 : 2)
@@ -1460,7 +1472,7 @@ for (const via of ['the turn end', 'a tool call'] as const) {
     expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto off')
     expect(denial(await $.tool.call(READ))).toBeUndefined() // no gate any more
     await turn($)
-    await clock.advance(1)
+    await clock.advance(1000)
     expect(asked(rec)).toBe(3)
   })
 }
@@ -1474,18 +1486,102 @@ test('a written handoff gives the next cycle its 3 tries again', THRESHOLD_5, as
   rec.percent = 7
   await turn($) // fire: ask 1
   await turn($) // miss: ask 2
-  await clock.advance(1)
+  await clock.advance(1000)
   expect(asked(rec)).toBe(2)
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await turn($)
-  await clock.advance(1) // cleared and resumed
+  await clock.advance(1000) // cleared and resumed
   await measure($, 7) // the new window opens at 7%: the limit is 12
   rec.percent = 12
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // due at a tool call this time: no ask yet
   for (let i = 0; i < 6; i++) {
     await turn($)
-    await clock.advance(1)
+    await clock.advance(1000)
   }
   expect(asked(rec)).toBe(2 + 3)
   expect(bodies(rec).filter(l => l.includes('give-up')).length).toBe(1)
+})
+
+// ---------------------------------------------------------------------------------------------------------------------
+// T30: a turn that really starts, and one turn after the handon.
+
+test('the arming prompt is submitted PROMPT_DELAY_MS after the command ended, not at once (the host parks an earlier one)', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  expect(((await ahandoff($, 'read the README')) as { text: string }).text).toBe('handoff auto on — threshold 5% — running: read the README')
+  await clock.advance(999)
+  expect(rec.prompts).toEqual([])
+  await clock.advance(1)
+  expect(rec.prompts).toEqual(['read the README']) // one prompt.submit, the exact text
+  expect(rec.commands).toEqual([])
+})
+
+test('a prompt the host refuses is said in a toast, not left silent', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  rec.dropPrompt = 'blocked by a hook'
+  await ahandoff($, 'read the README')
+  await clock.advance(1000)
+  expect(rec.toasts).toContain('ahandoff: the prompt was refused — blocked by a hook')
+})
+
+// /junkd:handon is a skill: the host runs it as a prompt.submit carrying the command (probed live: origin plugin, the
+// module's own prompt.submit hook sees it). The test host runs no skill, so the test raises that submission while the
+// loop's handon command is held, as the host does, then lets the command end.
+const handonOf = (id: string, name = 'junkd:handon') => ({ text: `/${name} ${id}`, command: { name, args: id } }) as never
+async function handonRuns($: Engine, rec: { commands: string[]; handonHold?: Promise<void> }, clock: { advance(ms: number): Promise<unknown> }, submissions: never[]) {
+  let release!: () => void
+  rec.handonHold = new Promise<void>(r => { release = r })
+  const advanced = clock.advance(1000)
+  for (let i = 0; i < 100 && !rec.commands.some(c => c.startsWith('junkd:handon ')); i++) await new Promise(r => setTimeout(r, 5))
+  for (const submission of submissions) await $.prompt.submit(submission)
+  release()
+  await advanced
+  rec.handonHold = undefined
+  await new Promise(r => setTimeout(r, 20)) // the chain's own last steps (persist, sync) end before the test does
+}
+
+test('the continuation rides the handon submission once, for the right handoff, and no prompt of its own follows', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  // submissions the host could raise while the loop runs handon: another command, another handoff, the right one twice
+  await handonRuns($, rec, clock, [handonOf('abcdef12', 'junkd:orch'), handonOf('zzzzzzzz'), handonOf('abcdef12'), handonOf('abcdef12')])
+  expect(rec.prompts).toEqual(['/junkd:orch abcdef12', '/junkd:handon zzzzzzzz', '/junkd:handon abcdef12', '/junkd:handon abcdef12']) // no 'Continue after the handoff' of its own
+  expect(rec.contexts.map(c => c?.join('') ?? '')).toEqual(['', '', expect.stringContaining('continue as they asked: Continue after the handoff'), ''])
+})
+
+test('a handon that raises no submission leaves the continuation to a prompt of its own', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.percent = 7
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await clock.advance(1000)
+  await new Promise(r => setTimeout(r, 20))
+  expect(rec.commands).toContain('junkd:handon abcdef12')
+  expect(rec.prompts).toEqual(['Continue after the handoff'])
+})
+
+test('a slash continuation prompt is handed to the model as a command to run, in the same turn', THRESHOLD_5, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  seed(on, kept({ prompt: '/junkd:orch all' }))
+  await start($)
+  rec.percent = 7
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
+  await turn($)
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(rec.prompts).toEqual(['/junkd:handon abcdef12'])
+  expect(rec.commands.filter(c => c.startsWith('junkd:orch'))).toEqual([]) // not a second turn
+  expect(rec.contexts.at(-1)?.join('\n')).toContain('run this slash command (the Skill tool, the command name as the skill and the rest as its arguments): /junkd:orch all')
+  expect(rec.contexts.at(-1)?.join('\n')).toContain('do not stop after loading it or wait for them')
 })
