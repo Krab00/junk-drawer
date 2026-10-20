@@ -1569,6 +1569,9 @@ test('a handon that raises no submission leaves the continuation to a prompt of 
   await new Promise(r => setTimeout(r, 20))
   expect(rec.commands).toContain('junkd:handon abcdef12')
   expect(rec.prompts).toEqual(['Continue after the handoff'])
+  // the continuation went out on its own: a later handon of the same handoff (the person's) carries nothing
+  await $.prompt.submit(handonOf('abcdef12'))
+  expect(rec.contexts.at(-1)?.join('') ?? '').toBe('')
 })
 
 test('a slash continuation prompt is handed to the model as a command to run, in the same turn', THRESHOLD_5, async ($, on) => {
@@ -1674,13 +1677,16 @@ test('a measurement with no percent leaves the fresh window waiting: no baseline
 test('a read of $.state that fails at startup leaves the loop off and the session starting', THRESHOLD_5, async ($, on) => {
   const rec = world(on)
   mock.clock(on)
+  capture(on)
+  written.length = 0
   let first = true
   on('state.get', KEPT, (_$, e, next) => {
     if (!first) return next(e)
     first = false
-    throw new Error('state unavailable')
+    return { deny: 'state unavailable' } as never // the read rejects with the reason
   })
   await start($) // resolves: the restore's read is allowed to fail
+  expect(written.at(-1)).toMatchObject({ on: false }) // and the start went on to mirror the loop
   expect(rec.toasts.some(t => /reloaded/.test(t))).toBe(false)
   expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto off')
 })

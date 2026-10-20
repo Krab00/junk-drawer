@@ -377,9 +377,15 @@ Bare `/junkd:handoff` with no argument still saves a handoff as above.
 
 Loop: every `checkEvery` tool calls the hook reads context usage. Past `threshold` it denies every tool
 except the handoff itself and tells the model to call the `junkd:handoff` skill and write one. When that
-turn ends it runs `/clear`, then `/junkd:handon <id>`, then sends the continuation prompt — `Continue
-after the handoff` unless you change it with `p` on the Auto tab (a `/command` runs as a command). It
-repeats until `/junkd:handoff off`. A fresh window that already starts at or over the threshold hands off
+turn ends it runs `/clear`, then `/junkd:handon <id>`, with the continuation prompt — `Continue
+after the handoff` unless you change it with `p` on the Auto tab — handed to the model inside that same
+`/junkd:handon` turn (as the person's instruction, a `/command` as a command to run through the Skill tool), so it
+cannot start before the handoff is loaded; only a handon that raises no submission of its own sends it as a prompt
+afterwards. It repeats until `/junkd:handoff off`.
+
+The prompt you arm with starts a turn by itself: it is submitted (`$.prompt.submit`) one second after the arming
+command ended, because a prompt submitted while the command is still running is parked by the host until you type
+something. A prompt the host or a hook refuses is said in a toast, not dropped silently. A fresh window that already starts at or over the threshold hands off
 again after that many more points of growth.
 
 #### The threshold is a percent of the window the host reports
@@ -396,7 +402,9 @@ already fill it) has a baseline: when the threshold sits at or under that fill, 
 of growth above it. A loop armed in any other window, a fresh session or one that already ran turns, has no
 baseline, so threshold 5 at 7% hands off at the end of that turn. `/junkd:ahandoff off` drops the baseline.
 
-A handoff the model does not write is asked for at most 3 times in all; after the third miss the loop disarms, logs `decision=give-up:3-tries` and toasts `ahandoff: handoff not written after 3 tries — disarmed`.
+A handoff the model does not write is asked for at most 3 times in all (the firing turn's ask is the first); after the
+third miss the loop disarms, logs `decision=give-up:3-tries` and toasts `ahandoff: handoff not written after 3 tries —
+disarmed`. A written handoff gives the next cycle its 3 tries again.
 
 A reload of the plugin (a change in the `/config` menu, `/reload-plugins`, a save in a watched `--plugin-dir`
 folder) starts the module over; the armed loop, its prompt and its baseline come back from `$.state` (a toast says
@@ -418,8 +426,8 @@ the one after a `/clear`, has its own file):
 asked for), `skip:below-limit`, `skip:fresh` (the first measurement of the window after a handoff is still
 pending), `skip:phase-<phase>` (a handoff is already under way), `skip:disarmed`, `skip:five-hour-limit`,
 `skip:measure-only`, `skip:restored`, or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
-that turn, or one was written and the clear starts), `give-up:3-tries`. `window` is the context window the host reported, in
-tokens. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
+that turn, or one was written and the clear starts) or `give-up:3-tries` (the handoff was asked for 3 times and never written;
+the loop disarms). `window` is the context window the host reported, in tokens. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
 on the line of the turn that should have fired it.
 
 #### Resume after the 5h rate limit
