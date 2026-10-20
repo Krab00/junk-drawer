@@ -101,6 +101,38 @@ draw "$(junkd_opts '{"statusline_ctx":false,"statusline_limits":false}')" > "$tm
 # The first junkd@ entry decides; another plugin's entry never does.
 draw '{"pluginConfigs":{"other@x":{"options":{"statusline_model":false}},"junkd@junk-drawer":{"options":{"statusline_branch":false}},"junkd@fork":{"options":{"statusline_ctx":false}}}}' > "$tmp/line"
 [ "$(cat "$tmp/line")" = "$(without 1)" ] || fail "the first junkd@ entry does not decide alone: $(cat -v "$tmp/line")"
+# --config <key>: the entry it names decides, whatever its place in the file (T29: a --plugin-dir session keeps its
+# options under junkd@inline, the marketplace copy under junkd@junk-drawer, and the first one used to win for both).
+# junkd@junk-drawer has branch off, junkd@inline has ctx off; both orders.
+drawc() { # <settings.json content> <script args...>
+    local content=$1
+    shift
+    rm -f "$cfg/settings.json"
+    printf '%s\n' "$content" > "$cfg/settings.json"
+    printf '%s' "$input" | "${base[@]}" CLAUDE_CONFIG_DIR="$cfg" "$render" "$@"
+}
+two_ab='{"pluginConfigs":{"junkd@junk-drawer":{"options":{"statusline_branch":false}},"junkd@inline":{"options":{"statusline_ctx":false}}}}'
+two_ba='{"pluginConfigs":{"junkd@inline":{"options":{"statusline_ctx":false}},"junkd@junk-drawer":{"options":{"statusline_branch":false}}}}'
+check_pick() { # <order name> <settings> <expected index to be off> <script args...>
+    local what=$1 content=$2 want=$3
+    shift 3
+    drawc "$content" "$@" > "$tmp/line"
+    [ "$(cat "$tmp/line")" = "$(without "$want")" ] || fail "$what ${*:-(no args)}: got $(cat -v "$tmp/line"), want segment $want off"
+}
+check_pick "inline last" "$two_ab" 0 --config junkd@inline
+check_pick "inline last" "$two_ab" 1 --config junkd@junk-drawer
+check_pick "inline last" "$two_ab" 1
+check_pick "inline first" "$two_ba" 0 --config junkd@inline
+check_pick "inline first" "$two_ba" 1 --config junkd@junk-drawer
+check_pick "inline first" "$two_ba" 0
+# The named entry is the only one read: absent means every segment drawn, not the first entry; an empty key is no key.
+drawc "$two_ab" --config junkd@nowhere > "$tmp/line"
+cmp -s "$tmp/line" "$golden" || fail "--config of an absent entry fell back to another entry: $(cat -v "$tmp/line")"
+check_pick "an empty --config" "$two_ab" 1 --config ""
+check_pick "a trailing --config" "$two_ab" 1 --config
+# The argument also works beside the others (position does not matter).
+check_pick "an unknown flag first" "$two_ab" 0 --x --config junkd@inline
+rm -f "$cfg/settings.json"
 
 # CLAUDE_CONFIG_DIR is honoured: the HOME settings.json is not read while it is set, and is read when it is not.
 mkdir -p "$home/.claude"
@@ -236,6 +268,51 @@ st on
 printf '{"statusLine":{"type":"command","command":"%s.old"}}\n' "$dest" > "$settings"
 st on
 [ "$rc" = 1 ] || fail "on replaced a sibling path of ours"
+
+# --config <key>: the command is `<copy> --config <key>`, still ours; a different key rewrites it, the same key writes
+# nothing, and the copy is written on every run.
+reset
+cfgcmd() { printf '%s --config %s' "$dest" "$1"; }
+st on --config junkd@inline
+[ "$rc" = 0 ] && cmd_is "$(cfgcmd junkd@inline)" && cmp -s "$dest" "$real_render" || fail "on --config: rc $rc $out $err $(cat "$settings")"
+st status
+[ "$out" = on ] || fail "status with a --config command: $out"
+before=$(cat "$settings")
+rm -f "$settings.bak"
+st on --config junkd@inline
+[ "$rc" = 0 ] && [ "$(cat "$settings")" = "$before" ] && [ ! -e "$settings.bak" ] || fail "on --config twice rewrote settings.json"
+printf 'stale\n' > "$dest"
+st on --config junkd@inline
+cmp -s "$dest" "$real_render" || fail "on --config does not rewrite a stale copy of an already wired line"
+st on --config junkd@junk-drawer
+[ "$rc" = 0 ] && cmd_is "$(cfgcmd junkd@junk-drawer)" || fail "on with another key did not rewrite the command: rc $rc $(cat "$settings")"
+st on
+[ "$rc" = 0 ] && cmd_is "$dest" || fail "on with no key did not put the plain command back: $(cat "$settings")"
+st on --config junkd@inline --force
+[ "$rc" = 0 ] && cmd_is "$(cfgcmd junkd@inline)" || fail "on --config --force: rc $rc $(cat "$settings")"
+st off
+[ "$rc" = 0 ] && jq -e 'has("statusLine") | not' "$settings" >/dev/null && [ ! -e "$dest" ] || fail "off over a --config command of ours: rc $rc $(cat "$settings")"
+st on --config
+[ "$rc" = 1 ] && rg -qF -- '--config needs' <<<"$err" || fail "on --config with no key: rc $rc $err"
+# The copy renders by its own argument: the installed command line, as the host runs it.
+st on --config junkd@inline
+jq -n '{pluginConfigs:{"junkd@junk-drawer":{options:{}},"junkd@inline":{options:{statusline_ctx:false}}}}' > "$settings"
+printf '%s' "$input" | "${base[@]}" CLAUDE_CONFIG_DIR="$cfg" "$dest" --config junkd@inline > "$tmp/line"
+[ "$(cat "$tmp/line")" = "$(without 0)" ] || fail "the installed copy with --config: $(cat -v "$tmp/line")"
+# A --config command that wraps another (a pipe) is not ours; our path plus --config and junk after the key is.
+printf '{"statusLine":{"type":"command","command":"bash %s --config x"}}\n' "$dest" > "$settings"
+st on
+[ "$rc" = 1 ] || fail "on replaced a command that wraps ours with --config"
+
+# "statusLine": null is no statusLine: status says off, on writes the command (T29: "wired on" did nothing over it), off is a no-op.
+reset
+printf '{"statusLine":null,"x":1}\n' > "$settings"
+st status
+[ "$rc" = 0 ] && [ "$out" = off ] || fail "status over a null statusLine: rc $rc $out"
+st off
+[ "$rc" = 0 ] && [ "$out" = "statusline: off" ] || fail "off over a null statusLine: rc $rc $out"
+st on --config junkd@inline
+[ "$rc" = 0 ] && cmd_is "$(cfgcmd junkd@inline)" && [ "$(jq -r .x "$settings")" = 1 ] || fail "on over a null statusLine: rc $rc $out $err $(cat "$settings")"
 
 # The legacy path: ours, moved to the new one by on; off removes it too.
 reset

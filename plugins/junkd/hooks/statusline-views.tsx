@@ -6,7 +6,9 @@ import type { JunkdStatuslineField as Field, JunkdStatuslineSegment as Segment }
 
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button'>
 export type StatuslineActs = { close(): void; set(field: Field, value: boolean): void }
-export type StatuslineData = { values: Record<Field, boolean>; preview: string; note: string }
+// `values.enabled` is whether settings.json's statusLine is junkd's; `config` is the pluginConfigs key the segment rows
+// are stored under and the second-config warning ('' when there is none).
+export type StatuslineData = { values: Record<Field, boolean>; preview: string; note: string; config: { key: string; warn: string } }
 
 // Theme keys only, never a hex value: the colours follow the user's theme.
 export const P = { accent: 'claude', secondary: 'inactive', dim: 'subtle', ok: 'success', bad: 'error' } as const
@@ -81,6 +83,16 @@ export function statuslineView(els: Els, props: RenderInput<'Pane'>['props'], da
           Status line
         </Text>
         {row('enabled')}
+        {data.config.key ? (
+          <Box key="config-key" paddingLeft={2} height={1} overflow="hidden">
+            <Text color={P.secondary} wrap="truncate-end">{`config: pluginConfigs ${data.config.key}`}</Text>
+          </Box>
+        ) : null}
+        {data.config.warn ? (
+          <Box key="config-warn" paddingLeft={2} height={1} overflow="hidden">
+            <Text color={P.bad} wrap="truncate-end">{`✗ ${data.config.warn}`}</Text>
+          </Box>
+        ) : null}
         <Box marginTop={1}>
           <Text bold color={P.secondary}>
             Segments

@@ -2,17 +2,24 @@
 // drawing is statusline-views.tsx. The status line itself is bin/statusline.sh, which Claude Code runs from
 // ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/statusline.sh (a copy: the plugin's own folder is a versioned cache);
 // bin/statusline-setup on|off copies it there and points settings.json's statusLine at it, or takes it out.
-// - enabled: true runs `statusline-setup on`, false `statusline-setup off`, before the row is stored; a run that
-//   refuses (a statusLine of the person's own) or fails is the refusal, and the row stays as it was. At session start,
-//   while enabled, `on` runs again only when the installed copy is missing or differs from the plugin's (a plugin
-//   update, the old plugin's path); what it says is not shown.
-// - the segments: plain rows; the renderer reads them from settings.json (pluginConfigs) itself on every draw.
-// The pane shows the rows and a preview: bin/statusline.sh run on a sample session, after every flip.
+// - enabled: true runs `statusline-setup on --config <key>`, false `statusline-setup off`, before the row is stored; a
+//   run that refuses (a statusLine of the person's own) or fails is the refusal, and the row stays as it was. At
+//   session start, while enabled, `on` runs again when the installed copy is missing or differs from the plugin's (a
+//   plugin update, the old plugin's path), or when settings.json has no statusLine, or one of ours whose command is
+//   not `<copy> --config <key>`; what it says is not shown.
+// - the segments: plain rows; the renderer reads them from settings.json (pluginConfigs) itself on every draw, from
+//   the entry the statusLine command names (`--config <key>`): the key this module's options are stored under.
+//   The engine does not hand a module its own key, so pluginKey derives it from the plugin's directory: an installed
+//   plugin lives in <config>/plugins/cache/<marketplace>/junkd/<version> (key junkd@<marketplace>), any other
+//   directory is a --plugin-dir session (key junkd@inline). Without --config the renderer would read the first
+//   junkd@ entry, which is the marketplace copy's whenever both are in the file.
+// The pane shows the rows, the key and a warning when a second junkd@ config could be the one the line reads, and a
+// preview: bin/statusline.sh run on a sample session, after every flip.
 import type { On, RenderInput } from 'claude-code'
 import type { JunkdStatuslineField as Field } from '../types'
 import type { $, HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { isSets, shutSet } from './set'
-import { configKey, configKeys, fieldOf, groupOptions, keyOf, rowsOf } from './settings'
+import { PLUGIN, configKey, configKeys, fieldOf, groupOptions, keyOf, rowsOf } from './settings'
 import { FIELDS, plain, statuslineView, type Els } from './statusline-views'
 
 const PANE = 'statusline'
@@ -21,6 +28,11 @@ const S = Object.fromEntries(FIELDS.map(f => [f, true])) as Record<Field, boolea
 
 let note = ''
 let preview = ''
+// The key this session's rows are stored under and the second-config warning, read at every refresh.
+let configInfo: ConfigNote = { key: '', warn: '' }
+// Whether settings.json's statusLine is junkd's: the pane's `wired` switch shows this, not the statusline_enabled
+// option (which says only what was asked for; the option can be on while the line is gone).
+let wired = false
 let paneOpen = false
 // Who opened the pane through statuslineShow({ owner }) (the /junkd set); any other open or close clears it.
 let owner: string | undefined
@@ -42,10 +54,66 @@ async function configDir($: $) {
 
 const coerce = (raw: unknown) => raw === true || raw === 'true' || raw === 'on'
 
-// bin/statusline-setup <mode>: `{ line }` (its last line) on exit 0, `{ deny }` (its reason) otherwise.
+// ------------------------------------------------------------------ the pluginConfigs key this module's options live under
+
+// `junkd@<marketplace>` when the plugin's directory is <anything>/plugins/cache/<marketplace>/junkd/<version> (an
+// installed copy), `junkd@inline` otherwise (--plugin-dir). Probed on 2.1.303: `$.plugin` has only name and root, a
+// module never sees its own plugin.register (provenance), and register(on, options) carries no key.
+export function pluginKey(root: string): string {
+  const m = /\/plugins\/cache\/([^/]+)\/junkd\/[^/]+\/?$/.exec(root)
+  return `${PLUGIN}@${m?.[1] ?? 'inline'}`
+}
+// The statusLine command that reads `key`: the installed copy and the entry it reads.
+const commandFor = (copy: string, key: string) => `${copy} --config ${key}`
+// A command of junkd's: the copy (with or without --config) or the legacy path statusline-setup migrates.
+const isJunkdCommand = (command: string, cfg: string) =>
+  command === `${cfg}/junkd/statusline.sh` || command.startsWith(`${cfg}/junkd/statusline.sh --config `) || command === `${cfg}/junk-drawer-statusline.sh`
+// The key a junkd command names (`--config <key>`), '' when it names none.
+const keyOfCommand = (command: string) => / --config (\S+)\s*$/.exec(command)?.[1] ?? ''
+
+type Json = Record<string, unknown>
+const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
+// The user's settings.json as the file has it now (the host's own copy may be a moment old); undefined when it is
+// missing or does not parse.
+async function userSettings($: $): Promise<Json | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(await $.fs.read(`${await configDir($)}/settings.json`))
+    return isObject(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+// The junkd@ keys of pluginConfigs in file order.
+const junkdKeys = (settings: Json | undefined): string[] =>
+  isObject(settings?.pluginConfigs) ? Object.keys(settings.pluginConfigs).filter(k => k.startsWith(`${PLUGIN}@`)) : []
+
+// settings.json's statusLine runs junkd's copy (with or without --config).
+export function isWired(settings: Json | undefined, cfg: string): boolean {
+  const line = settings?.statusLine
+  return isObject(line) && typeof line.command === 'string' && isJunkdCommand(line.command, cfg)
+}
+
+// What the pane shows about the key: `key` is the entry this session writes; `warn` is '' or the second-config warning.
+export type ConfigNote = { key: string; warn: string }
+// The entry the line reads is the statusLine command's --config key; a junkd command with none (installed before the
+// key existed) reads the first junkd@ entry; with no junkd command wired, this session's key is the one that counts.
+export function configNote(settings: Json | undefined, key: string, cfg: string): ConfigNote {
+  const keys = junkdKeys(settings)
+  const line = settings?.statusLine
+  const command = isObject(line) && typeof line.command === 'string' ? line.command : ''
+  const wired = command !== '' && isJunkdCommand(command, cfg)
+  const reads = wired ? keyOfCommand(command) || keys[0] || key : key
+  const distinct = new Set([key, ...keys, reads])
+  if (distinct.size < 2) return { key, warn: '' }
+  return { key, warn: `two junkd configs: ${reads} wins${reads === key ? '' : ` (this session writes ${key})`}` }
+}
+
+// bin/statusline-setup <mode>: `{ line }` (its last line) on exit 0, `{ deny }` (its reason) otherwise. `on` names the
+// entry the line reads: `--config <this module's key>`.
 async function runSetup($: $, mode: 'on' | 'off' | 'status'): Promise<{ line: string; deny?: undefined } | { deny: string; line?: undefined }> {
   try {
-    const r = await $.process.run([`${$.plugin.root}/bin/statusline-setup`, mode], { env: { CLAUDE_CONFIG_DIR: await configDir($) } })
+    const argv = [`${$.plugin.root}/bin/statusline-setup`, mode, ...(mode === 'on' ? ['--config', pluginKey($.plugin.root)] : [])]
+    const r = await $.process.run(argv, { env: { CLAUDE_CONFIG_DIR: await configDir($) } })
     const last = (text: string) => text.trim().split('\n').at(-1) ?? ''
     if (r.exitCode === 0) return { line: last(r.stdout) }
     return { deny: last(r.stdout) || last(r.stderr) || `statusline-setup ${mode} exited ${r.exitCode}` }
@@ -66,7 +134,7 @@ async function readPreview($: $): Promise<string> {
     rate_limits: { five_hour: { used_percentage: 12 }, seven_day: { used_percentage: 33 } },
   }
   try {
-    const r = await $.process.run([`${$.plugin.root}/bin/statusline.sh`], { stdin: JSON.stringify(sample), env: { CLAUDE_CONFIG_DIR: await configDir($) } })
+    const r = await $.process.run([`${$.plugin.root}/bin/statusline.sh`, '--config', pluginKey($.plugin.root)], { stdin: JSON.stringify(sample), env: { CLAUDE_CONFIG_DIR: await configDir($) } })
     return r.exitCode === 0 ? plain(r.stdout) : ''
   } catch {
     return ''
@@ -75,6 +143,10 @@ async function readPreview($: $): Promise<string> {
 async function refreshPreview($: $) {
   if (!paneOpen) return
   preview = await readPreview($)
+  const settings = await userSettings($)
+  const cfg = await configDir($)
+  configInfo = configNote(settings, pluginKey($.plugin.root), cfg)
+  wired = isWired(settings, cfg)
   redraw($)
 }
 
@@ -148,12 +220,19 @@ export async function statuslineHide($: $, input: HideInput = {}): Promise<void>
   if (input.owner !== undefined && input.owner !== owner) return
   await closePane($)
 }
-// While enabled: `statusline-setup on` when the installed copy is missing or is not the plugin's script. Silent.
+// While enabled: `statusline-setup on` when the installed copy is missing or is not the plugin's script, or when
+// settings.json has no statusLine, or a junkd one that does not read this session's key. A statusLine of the person's
+// own is left alone (on would only be refused). Silent.
 export async function statuslineStart($: $): Promise<void> {
   if (!S.enabled) return
-  const installed = await $.fs.read(`${await configDir($)}/junkd/statusline.sh`).catch(() => undefined)
+  const cfg = await configDir($)
+  const copy = `${cfg}/junkd/statusline.sh`
+  const installed = await $.fs.read(copy).catch(() => undefined)
   const ours = await $.fs.read(`${$.plugin.root}/bin/statusline.sh`).catch(() => undefined)
-  if (ours !== undefined && installed === ours) return
+  const line = (await userSettings($))?.statusLine
+  const command = isObject(line) && typeof line.command === 'string' ? line.command : undefined
+  const settled = command === commandFor(copy, pluginKey($.plugin.root)) || (line !== undefined && line !== null && !(command !== undefined && isJunkdCommand(command, cfg)))
+  if (ours !== undefined && installed === ours && settled) return
   await runSetup($, 'on')
 }
 
@@ -210,7 +289,7 @@ export function registerStatusline(on: On, options: Record<string, unknown>): vo
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e: RenderInput<'Pane'>, next) => {
     if (e.surface === 'mobile') return next(e)
-    return statuslineView($.ui.resolve(e) as Els, e.props, { values: { ...S }, preview, note }, {
+    return statuslineView($.ui.resolve(e) as Els, e.props, { values: { ...S, enabled: S.enabled && wired }, preview, note, config: configInfo }, {
       close: () => void (isSets(owner) ? shutSet($) : closePane($)),
       set: (field, value) => void setRow($, field, value),
     })

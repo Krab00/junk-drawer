@@ -3,17 +3,25 @@
 #   ctx | branch | ⑂worktree | model | effort | 5h/wk rate limits
 # ctx shows only if the host provides .context_window; the rest render when available. Needs jq.
 # Which segments are drawn: the junkd settings statusline_ctx, _branch, _worktree, _model, _effort and _limits, read
-# from the user settings.json (${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json, the first pluginConfigs entry whose
-# key starts with `junkd@`, its options). true, "true" or "on" is on, any other value off; a missing key, a file that
-# does not parse, or no jq draws the segment.
+# from the user settings.json (${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json, its pluginConfigs entry: the one
+# named by `--config <key>` (statusline-setup writes it into the statusLine command: `junkd@inline` for a --plugin-dir
+# session, `junkd@<marketplace>` for an installed one), else, with no --config, the first entry whose key starts with
+# `junkd@`). true, "true" or "on" is on, any other value off; a missing key, a missing entry, a file that does not
+# parse, or no jq draws the segment.
 
+config_key=""
+while [ $# -gt 0 ]; do
+    case "$1" in --config) config_key=${2:-}; shift ;; esac
+    shift
+done
 input=$(cat)
 settings_file="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 
 # ── Segment switches ──────────────────────────────────────────────────────────
 show_ctx=on show_branch=on show_worktree=on show_model=on show_effort=on show_limits=on
 if command -v jq >/dev/null 2>&1 && [ -f "$settings_file" ]; then
-    switches=$(jq -r '[.pluginConfigs? // {} | to_entries[] | select(.key | startswith("junkd@"))][0].value.options? // {}
+    switches=$(jq -r --arg key "$config_key" '(.pluginConfigs? // {}) as $c
+        | (if $key != "" then [$c[$key]] else [$c | to_entries[] | select(.key | startswith("junkd@")) | .value] end)[0].options? // {}
         | [.statusline_ctx, .statusline_branch, .statusline_worktree, .statusline_model, .statusline_effort, .statusline_limits]
         | map(if . == null or . == true or . == "true" or . == "on" then "on" else "off" end) | join(" ")' \
         "$settings_file" 2>/dev/null) || switches=""
