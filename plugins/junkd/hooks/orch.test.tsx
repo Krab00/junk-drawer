@@ -336,7 +336,7 @@ test('T35: SendMessage to a peer session, main or a protocol reply passes in eve
   const send = (to: string) => main('SendMessage', { to, message: 'hello' })
   for (const [guard, model] of [['fable', FABLE], ['always', FABLE], ['always', OPUS]] as const) {
     const o = { ...on_, guard }
-    for (const to of ['HANDON', 'HANDON [69f752]', 'main', 'shutdown_response', 'claude-5-peer [x] [y]', 'peer@team', 'a000000000000000x', 'b000000000000000', 'a00000000000000g', 'a00000000000000', 'A000000000000000'])
+    for (const to of ['HANDON', 'HANDON [69f752]', 'main', 'shutdown_response', 'claude-5-peer [x] [y]', 'peer@team', 'a000000000000000x', 'xa000000000000000', 'a000000000000000 [x] y', 'b000000000000000', 'a00000000000000g', 'a00000000000000', 'A000000000000000'])
       expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toBeUndefined()
     for (const to of [UNKNOWN, `${UNKNOWN} [69f752]`, 'a0123456789abcdef', 'a0123456789abcdef0123'])
       expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toMatch(/^Orchestrator mode \(orch\): no agent ".*" is known \(not in the agent list, no SubagentStop record\)\. Spawn a fresh agent\.$/)
