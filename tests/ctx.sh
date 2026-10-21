@@ -285,7 +285,7 @@ rm -rf "$home/.claude"
 # ---------------------------------------------------------------- escape hatches and their lookalikes
 reset
 for host in claude codex; do cli "$host" 100k; done
-for p in '/junkd:ctx-limit off' '/junkd:ctx-limit' '/junkd:handoff' '/junkd:handon abc' '/junkd:ahandoff off' '/clear' \
+for p in '/junkd:ctx-limit off' '/junkd:ctx-limit' '/junkd:handoff' '/junkd:handon abc' '/junkd:ahandoff off' '/clear' '/compact' '/compact keep the tests' \
     '$ctx-limit off' '$handoff' '/skill:ctx-limit off' '/skill:handoff' '/skill:handon abc' '/ctx-limit off' '/handoff' \
     '/handon abc' '   /junkd:ctx-limit off' 'Use $ctx-limit to turn the guard off' 'Use $handoff now' $'/clear\tnow'; do
     hook_claude "$p"
@@ -293,7 +293,7 @@ for p in '/junkd:ctx-limit off' '/junkd:ctx-limit' '/junkd:handoff' '/junkd:hand
     hook_codex "$p"
     passed "codex escape '$p'"
 done
-for p in '/ctx-limiter off' '/junkd:ctx-limiter' '$handoffs' '$ctx-limiter off' '/junkd:handoffs' '/junkd:orch' '/clearance review' \
+for p in '/ctx-limiter off' '/junkd:ctx-limiter' '$handoffs' '$ctx-limiter off' '/junkd:handoffs' '/junkd:orch' '/clearance review' '/compaction' \
     '/handoff:handoff' '/ahandoff' '/skill:ctx-limiter' '/handonx' 'Explain why $ctx-limit blocked me' 'please /clear' \
     'Use $handoffs' '/junkd:ctx-limit-off'; do
     hook_claude "$p"
@@ -353,14 +353,20 @@ tok "${on_claude[@]}" CODEX_HOME="$xhome" "$tokens" --cwd "$proj"
 # the flag overrides the detected host
 tok "${on_claude[@]}" CODEX_HOME="$xhome" "$tokens" --codex --cwd "$proj"
 [ "$out" = $CTX ] || fail "ctx-tokens --codex on Claude Code: rc $rc $out $err"
-mkdir -p "$ccfg/projects/$(printf '%s' "$proj" | sed 's:/:-:g')"
-cp "$tmp/claude.jsonl" "$ccfg/projects/$(printf '%s' "$proj" | sed 's:/:-:g')/sess.jsonl"
+mkdir -p "$ccfg/projects/$(printf '%s' "$proj" | sed 's/[^A-Za-z0-9]/-/g')"
+cp "$tmp/claude.jsonl" "$ccfg/projects/$(printf '%s' "$proj" | sed 's/[^A-Za-z0-9]/-/g')/sess.jsonl"
 tok "${on_claude[@]}" "$tokens" --cwd "$proj"
 [ "$out" = $CTX ] || fail "ctx-tokens on Claude Code: rc $rc $out $err"
 tok "${on_claude[@]}" "$tokens" --cwd "$proj" -h
 [ "$out" = "ctx 150k ($CTX) | out 20" ] || fail "ctx-tokens -h on Claude Code: $out"
 (cd "$proj" && "${noh[@]}" "${on_claude[@]}" "$tokens" > "$tmp/pwd.out")
 [ "$(cat "$tmp/pwd.out")" = $CTX ] || fail "ctx-tokens with no --cwd does not read the working directory's session"
+# Claude Code maps every non-alphanumeric character of the cwd to "-", not only "/": a dotted cwd has its own folder
+dot="$tmp/repo.d/.claude/worktrees/a_b"
+mkdir -p "$dot" "$ccfg/projects/${dot//[^A-Za-z0-9]/-}"
+cp "$tmp/claude.jsonl" "$ccfg/projects/${dot//[^A-Za-z0-9]/-}/sess.jsonl"
+tok "${on_claude[@]}" "$tokens" --cwd "$dot"
+[ "$out" = $CTX ] || fail "ctx-tokens on Claude Code with a dotted cwd: rc $rc $out $err"
 tok "${on_codex[@]}" "$tokens" --cwd "$proj"
 [ "$out" = $CTX ] || fail "ctx-tokens on Codex: rc $rc $out $err"
 tok "${on_codex[@]}" "$tokens" --cwd "$tmp/elsewhere"

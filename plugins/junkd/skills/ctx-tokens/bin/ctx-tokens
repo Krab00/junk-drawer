@@ -76,7 +76,7 @@ if [ -z "$file" ]; then
     elif [ "$runtime" = kimi ]; then
         file=$(find_kimi_transcript)
     else
-        claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$target_cwd" | sed 's:/:-:g')"
+        claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$target_cwd" | sed 's/[^A-Za-z0-9]/-/g')"
         file=$(ls -t "$claude_dir"/*.jsonl 2>/dev/null | head -1)
         if [ -z "$file" ] && [ "$runtime" = auto ]; then
             file=$(find_codex_transcript) && runtime=codex
