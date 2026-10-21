@@ -393,21 +393,36 @@ afterwards. It repeats until `/junkd:handoff off`.
 The prompt you arm with starts a turn by itself: it is submitted (`$.prompt.submit`) one second after the arming
 command ended, because a prompt submitted while the command is still running is parked by the host until you type
 something. A prompt the host or a hook refuses is said in a toast, not dropped silently. A fresh window that already starts at or over the threshold hands off
-again after that many more points of growth.
+again after that many more tokens of growth.
 
-#### The threshold is a percent of the window the host reports
+#### The threshold is a token count
 
-The threshold compares with the host's own `context.percent`: the last response's input tokens over the model's
-context window, as a whole number (the number the status line shows). The module counts no tokens and keeps no
-window table, so the same number means different sizes on different models: 85 is 170k tokens on a 200k window
-and 850k on a 1M window, and Claude Code compacts on its own well before that on a 1M window (a 35% threshold
-there is 350k, past the point where an automatic compaction already happened). On a 1M-window model set a lower
-number, 15 to 20.
+`handoff_threshold` is the used context in thousands of tokens: `300` is 300k, the default. The module compares it with
+the host's own used-token figure (`context.tokens` of `$.session.usage()`: the last response's input tokens, uncached,
+cache-written and cache-read together, the number the status line shows as `total_input_tokens`), so the same number
+means the same size on every model and window. The statusline segment (`🪃 120k/300k`) and the pane show the limit in
+tokens too.
+
+**Migration, one release:** a value of 100 or less is what an older config holds (a percent of the window), so it is
+still read as a percent: `85` is 85% of the window the host reported (`context.window`), and every log line says
+`note=legacy-percent` while it is. Before the first measurement of a session the window is not known and `/junkd:ahandoff
+status` shows the limit as `?`. A token count of 100k or less cannot be set meanwhile (`100` is 100%, `101` is 101k); set
+`300` or any number above 100 to leave the legacy rule. A value of 0 or less is refused.
 
 The limit is the threshold itself. Only a window the loop's own handoff started (system prompt and `/junkd:handon`
-already fill it) has a baseline: when the threshold sits at or under that fill, the limit is the threshold in points
+already fill it) has a baseline: when the threshold sits at or under that fill, the limit is the threshold in tokens
 of growth above it. A loop armed in any other window, a fresh session or one that already ran turns, has no
-baseline, so threshold 5 at 7% hands off at the end of that turn. `/junkd:ahandoff off` drops the baseline.
+baseline, so threshold 300 at 350k used hands off at the end of that turn. `/junkd:ahandoff off` drops the baseline.
+
+**A threshold change re-arms.** Changing `handoff_threshold` while the loop is armed (`/config`, the Settings tab,
+`$.junkd.set`) takes effect at once: the next measurement compares with the new limit, the log gets a line with
+`note=rearmed`, and a toast says `ahandoff: threshold now 150k`. The baseline of the window is not reset by the change.
+
+**Any handoff written while the loop is armed continues the chain**, whoever asked for it: the loop's own ask, you
+telling the model to write one, or `/junkd:handoff` by hand. At the turn end the loop finds a handoff file written since
+it was armed that it did not record (it lists the handoffs folder once per idle turn), logs `decision=fire:external-handoff`
+and runs the same `/clear`, `/junkd:handon <id>` and continuation as after its own ask. The 3-tries cap below counts only
+the loop's own asks. A handoff written while the loop is off does nothing, and a file older than the arming is not taken.
 
 A handoff the model does not write is asked for at most 3 times in all (the firing turn's ask is the first); after the
 third miss the loop disarms, logs `decision=give-up:3-tries` and toasts `ahandoff: handoff not written after 3 tries —
@@ -424,17 +439,17 @@ Every measurement the loop makes or skips adds one line to
 the one after a `/clear`, has its own file):
 
 ```
-<iso time> <hook> percent=<n> limit=<n> armed=<bool> fresh=<bool> decision=<fire|skip:reason|cycle:step> base=<n> threshold=<n> phase=<p> window=<n> [note=<words>]
+<iso time> <hook> percent=<n> used=<tokens> limit=<tokens> armed=<bool> fresh=<bool> decision=<fire|skip:reason|cycle:step> base=<n> threshold=<n> phase=<p> window=<n> [note=<words>]
 ```
 
 `hook` is `tool.call` (every `checkEvery` calls, and each call while a handoff is due or the window is fresh),
 `turn.complete` (every main turn), `session.measure` (after each turn, once the host reports the fill) or
-`session.start` (a loop taken back after a reload). `decision` is `fire` (the limit is reached; a handoff is
+`session.start` (a loop taken back after a reload) or `config.set` (a threshold change on an armed loop, `note=rearmed`). `decision` is `fire` (the limit is reached; a handoff is
 asked for), `skip:below-limit`, `skip:fresh` (the first measurement of the window after a handoff is still
 pending), `skip:phase-<phase>` (a handoff is already under way), `skip:disarmed`, `skip:five-hour-limit`,
-`skip:measure-only`, `skip:restored`, or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
+`skip:measure-only`, `skip:restored`, `skip:threshold-changed`, `fire:external-handoff` (a handoff the loop did not ask for was written; the chain follows), or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
 that turn, or one was written and the clear starts) or `give-up:3-tries` (the handoff was asked for 3 times and never written;
-the loop disarms). `window` is the context window the host reported, in tokens. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
+the loop disarms). `used`, `limit` and `base` are tokens; `window` is the context window the host reported, in tokens; `note=legacy-percent` marks a threshold of 100 or less. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
 on the line of the turn that should have fired it.
 
 #### Resume after the 5h rate limit
@@ -450,8 +465,8 @@ pending (re-arm with `/junkd:ahandoff`).
 
 #### Status line segment
 
-The prompt line shows `🪃 72%` beside `✚ junkd`: context usage, green below the threshold, yellow within
-10 points of it, red past it. It shows `🪃 off` while the loop is disarmed and `🪃 handoff…` /
+The prompt line shows `🪃 120k/300k` beside `✚ junkd`: used tokens over the limit, green below it, yellow within
+10% of it, red past it. It shows `🪃 off` while the loop is disarmed and `🪃 handoff…` /
 `🪃 resume…` while a handoff is in flight. Clicking the segment opens or closes the pane. Turn it off
 with the `handoff_segment` setting.
 
@@ -475,7 +490,7 @@ Set them in the Settings tab, in the junkd pane (`/junkd`, the main rows), or in
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `handoff_enabled` | boolean | `true` | The auto handoff at all. Off: the loop cannot be armed (`/junkd:ahandoff` and `/junkd:handoff auto` say so, `handoff_autoOn` is ignored, an armed loop disarms at once and a pending 5h-limit resume is dropped) and the `🪃` segment is hidden. `/junkd:handoff`, `/junkd:handon` and the pane keep working |
-| `handoff_threshold` | number | `85` | Context usage in percent that triggers the handoff; above 0, up to 100 |
+| `handoff_threshold` | number | `300` | Context in thousands of tokens that triggers the handoff (`300` = 300k); above 0. 100 or less is read as a percent of the window for one release (above) |
 | `handoff_checkEvery` | number | `5` | How often, in tool calls, usage is read mid-turn; a whole number, 1 or more (`2.6` is refused, not rounded) |
 | `handoff_autoOn` | boolean | `false` | Arm the loop at every session start |
 | `handoff_resumeAfterLimit` | boolean | `true` | Send the continuation prompt 2 minutes after the 5h window resets when a turn died on the limit |

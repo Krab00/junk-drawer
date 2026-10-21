@@ -392,8 +392,9 @@ async function rearmed($: $, hook: Hook) {
 // One field as its row took it, into S — the one place a write lands, from setOption or the /config menu's hook.
 async function apply($: $, field: Field, value: number | boolean) {
   if (field === 'threshold') {
+    const changed = S.threshold !== value // a write can reach apply twice (the hook and setOption): the second changes nothing
     S.threshold = value as number
-    if (S.armed) await rearmed($, 'config.set')
+    if (changed && S.armed) await rearmed($, 'config.set')
   }
   else if (field === 'checkEvery') S.checkEvery = value as number
   else if (field === 'staleDays') { S.staleDays = value as number; S.entries = null; void load($) }
