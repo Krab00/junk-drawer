@@ -376,7 +376,7 @@ test('T35: a recipient is trimmed and its id read in lower case, so a known suba
   const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'ping' })
   const ID = 'a1b2c3d4e5f60718'
   rec.agents = [{ id: ID, type: 'junkd:ui-reviewer', name: 'rev' }, { id: 'imp1', type: 'junkd:implementer', name: 'impl' }]
-  for (const to of [' rev', 'rev\n', '\trev [x1] ', ` ${ID}`, `${ID}\n`, ID.toUpperCase(), ` ${ID.toUpperCase()} [x1]`])
+  for (const to of [' rev', 'rev\n', '\trev [x1] ', 'rev   [x1]', ` ${ID}`, `${ID}\n`, ID.toUpperCase(), ` ${ID.toUpperCase()} [x1]`])
     expect(denial(await send(to)), JSON.stringify(to)).toMatch(/ui-reviewer is a reviewer/)
   // a stopped agent's record answers by the same normalised id
   rec.files[`${RECORDS}/${SID}/a0f0e0d0c0b0a090.json`] = record('junkd:implementer', 450_000)
