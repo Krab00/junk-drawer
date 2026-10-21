@@ -104,6 +104,20 @@ ok $([ "$RC" = 0 ] && [ "$OUT" = 0 ]; echo $?) "pending with only a lesson resti
 run "$Z0" lesson add --to smoke --from T1 "Waiting."
 run "$Z0" lesson pending
 ok $([ "$RC" = 1 ] && [ "$OUT" = 1 ]; echo $?) "and one pending lesson on top of it: 1, exit 1 ($RC $OUT)"
+# a global lesson of another stack does not block this repo; one of its stack, or `any`, does
+mkdir -p "$(dirname "$GLOBAL")"
+printf '## L1 (2026-10-01) scope: global · stack: python · to: smoke · from: T1\nPython only, waiting.\n' >"$GLOBAL"
+Z1=$(proj pend1)
+run "$Z1" lesson pending
+ok $([ "$RC" = 0 ] && [ "$OUT" = 0 ]; echo $?) "pending: a global python lesson does not block a repo with no python ($RC $OUT)"
+touch "$Z1/pyproject.toml"
+run "$Z1" lesson pending
+ok $([ "$RC" = 1 ] && [ "$OUT" = 1 ]; echo $?) "pending: and does block a repo with python ($RC $OUT)"
+rm "$Z1/pyproject.toml"
+run "$Z1" lesson add --to smoke --from T1 "Local one waits."
+run "$Z1" lesson pending
+ok $([ "$RC" = 1 ] && [ "$OUT" = 1 ]; echo $?) "pending: the repo's own local lesson still blocks, the foreign global one stays out ($RC $OUT)"
+rm -f "$GLOBAL"
 mv "$tmp/global.pend0" "$GLOBAL"
 
 # ---------------------------------------------------------------- ids
@@ -128,13 +142,16 @@ run "$P" lesson list --json
 ok $(jq -e '[.[] | select(.text | startswith("First lesson"))] | length == 1 and .[0].ref == "global:L3" and .[0].to == "global" and (.[0].pending | not)' <<<"$OUT" >/dev/null; echo $?) "list shows it once, in the global store"
 t "the global block" has "$GLOBAL" '## L3 (2026-10-20) scope: global · stack: shell · to: global · from: T1'
 ok $(! grep -q 'First lesson' "$P/lessons.md"; echo $?) "and gone from the repo store"
-# up keeps the target: repo:L2 (to global) goes up; then it rests
+# up sets the to to the store it reaches: repo:L2 (to global) goes up; then it rests
 run "$P" lesson up repo:L2
 ok $([ "$OUT" = "repo:L2 -> global:L4" ]; echo $?) "up: one store up ($OUT)"
-t "up kept the to" has "$GLOBAL" '## L4 (2026-01-01) scope: global · stack: any · to: global · from: T6'
+t "up: the to is the global store" has "$GLOBAL" '## L4 (2026-01-01) scope: global · stack: any · to: global · from: T6'
 run "$P" lesson add --to smoke --from T6 "Up with a smoke target."
-run "$P" lesson up "$OUT"
-t "up kept a target that is no store (to: smoke in the repo store)" has "$P/lessons.md" "scope: repo · stack: shell · to: smoke · from: T6"
+ref=$OUT; n0=$(cd "$P" && "$state" lesson pending)
+run "$P" lesson up "$ref"
+t "up rewrote a target that is no store (to: smoke) to the store it reached" has "$P/lessons.md" "scope: repo · stack: shell · to: repo · from: T6"
+n1=$(cd "$P" && "$state" lesson pending)
+ok $([ "$n1" = $((n0 - 1)) ]; echo $?) "a lesson moved up is resolved: pending ($n0 -> $n1)"
 run "$P" lesson up global:L4
 ok $([ "$RC" = 1 ] && [[ "$ERR" == *"no store above"* ]]; echo $?) "up from the global store is refused"
 # promote a block without a to
@@ -198,6 +215,15 @@ ok $([ "$RC" = 2 ] && [[ "$ERR" == *"config.md is not writable; nothing changed"
 t "the unwritable config unchanged" cmp -s "$Q/.orch/config.md" "$tmp/ro.before"
 t "and the lesson kept" cmp -s "$Q/.orch/tasks/_lessons.md" "$tmp/rol.before"
 chmod 644 "$Q/.orch/config.md"
+# an unwritable lesson store: the same, and each retry leaves the config as it was (no standing_checks_extra row per try)
+chmod 444 "$Q/.orch/tasks/_lessons.md"
+for try in 1 2; do
+  run "$Q" lesson promote local:L1 --yes
+  ok $([ "$RC" = 2 ] && [[ "$ERR" == *"_lessons.md is not writable; nothing changed"* ]]; echo $?) "an unwritable store: exit 2, try $try ($RC $ERR)"
+  t "an unwritable store: the config unchanged, try $try" cmp -s "$Q/.orch/config.md" "$tmp/ro.before"
+done
+chmod 644 "$Q/.orch/tasks/_lessons.md"
+t "and the lesson kept" cmp -s "$Q/.orch/tasks/_lessons.md" "$tmp/rol.before"
 # a config with no frontmatter to hold the key: refused with exit 2, with and without --yes, config and lesson as they were
 for shape in plain unclosed; do
   Q=$(proj "chk-nofm-$shape" -)
@@ -343,7 +369,19 @@ touch "$S/x.tsx"; mkdir -p "$S/node_modules/q"; touch "$S/node_modules/q/go.mod"
 rm "$S/go.mod"; printf 'node_modules/\n' >"$S/.gitignore"
 ok $([ "$(stack_of "$S")" = node,python,shell,tsx-mods,rust ]; echo $?) "ignored files do not count"
 F="$tmp/nogit"; mkdir -p "$F/bin"; printf '#!/usr/bin/env bash\n' >"$F/bin/c"
-ok $([ "$(stack_of "$F")" = shell ]; echo $?) "outside git: the find fallback"
+ok $([ "$(stack_of "$F")" = any ]; echo $?) "outside git, no store yet: no walk, any"
+printf '# Lessons\n' >"$F/lessons.md"
+ok $([ "$(stack_of "$F")" = shell ]; echo $?) "outside git, with a lessons.md: the find fallback"
+printf '# Lessons\n' >"$F/lessons.md"; mkdir -p "$F/a/b/c/d"; touch "$F/a/b/c/d/go.mod"; touch "$F/a/b/Cargo.toml"
+ok $([ "$(stack_of "$F")" = shell,rust ]; echo $?) "outside git: the walk is 4 levels deep (a/b/Cargo.toml in, a/b/c/d/go.mod out)"
+
+# inject outside git with no store of the cwd: nothing walked (a find over ~ at every SessionStart), the stack is any
+H="$tmp/nogit-inj"; mkdir -p "$H/bin"; printf '#!/usr/bin/env bash\n' >"$H/bin/c"
+mv "$GLOBAL" "$tmp/global.keep0"
+printf '## L1 (2026-10-01) scope: global · stack: shell · to: global · from: T1\nShell only.\n\n## L2 (2026-10-01) scope: global · stack: any · to: global · from: T2\nFor everyone.\n' >"$GLOBAL"
+run "$H" lesson inject
+ok $([ "$RC" = 0 ] && [[ "$OUT" == "# Lessons for this repo (stack: any;"* ]] && [[ "$OUT" == *"For everyone."* ]] && [[ "$OUT" != *"Shell only."* ]]; echo $?) "inject outside git, no store: stack any, no walk ($RC)"
+mv "$tmp/global.keep0" "$GLOBAL"
 
 I=$(proj inj)
 mkdir -p "$I/bin"; printf '#!/usr/bin/env bash\n' >"$I/bin/t"

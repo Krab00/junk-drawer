@@ -180,8 +180,12 @@ _l_rank() { case "$1" in local) echo 0 ;; repo) echo 1 ;; global) echo 2 ;; *) e
 # untracked, ignores applied), else a find that skips .git, node_modules and .worktrees.
 _l_stacks() {
   local files f out=""
-  files=$(git -C "$root" ls-files -co --exclude-standard 2>/dev/null) ||
-    files=$(cd "$root" && find . -maxdepth 6 \( -name .git -o -name node_modules -o -name .worktrees \) -prune -o -print 2>/dev/null | sed 's|^\./||') || true
+  files=$(git -C "$root" ls-files -co --exclude-standard 2>/dev/null) || {
+    # ponytail: outside git the walk runs only where a repo or local store already is, and 4 levels deep: a SessionStart
+    # in ~ must not crawl it (slow, and macOS asks to let the shell into Documents, Desktop...). Else the stack is `any`.
+    [ -f "$root/lessons.md" ] || [ -f "$(_l_file local)" ] || { echo any; return; }
+    files=$(cd "$root" && find . -maxdepth 4 \( -name .git -o -name node_modules -o -name .worktrees \) -prune -o -print 2>/dev/null | sed 's|^\./||') || true
+  }
   grep -Eq '(^|/)package\.json$' <<<"$files" && out="$out,node"
   grep -Eq '(^|/)(pyproject\.toml|requirements[^/]*\.txt)$' <<<"$files" && out="$out,python"
   while IFS= read -r f; do
@@ -426,7 +430,8 @@ $text" "$t"
     pending)
       [ $# -eq 0 ] || _l_die 1 "pending takes no argument"
       local n
-      n=$(_l_rows | awk -F'\t' '$7 == 1' | wc -l | tr -d ' ')
+      # a global lesson of another stack is no business of this repo, so it does not block it (local and repo are its own)
+      n=$(_l_rows | awk -F'\t' '$7 == 1 && ($1 != "global" || $8 == 1)' | wc -l | tr -d ' ')
       echo "$n"
       [ "$n" = 0 ]
       ;;
@@ -474,7 +479,7 @@ $text" "$t"
       local up
       up=$(_l_up "$L_SCOPE")
       [ -n "$up" ] || _l_die 1 "$L_SCOPE:$L_ID is in the global store already: there is no store above"
-      _l_move "$up" "$(_l_field 5)"
+      _l_move "$up" "$up" # the `to` becomes the store it reaches: a lesson moved up rests there, no longer pending
       ;;
     promote)
       local ref="" to="" yes=""
@@ -523,7 +528,7 @@ $text" "$t"
             echo "in $config; ask the person, then run again with --yes"
             exit 3
           fi
-          _l_writable "$config"
+          _l_writable "$config"; _l_writable "$L_FILE" # both before either is touched: the drop below must not fail after the put
           local t
           t=$(mktemp)
           _l_check_line "$text" "$config" >"$t"
