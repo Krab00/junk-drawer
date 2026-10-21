@@ -45,6 +45,7 @@ export const S = {
   last: '', // the last measurement as the log wrote it (without its time), for /junkd:ahandoff status; '' = none yet
   lastAt: 0,
   armedAt: null as number | null,
+  external: null as string | null, // a handoff file the main loop wrote while armed and idle, not asked for by the loop; the turn end follows it
   route: 'auto' as Route,
   note: '',
   paneOpen: false,

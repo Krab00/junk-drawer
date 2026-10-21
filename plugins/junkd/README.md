@@ -418,11 +418,12 @@ baseline, so threshold 300 at 350k used hands off at the end of that turn. `/jun
 `$.junkd.set`) takes effect at once: the next measurement compares with the new limit, the log gets a line with
 `note=rearmed`, and a toast says `ahandoff: threshold now 150k`. The baseline of the window is not reset by the change.
 
-**Any handoff written while the loop is armed continues the chain**, whoever asked for it: the loop's own ask, you
-telling the model to write one, or `/junkd:handoff` by hand. At the turn end the loop finds a handoff file written since
-it was armed that it did not record (it lists the handoffs folder once per idle turn), logs `decision=fire:external-handoff`
-and runs the same `/clear`, `/junkd:handon <id>` and continuation as after its own ask. The 3-tries cap below counts only
-the loop's own asks. A handoff written while the loop is off does nothing, and a file older than the arming is not taken.
+**A handoff this session writes while the loop is armed continues the chain**, whoever asked for it: the loop's own ask,
+you telling the model to write one, or `/junkd:handoff` by hand. When the main loop of this session Writes a handoff file
+while the loop is idle, the turn end logs `decision=fire:external-handoff` and runs the same `/clear`, `/junkd:handon <id>`
+and continuation as after its own ask. The handoffs folder is shared by every session, so a file another session wrote, or
+a subagent of this one, is never taken: only the Write the main loop made counts. The 3-tries cap below counts only the
+loop's own asks. A handoff written while the loop is off does nothing.
 
 **A `/clear` that does not happen is retried.** The cycle's `/clear` is issued and logged (`decision=cycle:clear-issued`).
 If the host does not answer within 10 seconds, the call is rejected (it threw), or it answers with no text (a hook above
@@ -432,9 +433,14 @@ next turn end it logs `cycle:retry-clear` and issues the `/clear` again; after 3
 logs `give-up:clear`, toasts `ahandoff: /clear failed 4 times — disarmed` and disarms the loop. A `/clear` that works resets
 the count.
 
-A handoff the model does not write is asked for at most 3 times in all (the firing turn's ask is the first); after the
+A handoff the model does not write is asked for at most 3 times in all (the firing turn's ask is the first, whether the
+firing is a turn end, a tool call's deny or the pane's `n`); after the
 third miss the loop disarms, logs `decision=give-up:3-tries` and toasts `ahandoff: handoff not written after 3 tries —
-disarmed`. A written handoff gives the next cycle its 3 tries again.
+disarmed`. A written handoff gives the next cycle its 3 tries again, and so does arming or disarming the loop.
+
+A threshold the window cannot hold (300 on a 200k window) never fires: arming the loop, or the first measurement of a
+window, says so in a toast (`ahandoff: threshold 300k is not below the 200k window — it will never fire, lower it`) and
+in the pane's footer.
 
 A reload of the plugin (a change in the `/config` menu, `/reload-plugins`, a save in a watched `--plugin-dir`
 folder) starts the module over; the armed loop, its prompt and its baseline come back from `$.state` (a toast says
