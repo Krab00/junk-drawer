@@ -1123,12 +1123,15 @@ re-point the line at each session start: the one started last wins. The statusli
 (`config: pluginConfigs junkd@inline`) and warns `two junkd configs: <key> wins` when another `junkd@` entry exists
 in the file or the wired command reads a different one.
 
-#### The line follows the switch within a turn
+#### The line follows the switch
 
 Turning the row off (`/junkd:statusline off`, the `a` key of the pane, `/config` → junkd → `statusline_enabled`, or
 `$.junkd.set`) removes `statusLine` from settings.json and the copy `~/.claude/junkd/statusline.sh`; on writes both
-again. Claude Code reads `statusLine` from settings.json live, so the line appears or goes within a turn, with no
-restart. One trap lived here: Claude Code keeps its own copy of settings.json and writes it back whole when a `/config`
+again. Claude Code reads `statusLine` from settings.json live: measured on 2.1.306, the line goes or comes back about
+a second and a half after the flip, with no prompt sent and no restart. One case waits for the next turn: a line written
+for the first time by the session start (a fresh install, or an update that changes the command) is not drawn until
+Claude Code has read the file again, which it does at its next turn. junkd calls nothing to make it redraw sooner: the
+engine's typings have no call for the status line, and a poll is not added. One trap lived here: Claude Code keeps its own copy of settings.json and writes it back whole when a `/config`
 row changes, so a line the script had just removed came back with the row's write (and a line it had just written was
 lost), leaving the row off and the line drawn by a script that was gone. The row's write now waits until Claude Code
 has read the file the script changed (`$.settings.read` shows its copy; the wait gives up after 5 s), and after the
@@ -1144,6 +1147,26 @@ The junkd pane shows `statusline_enabled`; its `settings ▸` opens the statusli
 switch per segment (`b`–`g`), and a preview of the line for your choice (the renderer run on a sample session:
 model "preview", the project folder, 61k of a 200k context used, the rate limits at 12% and 33%; drawn without its
 colors). `q` closes it; `$.junkd.open({ pane: 'statusline' })` toggles it.
+
+#### The pane after a flip
+
+Every write of a row (a click, `a`–`g`, `/config`) makes Claude Code read `pluginConfigs` again and load junkd's module anew
+while the pane is still on the screen. The new copy starts with nothing in memory and takes the pane back at once: it finds
+`statusline` among the panes Claude Code has up, draws the switches, the key row and the preview from the files, and shows
+the note of the flip (kept in the plugin's `$.store` for 10 s, since the copy that wrote the row is cancelled before it can
+say how it went). Before 0.11.5 none of this happened: after the first flip the `wired` switch read off while the line was
+on, the preview read `(nothing to draw)`, `/junkd:statusline` opened a pane that was already up, and the `config:` row was
+gone, so every row below it moved up by one and a click aimed where a row had been hit its neighbour (the last one, nothing).
+The `config:` row is now drawn from the first frame, whatever has been read.
+
+A press on a switch is served by the module's `ui.press` hook, not by the closure of the drawing (that closure is gone for
+a moment after a reload), and flips the row as it stands when the press is served, not as the drawing held it. It waits for
+a script of the session start that is still rewriting settings.json, or its row is lost in the rewrite. While the wired
+switch is being applied (it waits up to 5 s for Claude Code to read the file, and the write that ends the wait cancels what
+the old copy still waits for) a press on any switch is refused with a note, `press again in a moment`. The limit that is
+left is Claude Code's: after a write it takes about a tenth of a second to load the module, and a press that lands in that
+moment can be dropped, so two presses less than about 0.3 s apart can lose one. A second click within half a second of
+the one before is a double click to the terminal (it selects text), not a press.
 
 ### Hosts
 
