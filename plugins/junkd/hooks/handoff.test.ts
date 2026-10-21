@@ -1975,7 +1975,58 @@ test('external handoffs leave the 3-tries cap alone: five in a row keep the loop
     }
     expect(bodies(rec).filter(l => l.includes('give-up'))).toEqual([])
     expect(rec.toasts.filter(t => /not written after/.test(t))).toEqual([])
+    // and the loop's own asks still get all 3 tries after them
+    rec.tokens = 400_000
+    rec.commands.length = 0
+    for (let i = 0; i < 4; i++) {
+      await turn($)
+      await clock.advance(1000)
+    }
+    expect(rec.commands.filter(c => c === 'junkd:handoff')).toHaveLength(3)
+    expect(bodies(rec).some(l => l.includes('give-up:3-tries'))).toBe(true)
   } finally { undrop() }
+})
+
+test('the loop\'s own handoff is on disk when its turn ends: cycle:continue, not an external handoff', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  try {
+    await start($)
+    await ahandoff($, '')
+    rec.tokens = 400_000
+    await turn($) // fire: the loop asks for the handoff
+    await clock.advance(1000)
+    await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_0123abcd.md`, content: '# h' })
+    drop('0123abcd') // and the file is there, as it is for real
+    await turn($)
+    expect(lastLog(rec)).toContain('decision=cycle:continue')
+    expect(bodies(rec).some(l => l.includes('external'))).toBe(false)
+    await handonRuns($, rec, clock, [handonOf('0123abcd')])
+    expect(rec.commands.filter(c => c.startsWith('junkd:handon'))).toEqual(['junkd:handon 0123abcd'])
+  } finally { undrop() }
+})
+
+test('the pane shows the used tokens against the limit in tokens, and its Threshold field says thousands of tokens', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await handoff($, 'auto')
+  await handoff($, 'panel') // auto opened it; this closes it
+  await handoff($, 'panel')
+  rec.tokens = 120_000
+  await $.tool.call(READ)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'junkd', surface, ...PANE })
+    await hotkey(ui, '1')
+    const t = await texts(ui)
+    expect(t).toContain('120k')
+    expect(t).toContain('/ 300k')
+    expect(t).toContain('120k of 1000k tokens · handoff at 300k · 180k left')
+    expect(t).toContain('threshold 300k')
+    await hotkey(ui, '3')
+    expect(await texts(ui)).toContain('thousand tokens (300 = 300k)')
+    await ui.unmount()
+  }
 })
 
 test('the loop\'s own ask still gives up after 3 tries (the cap counts the loop\'s asks only)', TOKENS_300, async ($, on) => {
