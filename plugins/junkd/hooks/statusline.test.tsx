@@ -1072,3 +1072,47 @@ test('the second look of the start draws the pane again when it wires the line o
   expect(previews(rec), 'the pane was drawn from the files again').toHaveLength(2)
   expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' on ')
 })
+test('a press on a switch is served by the module\'s hook and never reaches the closure beneath; the other buttons pass on', W, async ($, on) => {
+  const reached: string[] = []
+  on('ui.press', (_$, e, next) => { reached.push(e.element); return next(e) })
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  for (const f of FIELDS) await pane.press({ key: `set:${f}` })
+  expect(rec.config).toHaveLength(FIELDS.length)
+  expect(reached, 'the hook took every switch').toEqual([])
+  await pane.press({ key: 'close' })
+  expect(reached, 'the × is not ours to take').toEqual(['close'])
+  expect(rec.log.at(-1)).toBe('ui.close statusline')
+})
+test('a segment that ends while the wired switch is being applied does not end the refusal', W, async ($, on) => {
+  let open = () => {}
+  const gate = new Promise<void>(r => { open = r })
+  on('config.set', { key: 'junkd.statusline_ctx' }, async (_$, e, next) => { await gate; return next(e) }) // the segment's write is slow
+  const rec = world(on, { copy: SCRIPT, hostLag: 1, holdSettle: true })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  void pane.press({ key: 'set:ctx' }) // begins first, ends before the wired switch
+  void pane.press({ key: 'set:enabled' }) // runs off, then waits for the host: held
+  await new Promise(r => setTimeout(r, 30))
+  open()
+  await new Promise(r => setTimeout(r, 30)) // the segment is done, the wired switch still waits
+  expect(rec.config.map(c => c.key)).toEqual(['junkd.statusline_ctx'])
+  await pane.press({ key: 'set:model' })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✗ the wired switch is still being applied: press again in a moment')
+  expect(rec.config.map(c => c.key)).toEqual(['junkd.statusline_ctx'])
+  rec.releaseSettle()
+  await new Promise(r => setTimeout(r, 30))
+  expect(rec.config.map(c => c.key)).toEqual(['junkd.statusline_ctx', 'junkd.statusline_enabled'])
+})
+test('the second look of the start with nothing to wire draws nothing again', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, panes: [{ id: 'statusline' }], settings: {} }) // a copy and no line: the start wires
+  await start($)
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['on'])
+  const before = previews(rec).length
+  await rec.verify() // the script wrote the line: the second look finds nothing to do
+  expect(setups(rec)).toHaveLength(1)
+  expect(previews(rec)).toHaveLength(before)
+})
