@@ -105,7 +105,8 @@ export const isTaskFile = (name: string) => /\.md$/i.test(name) && !name.startsW
 
 export type Verdicts = { round: number; ac?: [number, number]; acx?: [number, number]; note?: string }
 
-// The last `## Verification round N` section: N, and from its `| Criterion | … | Verdict |` table the AC and the ACX
+// The last `## Verification` section (`## Verification round N`, or the spec's `## Verification — <branch>` with N = 1):
+// N, and from its `| Criterion | … | Verdict |` table the AC and the ACX
 // rows (an ACX row is one whose criterion starts with ACX, an AC row one starting with AC and a digit), each as
 // [passed, all]. A verdict passes when it starts with PASS; FAIL and PM-REVIEW are named in the note. undefined: no
 // such section.
@@ -114,10 +115,10 @@ export function parseVerification(text: string): Verdicts | undefined {
   let at = -1
   let round = 0
   lines.forEach((l, i) => {
-    const m = /^##\s+Verification round\s+(\d+)\b/i.exec(l)
+    const m = /^##\s+Verification\b(?:\s+round\s+(\d+)\b)?/i.exec(l)
     if (m) {
       at = i
-      round = Number(m[1])
+      round = m[1] ? Number(m[1]) : 1
     }
   })
   if (at < 0) return undefined
@@ -155,8 +156,9 @@ export function parseVerification(text: string): Verdicts | undefined {
   return { round, ...(ac[1] ? { ac } : {}), ...(acx[1] ? { acx } : {}), ...(note ? { note: `round ${round}: ${note}` } : {}) }
 }
 
-// _lessons.md: `## T<n> (date)` headings, each with its paragraph; the lesson is the paragraph's first sentence.
-// Newest first (the file appends).
+// _lessons.md: `## T<n> (date)` or `## L<n> (date) … · from: T<n>` headings, each with its paragraph; the lesson is the
+// paragraph's first sentence, its task the heading's `from:` when it has one (else the heading's first word). Newest
+// first (the file appends).
 export function parseLessons(text: string): Lesson[] {
   const out: Lesson[] = []
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
@@ -172,7 +174,8 @@ export function parseLessons(text: string): Lesson[] {
       body += (body ? ' ' : '') + lines[j]!.trim()
     }
     const sentence = /^(.*?[.!?])(\s|$)/.exec(body)?.[1] ?? body
-    if (sentence) out.push({ task: m[1]!, text: sentence })
+    const from = /\bfrom:\s*([^\s·,]+)/.exec(lines[i]!)?.[1]
+    if (sentence) out.push({ task: from ?? m[1]!, text: sentence })
   }
   return out.reverse()
 }
