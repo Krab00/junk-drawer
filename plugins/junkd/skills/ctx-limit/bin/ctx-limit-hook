@@ -17,13 +17,13 @@ thrf="$cfg/ctx-limit-threshold"
 thr=$(cat "$thrf"); case "$thr" in ''|*[!0-9]*) exit 0 ;; esac
 
 input=$(cat)
-# Escape hatches: the control and handoff commands pass even over the limit, else the guard could lock you out
+# Escape hatches: the control and handoff commands, /clear and /compact (the block message names it) pass even over the limit, else the guard could lock you out
 # (no /junkd:ctx-limit off, no /junkd:handoff to recover). Slash commands arrive in .prompt as
 # "/<plugin>:<command> [args]" (e.g. /junkd:ctx-limit 300k); /ctx-limit, /handoff and /handon are the OpenCode
 # wrappers' names. Whole command/skill names only, so lookalikes such as /ctx-limiter or $handoffs do not pass.
 p=$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)
 p="${p#"${p%%[![:space:]]*}"}"   # trim leading whitespace
-if [[ "$p" =~ ^(/junkd:(ctx-limit|handoff|handon|ahandoff)|/ctx-limit|/handoff|/handon|/clear|/skill:(ctx-limit|handoff|handon))([[:space:]]|$) ]] ||
+if [[ "$p" =~ ^(/junkd:(ctx-limit|handoff|handon|ahandoff)|/ctx-limit|/handoff|/handon|/clear|/compact|/skill:(ctx-limit|handoff|handon))([[:space:]]|$) ]] ||
    [[ "$p" =~ ^(\$ctx-limit|\$handoff)([[:space:]]|$) ]] ||
    [[ "$p" =~ ^Use[[:space:]]+(\$ctx-limit|\$handoff)([[:space:]]|$) ]]; then
     exit 0
