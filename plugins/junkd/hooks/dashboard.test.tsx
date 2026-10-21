@@ -89,14 +89,19 @@ test('parseLessons: one lesson per `## T<n>` heading, its first sentence, newest
   expect(parseLessons(blocks)).toEqual([{ task: 'L2', text: 'No from here.' }, { task: 'T2', text: 'A ported script.' }])
 })
 
-test('parseVerification: the spec\'s `## Verification — <branch>` heading is round 1; a later round heading wins; `Verifications` is none', () => {
+test('parseVerification: the spec\'s `## Verification — <branch>` heading is round 1, the n-th such heading round n; a later round heading wins; `Verifications` is none', () => {
   const rows = ['| AC1 a | x | PASS |', '| AC2 b | x | FAIL |', '| ACX1 c | x | PM-REVIEW |']
   const table = ['| Criterion | Evidence | Verdict |', '|---|---|---|', ...rows, ''].join('\n')
   expect(parseVerification(`## Verification — task/T5-thing\n\n${table}`)).toEqual({ round: 1, ac: [1, 2], acx: [0, 1], note: 'round 1: FAIL: AC2 · PM-REVIEW: ACX1' })
   expect(parseVerification(`## Verification\n\n${table}`)).toMatchObject({ round: 1, ac: [1, 2] })
   expect(parseVerification(`## Verification — b\n\n${table}\n## Verification round 2\n\n| Criterion | Verdict |\n|-|-|\n| AC1 a | PASS |\n`)).toEqual({ round: 2, ac: [1, 1] })
-  expect(parseVerification(`## Verification round 1\n\n${table}\n## Verification — b\n\n| Criterion | Verdict |\n|-|-|\n| AC1 a | PASS |\n`)).toEqual({ round: 1, ac: [1, 1] })
+  expect(parseVerification(`## Verification round 1\n\n${table}\n## Verification — b\n\n| Criterion | Verdict |\n|-|-|\n| AC1 a | PASS |\n`)).toEqual({ round: 2, ac: [1, 1] })
   expect(parseVerification(`## Verifications\n\n${table}`)).toBe(undefined)
+  // the coordinator appends the same branch heading each re-verify: the n-th is round n; an explicit round keeps its N
+  const again = (n: number) => `## Verification — task/T5-thing\n\n| Criterion | Verdict |\n|-|-|\n| AC1 a | ${n === 2 ? 'PASS' : 'FAIL'} |\n\n`
+  expect(parseVerification(again(1) + again(2))).toEqual({ round: 2, ac: [1, 1] })
+  expect(parseVerification(again(1) + again(2) + again(3))).toMatchObject({ round: 3, ac: [0, 1], note: 'round 3: FAIL: AC1' })
+  expect(parseVerification(again(1) + '## Verification round 7\n\n| Criterion | Verdict |\n|-|-|\n| AC1 a | PASS |\n')).toEqual({ round: 7, ac: [1, 1] })
 })
 
 test('orchRoot climbs out of a task worktree to the checkout with .orch; relTo draws a path inside the root relative', () => {
