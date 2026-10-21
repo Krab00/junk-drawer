@@ -1,6 +1,6 @@
 // The panel's three tabs (Auto, Handoffs, Settings) as `View`s: each reads `S` and calls
 // `c.api`, handoff.tsx draws the tabs, the rule and the footer around what they return.
-import { DEFAULT_PROMPT, S, limit, type Entry, type Route } from './handoff-lib'
+import { DEFAULT_PROMPT, S, kTokens, limit, thresholdText, type Entry, type Route } from './handoff-lib'
 import { Chosen, Field, Filled, Hidden, P, Rule, Spacer, fit, line, when, type Ctx, type View } from './handoff-ui'
 
 
@@ -9,7 +9,6 @@ const draft: Record<string, string | null> = {}
 
 const say = (c: Ctx, note: string) => { S.note = note; c.api.refresh() }
 const hhmm = (ms: number) => when(new Date(ms).toISOString())
-const k = (n: number) => `${Math.round(n / 1000)}k`
 const byId = (id: string) => S.entries?.find((e) => e.id === id)
 
 // A section title as the mock: bold secondary, an optional secondary subtitle.
@@ -41,17 +40,17 @@ const Switch = ({ c, k, hotkey, on, flip }: { c: Ctx; k: string; hotkey: string;
 
 // ------------------------------------------------------------------ Auto
 
-// The bar's colour as the segment's: ok, warn within 10 points of the threshold, bad over it.
-const level = () => (S.percent >= limit() ? P.bad : S.percent >= limit() - 10 ? P.warn : P.ok)
+// The bar's colour as the segment's: ok, warn within 10% of the limit, bad over it.
+const level = () => (S.tokens >= limit() ? P.bad : S.tokens >= limit() * 0.9 ? P.warn : P.ok)
 
 const PHASE: Record<string, string> = { idle: 'idle, watching', handoff: 'writing the handoff…', clear: 'clearing…', resume: 'resuming…' }
 
 const auto: View = (c) => {
   const { Box, Text, Button } = c.ui
-  const width = Math.max(10, S.cols - 20) // ponytail: 2 indent + ` 100% / 85%` + the pane's edges
-  const full = Math.min(width, Math.round((width * S.percent) / 100))
-  const window = S.percent > 0 ? (S.tokens * 100) / S.percent : 0
-  const at = (window * limit()) / 100
+  const width = Math.max(10, S.cols - 20) // ponytail: 2 indent + ` 100% / 300k` + the pane's edges
+  const window = S.window
+  const at = limit()
+  const full = Math.min(width, window > 0 ? Math.round((width * S.tokens) / window) : 0)
   const next = S.checkEvery - (S.calls % S.checkEvery)
   // what continueFrom() in handoff.tsx will actually send
   const cont = S.prompt
@@ -78,12 +77,12 @@ const auto: View = (c) => {
           <Box flexDirection="row" paddingLeft={2} height={1} overflow="hidden">
             <Text color={level()}>{'█'.repeat(full)}</Text>
             <Text color={P.dim}>{'█'.repeat(width - full)}</Text>
-            <Text>{` ${S.percent}%`}</Text>
-            <Text color={P.secondary}>{` / ${limit()}%`}</Text>
+            <Text>{` ${kTokens(S.tokens)}`}</Text>
+            <Text color={P.secondary}>{` / ${kTokens(at)}`}</Text>
           </Box>
           <Box paddingLeft={2}>
             <Text color={P.secondary} wrap="truncate">
-              {window ? `${k(S.tokens)} of ${k(window)} tokens · handoff at ${k(at)} · ${k(Math.max(0, at - S.tokens))} left` : 'no measure yet'}
+              {window ? `${kTokens(S.tokens)} of ${kTokens(window)} tokens · handoff at ${kTokens(at)} · ${kTokens(Math.max(0, at - S.tokens))} left` : 'no measure yet'}
             </Text>
           </Box>
           <Box paddingLeft={2}>
@@ -130,7 +129,7 @@ const auto: View = (c) => {
         </Box>
       </Box>
     ),
-    note: S.armed ? `✓ armed · threshold ${S.threshold}% · continues with: ${S.prompt}` : 'off · a arms the loop',
+    note: S.armed ? `✓ armed · threshold ${thresholdText()} · continues with: ${S.prompt}` : 'off · a arms the loop',
     keys: [['tab', 'move'], [S.armed ? 'o' : 'a', S.armed ? 'off' : 'arm'], ['n', 'handoff now'], ['r', 'resume'], ['p', 'prompt']],
   }
 }
@@ -271,7 +270,7 @@ const handoffs: View = (c) => {
 // ------------------------------------------------------------------ Settings
 
 type NumField = 'threshold' | 'checkEvery' | 'staleDays'
-const RANGE: Record<NumField, [number, number]> = { threshold: [1, 99], checkEvery: [1, 1000], staleDays: [1, 3650] }
+const RANGE: Record<NumField, [number, number]> = { threshold: [1, 1_000_000], checkEvery: [1, 1000], staleDays: [1, 3650] }
 
 // Enter in a number field: a whole number in range is saved, else the note says why.
 function saveNum(c: Ctx, f: NumField, v: string) {
@@ -303,7 +302,7 @@ const settings: View = (c) => {
             <Switch c={c} k="enabled" hotkey="u" on={S.enabled} flip={() => void c.api.set('enabled', !S.enabled)} />
             <Text color={P.secondary}> off = manual /junkd:handoff only</Text>
           </Row>
-          <Num c={c} f="threshold" hotkey="t" label="Threshold" hint="% of the context window" />
+          <Num c={c} f="threshold" hotkey="t" label="Threshold" hint="thousand tokens (300 = 300k) · 100 or less = % of the window" />
           <Num c={c} f="checkEvery" hotkey="e" label="Check every" hint="tool calls" />
           <Row c={c} w={22} label="Arm at session start">
             <Switch c={c} k="auto-on" hotkey="s" on={autoOn()} flip={() => void c.api.set('autoOn', !autoOn())} />
@@ -329,7 +328,7 @@ const settings: View = (c) => {
           <Row c={c} w={22} label="Segment">
             <Switch c={c} k="segment" hotkey="g" on={S.segment} flip={() => void c.api.set('segment', !S.segment)} />
           </Row>
-          <Row c={c} w={22}><Text color={P.secondary}>{`🪃 ${S.percent}% · click opens or closes this panel`}</Text></Row>
+          <Row c={c} w={22}><Text color={P.secondary}>{`🪃 ${kTokens(S.tokens)}/${kTokens(limit())} · click opens or closes this panel`}</Text></Row>
         </Box>
         <Box flexDirection="column">
           <Title c={c} text="Version" />

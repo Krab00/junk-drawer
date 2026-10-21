@@ -31,9 +31,9 @@
     },
     "handoff_threshold": {
       "type": "number",
-      "title": "Auto handoff: context threshold (%)",
-      "description": "Past this context usage the auto handoff kicks in (handoff → /clear → /junkd:handon → continue).",
-      "default": 85
+      "title": "Auto handoff: context threshold (thousand tokens)",
+      "description": "Past this many thousand tokens of context (300 = 300k) the auto handoff kicks in (handoff → /clear → /junkd:handon → continue). 100 or less is read as a percent of the window (old configs).",
+      "default": 300
     },
     "handoff_checkEvery": {
       "type": "number",

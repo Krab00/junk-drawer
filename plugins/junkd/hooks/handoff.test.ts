@@ -406,9 +406,10 @@ test('the 🪃 segment sits beside ✚ junkd in the prompt line, shows usage or 
   await handoff($, 'auto do X')
   await clock.advance(1000)
   await handoff($, 'panel') // auto opened it; close it so the press below opens it again
+  await $.tool.call(READ) // a measurement: 10% of the 200k window = 20k used; the legacy 80 is 160k
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'junkd', surface, ...HINT })
-    const seg = await ui.find({ type: 'Button', text: /🪃 \d+%/ })
+    const seg = await ui.find({ type: 'Button', text: '🪃 20k/160k' })
     expect(seg?.key).toBe('handoff-segment')
     const opened = rec.opened.length
     const closed = rec.closed.length
@@ -575,7 +576,7 @@ test('$.junkd.set writes junkd.handoff_<field> through $.config and get reads it
   expect(rec.config.at(-1)).toEqual({ key: 'junkd.handoff_segment', value: false })
   expect(await get($, 'segment')).toBe(false)
 
-  // exact bounds: 100 and 1 are in, -5 (and 0, 101 below) are out; 'on' is a true
+  // exact bounds: 100 and 1 are in, -5 (and 0 below) are out; 'on' is a true
   expect(await set($, 'threshold', 100)).toBe(100)
   expect(await set($, 'staleDays', 1)).toBe(1) // checkEvery is the row the deny hook below locks
   expect(await set($, 'autoOn', 'on')).toBe(true)
@@ -584,11 +585,12 @@ test('$.junkd.set writes junkd.handoff_<field> through $.config and get reads it
   ])
   await expect(set($, 'threshold', -5)).rejects.toThrow(/not a valid threshold/)
   expect(await get($, 'threshold')).toBe(100)
+  expect(await set($, 'threshold', 101)).toBe(101) // 101k tokens: a token count is not capped at 100
   expect(await set($, 'threshold', 70)).toBe(70)
 
   const writes = rec.config.length
   await expect(set($, 'threshold', 'abc')).rejects.toThrow(/not a valid threshold/)
-  await expect(set($, 'threshold', 101)).rejects.toThrow(/not a valid threshold/)
+  await expect(set($, 'threshold', 0)).rejects.toThrow(/not a valid threshold/)
   await expect(set($, 'checkEvery', 0)).rejects.toThrow(/not a valid checkEvery/)
   await expect(set($, 'threshold', 70, 'project')).rejects.toThrow(/scope project/)
   await expect(set($, 'nope', 1)).rejects.toThrow(/no setting handoff_nope/)
@@ -619,7 +621,7 @@ test('$.junkd.set and get reach every handoff row: the value lands in its own ro
   }
 })
 
-test('$.junkd.set: checkEvery is a whole number 1 or more, threshold above 0 up to 100, staleDays above 0; what is stored is what get answers', WITH_CALLER, async ($, on) => {
+test('$.junkd.set: checkEvery is a whole number 1 or more, threshold above 0 (thousand tokens, no cap), staleDays above 0; what is stored is what get answers', WITH_CALLER, async ($, on) => {
   const rec = world(on)
   await start($)
   const refused = async (field: string, value: unknown, holds: unknown) => {
@@ -642,13 +644,15 @@ test('$.junkd.set: checkEvery is a whole number 1 or more, threshold above 0 up 
   await refused('checkEvery', -1, 1)
   await taken('checkEvery', 3, 3)
   await taken('checkEvery', '7', 7)
-  // threshold: 0 out, 1 in, 100 in, 101 out; a fraction is kept as given (no rounding anywhere)
-  await refused('threshold', 0, 85)
+  // threshold (thousand tokens): 0 out, 1 in, 100 in, 101 and 300 in (no cap); a fraction is kept as given (no rounding anywhere)
+  await refused('threshold', 0, 300)
   await taken('threshold', 1, 1)
   await taken('threshold', 100, 100)
-  await refused('threshold', 101, 100)
-  await refused('threshold', 100.5, 100)
-  await taken('threshold', 85.5, 85.5)
+  await taken('threshold', 101, 101)
+  await taken('threshold', 100.5, 100.5)
+  await refused('threshold', -1, 100.5)
+  await refused('threshold', 'abc', 100.5)
+  await taken('threshold', 300, 300)
   // staleDays: 0 and below out; a fraction kept as given
   await refused('staleDays', 0, 30)
   await refused('staleDays', -3, 30)
@@ -656,11 +660,11 @@ test('$.junkd.set: checkEvery is a whole number 1 or more, threshold above 0 up 
   await taken('staleDays', 0.5, 0.5)
 })
 
-test('options the engine hands at load that set would refuse fall back to the defaults', { ...WITH_CALLER, options: { handoff_checkEvery: 2.6, handoff_threshold: 101, handoff_staleDays: 0 } }, async ($, on) => {
+test('options the engine hands at load that set would refuse fall back to the defaults', { ...WITH_CALLER, options: { handoff_checkEvery: 2.6, handoff_threshold: 0, handoff_staleDays: 0 } }, async ($, on) => {
   world(on)
   await start($)
   expect(await get($, 'checkEvery')).toBe(5)
-  expect(await get($, 'threshold')).toBe(85)
+  expect(await get($, 'threshold')).toBe(300)
   expect(await get($, 'staleDays')).toBe(30)
 })
 
@@ -940,11 +944,11 @@ test('the /config menu write of junkd.handoff_enabled lands live too, read as se
   expect(await status($)).toMatchObject({ armed: true })
 })
 
-test('the /config menu refuses what set refuses: threshold 150, checkEvery 2.6 and the rest; the row and get stay', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
+test('the /config menu refuses what set refuses: threshold 0, checkEvery 2.6 and the rest; the row and get stay', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
   const rec = world(on)
   await start($)
   for (const [field, value, holds] of [
-    ['threshold', 150, 80], ['threshold', 101, 80], ['threshold', 0, 80], ['threshold', 'abc', 80],
+    ['threshold', 0, 80], ['threshold', -5, 80], ['threshold', 'abc', 80],
     ['checkEvery', 2.6, 1], ['checkEvery', 0, 1], ['staleDays', 0, 30], ['staleDays', -1, 30],
   ] as const) {
     const writes = rec.config.length
@@ -952,8 +956,9 @@ test('the /config menu refuses what set refuses: threshold 150, checkEvery 2.6 a
     expect(rec.config.length, `${field} ${value} reached the row`).toBe(writes)
     expect(await get($, field), `${field} ${value}`).toBe(holds)
   }
-  // the bounds themselves go through
+  // the bounds themselves go through, and a token count above 100
   expect(await menu($, 'threshold', 100)).toEqual({ value: 100 })
+  expect(await menu($, 'threshold', 150)).toEqual({ value: 150 })
   expect(await menu($, 'checkEvery', 1)).toEqual({ value: 1 })
   // a handoff row the module has no field for is left to the host
   expect(await menu($, 'nope', 3)).toEqual({ value: 3 })
@@ -965,8 +970,8 @@ test('the /config menu hook of handoff matches only the junkd.handoff_* rows', {
   const rec = world(on)
   await start($)
   for (const key of ['handoff.threshold', 'junkd.handoffthreshold', 'junkd.handoff.threshold', 'xjunkd.handoff_threshold', 'other.junkd.handoff_threshold', 'junkd.handoff_threshold_x', 'junkd.handoff_x_threshold', 'junkd.handoff_.threshold', 'junkd.orch_handoff_threshold']) {
-    expect(await call($, 'menu', { key, value: 150 }), key).toEqual({ value: 150 }) // not refused as threshold 150 would be
-    expect(rec.config.at(-1), key).toEqual({ key, value: 150 })
+    expect(await call($, 'menu', { key, value: 0 }), key).toEqual({ value: 0 }) // not refused as threshold 0 would be
+    expect(rec.config.at(-1), key).toEqual({ key, value: 0 })
     expect(await get($, 'threshold'), key).toBe(80)
   }
   for (const key of ['handoff.enabled', 'junkd.tldr_enabled', 'junkd.orch_enabled']) {
@@ -974,7 +979,7 @@ test('the /config menu hook of handoff matches only the junkd.handoff_* rows', {
     expect(await get($, 'enabled'), key).toBe(true)
   }
   // and the handoff row itself is refused as set refuses it
-  expect((await menu($, 'threshold', 150)).deny).toMatch(/not a valid threshold/)
+  expect((await menu($, 'threshold', 0)).deny).toMatch(/not a valid threshold/)
 })
 
 test('a /config menu write of every field lands live: get answers it at once', { ...WITH_CALLER, ...OPTIONS }, async ($, on) => {
@@ -1123,9 +1128,9 @@ const TURN = { answer: 'done', durationMs: 1, isAborted: false, turnId: 't', rea
 const turn = ($: Engine) => $.turn.complete(TURN)
 const measure = ($: Engine, percent: number) => $.session.measure({ context: usage(percent).context, rateLimits: [], changed: ['context'] })
 const passMeasure = (on: On) => on('session.measure', (_$, e) => ({ changed: e.changed }))
-// A log line without its time: `<hook> percent=.. limit=.. armed=.. fresh=.. decision=.. base=.. threshold=.. phase=.. window=..`.
+// A log line without its time: `<hook> percent=.. used=.. limit=.. armed=.. fresh=.. decision=.. base=.. threshold=.. phase=.. window=..`.
 const bodies = (rec: { logs: { line: string }[] }) => rec.logs.map(l => l.line.replace(/^\S+ /, ''))
-const LOG_LINE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z (tool\.call|turn\.complete|session\.measure|session\.start) percent=\d+ limit=\d+ armed=(true|false) fresh=(true|false) decision=(fire|skip:[a-z-]+|cycle:[a-z-]+) base=\d+ threshold=\d+ phase=\w+ window=\d+( note=\S+)?$/
+const LOG_LINE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z (tool\.call|turn\.complete|session\.measure|session\.start) percent=\d+ used=\d+ limit=(\d+|Infinity) armed=(true|false) fresh=(true|false) decision=(fire|skip:[a-z-]+|cycle:[a-z-]+) base=\d+ threshold=\d+ phase=\w+ window=\d+( note=\S+)?$/
 const THRESHOLD_5 = { options: { handoff_threshold: 5, handoff_checkEvery: 1 } }
 const READ = { tool: 'Read', file_path: '/tmp/a' } as const
 
@@ -1143,7 +1148,7 @@ test('percent 7 with threshold 5, armed after an earlier turn: the turn end hand
   await clock.advance(1000)
   await turn($) // the arming turn ends at 7%
 
-  expect(bodies(rec).at(-1)).toBe('turn.complete percent=7 limit=5 armed=true fresh=false decision=fire base=0 threshold=5 phase=idle window=200000')
+  expect(bodies(rec).at(-1)).toBe('turn.complete percent=7 used=14000 limit=10000 armed=true fresh=false decision=fire base=0 threshold=5 phase=idle window=200000 note=legacy-percent')
   await clock.advance(1000)
   expect(rec.commands).toContain('junkd:handoff') // the next turn writes the handoff
   expect(rec.logs.every(l => LOG_LINE.test(l.line)), rec.logs.map(l => l.line).join('\n')).toBe(true)
@@ -1157,9 +1162,9 @@ test('percent 4 with threshold 5: no handoff, and the log names the skip', THRES
   await clock.advance(1000)
   rec.percent = 4
   await turn($)
-  expect(bodies(rec).at(-1)).toBe('turn.complete percent=4 limit=5 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000')
+  expect(bodies(rec).at(-1)).toBe('turn.complete percent=4 used=8000 limit=10000 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000 note=legacy-percent')
   expect(denial(await $.tool.call(READ))).toBeUndefined()
-  expect(bodies(rec).at(-1)).toBe('tool.call percent=4 limit=5 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000')
+  expect(bodies(rec).at(-1)).toBe('tool.call percent=4 used=8000 limit=10000 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000 note=legacy-percent')
   await clock.advance(1000)
   expect(rec.commands).not.toContain('junkd:handoff')
   rec.percent = 5 // the threshold itself is enough
@@ -1174,7 +1179,7 @@ test('an armed loop measured while the window is not fresh keeps no baseline: th
   await start($)
   await ahandoff($, '')
   await measure($, 9)
-  expect(bodies(rec).at(-1)).toBe('session.measure percent=9 limit=5 armed=true fresh=false decision=skip:measure-only base=0 threshold=5 phase=idle window=200000')
+  expect(bodies(rec).at(-1)).toBe('session.measure percent=9 used=18000 limit=10000 armed=true fresh=false decision=skip:measure-only base=0 threshold=5 phase=idle window=200000 note=legacy-percent')
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
 })
 
@@ -1187,10 +1192,10 @@ test('a threshold the /config menu stores as a string is compared as a number', 
   await ahandoff($, '')
   rec.percent = 7 // '7' >= '10' as strings is true; as numbers it is not
   expect(denial(await $.tool.call(READ))).toBeUndefined()
-  expect(bodies(rec).at(-1)).toContain('percent=7 limit=10 armed=true fresh=false decision=skip:below-limit')
+  expect(bodies(rec).at(-1)).toContain('percent=7 used=14000 limit=20000 armed=true fresh=false decision=skip:below-limit')
   rec.percent = 9 // '9' >= '10' as strings is true too, at the turn end
   await turn($)
-  expect(bodies(rec).at(-1)).toContain('percent=9 limit=10 armed=true fresh=false decision=skip:below-limit')
+  expect(bodies(rec).at(-1)).toContain('percent=9 used=18000 limit=20000 armed=true fresh=false decision=skip:below-limit')
   rec.percent = 12
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
 })
@@ -1202,7 +1207,7 @@ test('a window with no fill yet (the host sends no percent) measures 0: skip, no
   await ahandoff($, '')
   rec.noFill = true
   expect(denial(await $.tool.call(READ))).toBeUndefined()
-  expect(bodies(rec).at(-1)).toBe('tool.call percent=0 limit=5 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000')
+  expect(bodies(rec).at(-1)).toBe('tool.call percent=0 used=0 limit=10000 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000 note=legacy-percent')
 })
 
 test('the log: <config dir>/junkd/handoff/<session>.log, appended; no session id, no write; a failed append never stops the loop', THRESHOLD_5, async ($, on) => {
@@ -1245,7 +1250,7 @@ test('a turn end with the loop off is logged; an unarmed tool call and an agent\
   mock.clock(on)
   await start($)
   await turn($)
-  expect(bodies(rec).at(-1)).toBe('turn.complete percent=0 limit=5 armed=false fresh=false decision=skip:disarmed base=0 threshold=5 phase=idle window=0')
+  expect(bodies(rec).at(-1)).toBe('turn.complete percent=0 used=0 limit=Infinity armed=false fresh=false decision=skip:disarmed base=0 threshold=5 phase=idle window=0 note=legacy-percent')
   const n = rec.logs.length
   await $.tool.call(READ)
   await $.turn.complete({ ...TURN, agentId: 'a1' } as never)
@@ -1275,7 +1280,7 @@ test('the whole cycle is logged: fire, the denied calls, the retry, the continue
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
   expect(bodies(rec).at(-1)).toContain('decision=fire')
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // denied while the handoff is due
-  expect(bodies(rec).at(-1)).toBe('tool.call percent=7 limit=5 armed=true fresh=false decision=skip:phase-handoff base=0 threshold=5 phase=handoff window=200000')
+  expect(bodies(rec).at(-1)).toBe('tool.call percent=7 used=14000 limit=10000 armed=true fresh=false decision=skip:phase-handoff base=0 threshold=5 phase=handoff window=200000 note=legacy-percent')
   await turn($) // the model wrote none
   expect(bodies(rec).at(-1)).toContain('decision=cycle:ask-handoff')
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
@@ -1284,12 +1289,12 @@ test('the whole cycle is logged: fire, the denied calls, the retry, the continue
   await clock.advance(1000) // clear → handon → continue: fresh until the first measurement of the new window
 
   await $.tool.call(READ)
-  expect(bodies(rec).at(-1)).toBe('tool.call percent=0 limit=5 armed=true fresh=true decision=skip:fresh base=0 threshold=5 phase=idle window=200000')
+  expect(bodies(rec).at(-1)).toBe('tool.call percent=0 used=0 limit=10000 armed=true fresh=true decision=skip:fresh base=0 threshold=5 phase=idle window=200000 note=legacy-percent')
   rec.percent = 13
   await turn($)
-  expect(bodies(rec).at(-1)).toBe('turn.complete percent=13 limit=5 armed=true fresh=true decision=skip:fresh base=0 threshold=5 phase=idle window=200000')
+  expect(bodies(rec).at(-1)).toBe('turn.complete percent=13 used=26000 limit=10000 armed=true fresh=true decision=skip:fresh base=0 threshold=5 phase=idle window=200000 note=legacy-percent')
   await measure($, 13)
-  expect(bodies(rec).at(-1)).toBe('session.measure percent=13 limit=18 armed=true fresh=false decision=skip:measure-only base=13 threshold=5 phase=idle window=200000 note=base-set,fresh-cleared')
+  expect(bodies(rec).at(-1)).toBe('session.measure percent=13 used=26000 limit=36000 armed=true fresh=false decision=skip:measure-only base=26000 threshold=5 phase=idle window=200000 note=base-set,fresh-cleared,legacy-percent')
   rec.percent = 17
   expect(denial(await $.tool.call(READ))).toBeUndefined() // growth counts from the baseline
   rec.percent = 18
@@ -1300,7 +1305,7 @@ test('the whole cycle is logged: fire, the denied calls, the retry, the continue
   await ahandoff($, '')
   rec.percent = 6
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
-  expect(bodies(rec).at(-1)).toContain('percent=6 limit=5')
+  expect(bodies(rec).at(-1)).toContain('percent=6 used=12000 limit=10000')
 })
 
 test('a fresh window no threshold can reach disarms the loop and the log says so', { options: { handoff_threshold: 90, handoff_checkEvery: 1 } }, async ($, on) => {
@@ -1323,12 +1328,12 @@ test('/junkd:ahandoff status: off or on, the limit, the last measurement and the
   mock.clock(on)
   await start($)
   const text = async () => ((await ahandoff($, 'status')) as { text: string }).text
-  expect(await text()).toBe(`handoff auto off — threshold 5% — limit 5% — last measurement: none yet — log: ${HOME}/.claude/junkd/handoff/sess-1.log`)
+  expect(await text()).toBe(`handoff auto off — threshold 5% — limit ? — last measurement: none yet — log: ${HOME}/.claude/junkd/handoff/sess-1.log`)
   await ahandoff($, '')
   rec.percent = 3
   await $.tool.call(READ)
   const t = await text()
-  expect(t).toMatch(/^handoff auto on — threshold 5% — limit 5% — last measurement: \d{4}-\d\d-\d\dT[\d:.]+Z tool\.call percent=3 limit=5 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000 — log: /)
+  expect(t).toMatch(/^handoff auto on — threshold 5% — limit 10k — last measurement: \d{4}-\d\d-\d\dT[\d:.]+Z tool\.call percent=3 used=6000 limit=10000 armed=true fresh=false decision=skip:below-limit base=0 threshold=5 phase=idle window=200000 note=legacy-percent — log: /)
   expect(t).toContain(`log: ${HOME}/.claude/junkd/handoff/sess-1.log`)
   rec.sid = undefined
   expect(await text()).toContain('log: none (no session id)')
@@ -1355,10 +1360,10 @@ const seed = (on: On, value: Record<string, unknown>) => {
 test('a reloaded module takes the armed loop back from $.state: armed, its baseline', THRESHOLD_5, async ($, on) => {
   const rec = world(on)
   mock.clock(on)
-  seed(on, kept({ base: 13, fresh: false }))
+  seed(on, kept({ base: 26000, fresh: false }))
   await start($)
   expect(rec.toasts.some(t => /reloaded — auto handoff still on, threshold 5%/.test(t))).toBe(true)
-  expect(bodies(rec).at(-1)).toBe('session.start percent=0 limit=18 armed=true fresh=false decision=skip:restored base=13 threshold=5 phase=idle window=0 note=reload')
+  expect(bodies(rec).at(-1)).toBe('session.start percent=0 used=0 limit=Infinity armed=true fresh=false decision=skip:restored base=26000 threshold=5 phase=idle window=0 note=reload,legacy-percent')
   rec.percent = 17
   expect(denial(await $.tool.call(READ))).toBeUndefined()
   rec.percent = 18
@@ -1435,7 +1440,7 @@ test('a window that starts at the threshold itself counts growth from its baseli
   await turn($)
   await clock.advance(1000)
   await measure($, 5) // the new window opens at 5%: the threshold itself
-  expect(bodies(rec).at(-1)).toContain('percent=5 limit=10 armed=true fresh=false decision=skip:measure-only base=5')
+  expect(bodies(rec).at(-1)).toContain('percent=5 used=10000 limit=20000 armed=true fresh=false decision=skip:measure-only base=10000')
   rec.percent = 9
   expect(denial(await $.tool.call(READ))).toBeUndefined()
   rec.percent = 10
@@ -1448,7 +1453,7 @@ test('a measurement with no percent in it keeps the last one and says so', THRES
   mock.clock(on)
   await start($)
   await $.session.measure({ context: noFill().context, rateLimits: [], changed: ['context'] })
-  expect(bodies(rec).at(-1)).toBe('session.measure percent=0 limit=5 armed=false fresh=false decision=skip:measure-only base=0 threshold=5 phase=idle window=200000 note=no-percent')
+  expect(bodies(rec).at(-1)).toBe('session.measure percent=0 used=0 limit=10000 armed=false fresh=false decision=skip:measure-only base=0 threshold=5 phase=idle window=200000 note=no-percent,legacy-percent')
 })
 
 // The cap: a model that never writes the handoff is asked 3 times in all, then the loop disarms.
@@ -1636,7 +1641,7 @@ test('round trip 1/3: what sync() writes while the loop runs a cycle (the fresh 
   await measure($, 13)
   captured.base = written.at(-1)
   expect(captured.fresh).toMatchObject({ on: true, fresh: true, base: 0, count: 1, lastId: 'abcdef12' })
-  expect(captured.base).toMatchObject({ on: true, fresh: false, base: 13, count: 1, lastId: 'abcdef12', prompt: 'Continue after the handoff', threshold: 5 })
+  expect(captured.base).toMatchObject({ on: true, fresh: false, base: 26000, count: 1, lastId: 'abcdef12', prompt: 'Continue after the handoff', threshold: 5 })
 })
 
 test('round trip 2/3: a module that starts over takes the baseline, the count and the last id back', THRESHOLD_5, async ($, on) => {
@@ -1647,10 +1652,10 @@ test('round trip 2/3: a module that starts over takes the baseline, the count an
   seed(on, captured.base!)
   written.length = 0
   await start($)
-  expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto on — threshold 5% — limit 18%') // 13 + 5
-  expect(written.at(-1)).toMatchObject({ on: true, base: 13, fresh: false, count: 1, lastId: 'abcdef12' }) // and mirrors them again
+  expect(written.at(-1)).toMatchObject({ on: true, base: 26000, fresh: false, count: 1, lastId: 'abcdef12' }) // and mirrors them again
   rec.percent = 17
   expect(denial(await $.tool.call(READ))).toBeUndefined()
+  expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto on — threshold 5% — limit 36k') // 26k + 10k, once the window is known
   rec.percent = 18
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
 })
@@ -1676,7 +1681,7 @@ test('a turn end exactly at the threshold hands off (>=, as a tool call does)', 
   expect(bodies(rec).at(-1)).toContain('decision=skip:below-limit')
   rec.percent = 5
   await turn($)
-  expect(bodies(rec).at(-1)).toBe('turn.complete percent=5 limit=5 armed=true fresh=false decision=fire base=0 threshold=5 phase=idle window=200000')
+  expect(bodies(rec).at(-1)).toBe('turn.complete percent=5 used=10000 limit=10000 armed=true fresh=false decision=fire base=0 threshold=5 phase=idle window=200000 note=legacy-percent')
   await clock.advance(1000) // the handoff asked for runs before the test ends
   expect(rec.commands).toContain('junkd:handoff')
 })
@@ -1692,9 +1697,9 @@ test('a measurement with no percent leaves the fresh window waiting: no baseline
   await turn($)
   await handonRuns($, rec, clock, [])
   await $.session.measure({ context: noFill().context, rateLimits: [], changed: ['context'] })
-  expect(bodies(rec).at(-1)).toBe('session.measure percent=0 limit=5 armed=true fresh=true decision=skip:measure-only base=0 threshold=5 phase=idle window=200000 note=no-percent')
+  expect(bodies(rec).at(-1)).toBe('session.measure percent=0 used=0 limit=10000 armed=true fresh=true decision=skip:measure-only base=0 threshold=5 phase=idle window=200000 note=no-percent,legacy-percent')
   await measure($, 13)
-  expect(bodies(rec).at(-1)).toContain('fresh=false decision=skip:measure-only base=13')
+  expect(bodies(rec).at(-1)).toContain('fresh=false decision=skip:measure-only base=26000')
 })
 
 test('a read of $.state that fails at startup leaves the loop off and the session starting', THRESHOLD_5, async ($, on) => {

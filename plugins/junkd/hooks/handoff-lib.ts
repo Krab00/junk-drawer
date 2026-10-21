@@ -27,8 +27,8 @@ export const S = {
   count: 0,
   lastId: null as string | null,
   fresh: false, // right after /clear: usage() still reports the old window until the first response
-  threshold: 85,
-  base: 0, // usage on the first measurement of the window (system prompt + handon); 0 = not measured yet
+  threshold: 300, // thousands of tokens (300 = 300k); 100 or less is the legacy percent of the window, see thresholdTokens
+  base: 0, // used tokens on the first measurement of the window (system prompt + handon); 0 = not measured yet
   checkEvery: 5,
   staleDays: 30,
   segment: true,
@@ -63,7 +63,7 @@ export const S = {
 export function loadOptions(options: Record<string, unknown>): void {
   // a value `set` would refuse falls back to the default, so what loads is what `set` could have stored
   const num = (f: Field, d: number) => (coerce(f, options[f] ?? d).value as number | undefined) ?? d
-  S.threshold = num('threshold', 85)
+  S.threshold = num('threshold', 300)
   S.checkEvery = num('checkEvery', 5)
   S.enabled = options.enabled === undefined ? true : Boolean(options.enabled)
   S.autoOn = Boolean(options.autoOn)
@@ -85,9 +85,22 @@ export const MAX_ASKS = 3
 export const LIMIT_PROMPT = 'Continue where the rate limit stopped you'
 export const LIMIT_GRACE = 120_000 // 2 min after the window resets
 
-// The usage that triggers a handoff: the threshold, or — when the window already starts at or above it —
-// threshold points of growth above the window's baseline.
-export const limit = (): number => (S.threshold > S.base ? S.threshold : S.base + S.threshold)
+// The threshold in tokens. A value of 100 or less is what an older config holds, a percent of the window: read as such
+// (against the window the host reported) for one release, and every measurement says `legacy-percent`.
+// ponytail: 1..100 can't be a token count in thousands (100k is the least), the ceiling of this one-release rule.
+export const LEGACY_MAX = 100
+export const isLegacy = (): boolean => S.threshold <= LEGACY_MAX
+export const thresholdTokens = (): number => (isLegacy() ? Math.round((S.threshold / 100) * S.window) : S.threshold * 1000)
+export const kTokens = (n: number): string => (Number.isFinite(n) ? `${Math.round(n / 1000)}k` : '?')
+// The threshold as the person set it: `300k`, or `85%` while it is legacy.
+export const thresholdText = (): string => (isLegacy() ? `${S.threshold}%` : `${S.threshold}k`)
+
+// The used tokens that trigger a handoff: the threshold, or — when the window already starts at or above it —
+// threshold tokens of growth above the window's baseline. A legacy percent with no window reported yet is no limit.
+export const limit = (): number => {
+  const t = thresholdTokens()
+  return t <= 0 ? Infinity : t > S.base ? t : S.base + t
+}
 
 export const DAY = 86_400_000
 
@@ -105,13 +118,13 @@ export const isField = (key: unknown): key is Field => SCHEMA.some(f => f.key ==
 
 // A raw value (typed in the pane, handed to $.junkd.set or written in the /config menu) to the field's kind;
 // `error` when it does not fit. The value is stored as it comes back, never rounded later: what the row holds is
-// what get answers. threshold: above 0, up to 100; checkEvery: a whole number, 1 or more; staleDays: above 0.
+// what get answers. threshold: above 0 (thousands of tokens; 100 or less is the legacy percent); checkEvery: a whole number, 1 or more; staleDays: above 0.
 export type Coerced = { value: number | boolean; error?: undefined } | { error: string; value?: undefined }
-const RANGE = { threshold: 'a number above 0, up to 100', checkEvery: 'a whole number, 1 or more', staleDays: 'a number above 0' }
+const RANGE = { threshold: 'a number above 0: thousands of tokens, 300 = 300k; 100 or less is read as a percent of the window', checkEvery: 'a whole number, 1 or more', staleDays: 'a number above 0' }
 export function coerce(field: Field, raw: unknown): Coerced {
   if (field === 'threshold' || field === 'checkEvery' || field === 'staleDays') {
     const value = Number(raw)
-    const fits = Number.isFinite(value) && value > 0 && (field !== 'threshold' || value <= 100) && (field !== 'checkEvery' || Number.isInteger(value))
+    const fits = Number.isFinite(value) && value > 0 && (field !== 'checkEvery' || Number.isInteger(value))
     return fits ? { value } : { error: `${String(raw)} is not a valid ${field} (${RANGE[field]})` }
   }
   return { value: raw === true || raw === 'true' || raw === 'on' }
