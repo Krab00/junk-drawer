@@ -513,6 +513,8 @@ function world(on: On, o: Opts = {}) {
     rec.runs.push(argv)
     if (argv[0] === 'git' && argv.includes('--show-toplevel')) return rec.noRepo ? done('', 128) : done(`${REPO}\n`)
     if (argv[0] === 'git' && argv.includes('--show-current')) return done('task/T17-tools-pane\n')
+    // the tools pane's tree: the agent's directory is in the repo
+    if (argv[0] === 'git' && argv.includes('worktree')) return done(`worktree ${REPO}\nHEAD a\nbranch refs/heads/main\n\nworktree ${WT}\nHEAD b\nbranch refs/heads/task/T17-tools-pane\n`)
     if (argv[0] === 'git') return done('', 128)
     if (argv[0] === 'mkdir') rec.missingDirs.delete(argv.at(-1)!)
     if (argv[0] === 'rm') delete rec.files[argv.at(-1)!]

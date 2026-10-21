@@ -72,7 +72,7 @@ export const T = {
   enabled: true,
   refresh: REFRESH_DEFAULT,
   agentsOnly: false,
-  showAll: false, // the Agents tab lists the active agents only; `a` flips it to all, for the session
+  activeOnly: false, // the Agents tab lists this project's agents, finished ones too; `a` narrows it to the active ones, for the session
   open: false,
   loaded: false, // a first load since the pane opened has finished: until then the tabs draw `reading…`
   route: 'agents' as Route,
@@ -91,7 +91,7 @@ export const T = {
 // Every field back to its start: a register is a fresh load of the module.
 export function resetTools(): void {
   Object.assign(T, {
-    showAll: false, open: false, loaded: false, route: 'agents', selected: null, selectedAt: 0, folded: Object.create(null), since: 0,
+    activeOnly: false, open: false, loaded: false, route: 'agents', selected: null, selectedAt: 0, folded: Object.create(null), since: 0,
     counters: emptyCounters(), worktrees: [], agents: [], seen: Object.create(null), spawned: Object.create(null), mcp: [],
   })
 }
@@ -243,6 +243,11 @@ const under = (path: string, dir: string) => {
   const d = dir.replace(/\/+$/, '')
   return path === d || path.startsWith(`${d}/`)
 }
+// This project's agents: the spawn's directory is in a worktree of the session's repo (the main checkout included).
+// ponytail: the records hold no project, so the directory agent.spawn gave is the match; an agent with no spawn record
+// (spawned before the module loaded) has none and counts as this project's, as the tree already files it under the root.
+export const ofProject = (agents: readonly AgentInfo[], spawned: Record<string, Spawned>, worktrees: readonly Worktree[]) =>
+  agents.filter(a => !spawned[a.id]?.cwd || worktrees.some(w => under(spawned[a.id]!.cwd, w.path)))
 
 // Root = the main checkout, its children the other worktrees (by path basename, with the branch). An agent sits under
 // the deepest worktree its cwd is in (the cwd agent.spawn gave it, else the session's then); one whose cwd is in no
