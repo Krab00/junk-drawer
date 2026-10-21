@@ -7,8 +7,8 @@
 #     --once            print the table once and exit 0 (otherwise every S seconds until Ctrl-C)
 #     --all             everything: the finished agents (done, gone) too, the live agents of other projects, and
 #                       the newest session of any project (default: the live agents (idle, running, alive) of
-#                       this project and its newest session, minus those due for a stop; --active, the old name
-#                       of that, is accepted)
+#                       this project and its newest session, those due for a stop included: this tool only
+#                       reports them, so they must stay in view; --active, the old name of that, is accepted)
 #     --interval S      seconds between tables, 1-3600 (default 60)
 #     --idle-minutes N  idle minutes before an idle leftover is due for a stop, 1-120 (default: the
 #                       orch_idle_stop_minutes setting, else 10)
@@ -21,8 +21,9 @@
 #     A record's mtime is when the agent finished.
 #   - the live agents: claude/codex/kimi processes (ps) whose cwd (lsof, else pwdx, else /proc) is a task worktree
 #     (.../.worktrees/T<n>) of this project (below the project root, orch-state's root without its /.worktrees/...
-#     tail), each matched to the newest record of its task. A process whose cwd cannot be read is
-#     listed by name only (verdict unknown).
+#     tail), each matched to the newest record of its task (a task with an implementer record: to the newest
+#     implementer record, the process being the implementer's, not a reviewer's). A process whose cwd cannot be
+#     read is listed by name only (verdict unknown).
 #   - the project of a session: the records hold none, so it is where the session's transcript sits,
 #     <config dir>/projects/<folder>/<session>.jsonl: this project's folder or one of its worktrees' (the folder
 #     name is the project path with every character outside [A-Za-z0-9] a dash). A session with no transcript found
@@ -188,6 +189,18 @@ table() {
 
   local out='agent	role	status	idle	verdict' name type note role cls idle st verdict alive t
   local -a used=()
+  # The tasks with a live-looking implementer record: a process in such a task worktree is the implementer's, never
+  # a newer reviewer's record (a fix round resumes the implementer after verify-T<n> reported).
+  # ponytail: a reviewer whose own process sits in that worktree is not told apart from the implementer's.
+  local impl_tasks=' ' rname rat rbody rtype
+  while IFS=$'\t' read -r rname rat rbody; do
+    [ -n "$rname" ] || continue
+    [ -z "$(jq -r '.deadNote | strings' <<<"$rbody")" ] || continue
+    rtype=$(jq -r '.type | strings' <<<"$rbody")
+    [ "$(class_of "$rtype" "$rname")" = implementer ] || continue
+    t=$(task_of "$rname")
+    [ -z "$t" ] || impl_tasks+="$t "
+  done <<<"$recs"
   while IFS=$'\t' read -r name at body; do
     [ -n "$name" ] || continue
     type=$(jq -r '.type | strings' <<<"$body")
@@ -200,8 +213,9 @@ table() {
       continue
     fi
     task=$(task_of "$name")
+    cls=$(class_of "$type" "$name")
     alive=''
-    if [ -n "$task" ]; then
+    if [ -n "$task" ] && { [ "$cls" = implementer ] || [[ "$impl_tasks" != *" $task "* ]]; }; then
       # one process per record, the newest record of its task first (the agent that reported last is the one left)
       while IFS=$'\t' read -r pid cmd cwd t; do
         [ -n "$pid" ] && [ "$t" = "$task" ] || continue
@@ -215,7 +229,6 @@ table() {
       continue
     fi
     used+=("$alive")
-    cls=$(class_of "$type" "$name")
     over=0
     [ $(( now - at )) -gt $(( idle_minutes * 60 )) ] && over=1
     want=$over
@@ -230,8 +243,6 @@ table() {
       esac
     fi
     if [ "$want" = 1 ]; then verdict="stop, report only ($why)"; else verdict="kept ($why)"; fi
-    # due for a stop (a reviewer that reported, a closed task, idle past the minutes): out of the default view, as in the pane
-    if [ "$want" = 1 ] && [ $all = 0 ]; then fin=$((fin + 1)); continue; fi
     out+=$'\n'"$name	$role	idle (pid $alive)	$idle	$verdict"
   done <<<"$recs"
 
