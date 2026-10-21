@@ -1480,15 +1480,16 @@ for (const via of ['the turn end', 'a tool call'] as const) {
       await turn($)
       await clock.advance(1000)
     }
-    expect(asked(rec)).toBe(3)
-    expect(bodies(rec).filter(l => l.includes('decision=cycle:ask-handoff')).length).toBe(via === 'a tool call' ? 3 : 2)
+    // the deny text of a tool call is the first ask, the turn end's queued /junkd:handoff the first command: 3 asks in all either way
+    expect(asked(rec)).toBe(via === 'a tool call' ? 2 : 3)
+    expect(bodies(rec).filter(l => l.includes('decision=cycle:ask-handoff')).length).toBe(2)
     expect(bodies(rec).filter(l => l.includes('decision=give-up:3-tries')).length).toBe(1)
     expect(rec.toasts).toContain('ahandoff: handoff not written after 3 tries — disarmed')
     expect(((await ahandoff($, 'status')) as { text: string }).text).toContain('handoff auto off')
     expect(denial(await $.tool.call(READ))).toBeUndefined() // no gate any more
     await turn($)
     await clock.advance(1000)
-    expect(asked(rec)).toBe(3)
+    expect(asked(rec)).toBe(via === 'a tool call' ? 2 : 3)
   })
 }
 
@@ -1513,7 +1514,7 @@ test('a written handoff gives the next cycle its 3 tries again', THRESHOLD_5, as
     await turn($)
     await clock.advance(1000)
   }
-  expect(asked(rec)).toBe(2 + 3)
+  expect(asked(rec)).toBe(2 + 2) // the tool call's deny was this cycle's first ask: 2 queued after it
   expect(bodies(rec).filter(l => l.includes('give-up')).length).toBe(1)
 })
 
@@ -1912,6 +1913,7 @@ test('a handoff nobody asked the loop for, written while armed: fire:external-ha
     await start($)
     await ahandoff($, '')
     rec.tokens = 50_000 // far below the limit: the loop would not have asked
+    await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_deadbeef.md`, content: '# h' })
     drop('deadbeef')
     await turn($)
     expect(lastLog(rec)).toBe('turn.complete percent=5 used=50000 limit=300000 armed=true fresh=false decision=fire:external-handoff base=0 threshold=300 phase=idle window=1000000')
@@ -1971,6 +1973,7 @@ test('external handoffs leave the 3-tries cap alone: five in a row keep the loop
     await start($)
     await ahandoff($, '')
     for (const id of ['aaaa0001', 'aaaa0002', 'aaaa0003', 'aaaa0004', 'aaaa0005']) {
+      await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_${id}.md`, content: '# h' })
       drop(id)
       await turn($)
       await handonRuns($, rec, clock, [handonOf(id)])
@@ -2009,6 +2012,115 @@ test('the loop\'s own handoff is on disk when its turn ends: cycle:continue, not
     await handonRuns($, rec, clock, [handonOf('0123abcd')])
     expect(rec.commands.filter(c => c.startsWith('junkd:handon'))).toEqual(['junkd:handon 0123abcd'])
   } finally { undrop() }
+})
+
+test('a handoff another session wrote (a file in the shared folder, no Write by this main loop) is never followed', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  try {
+    await start($)
+    await ahandoff($, '')
+    rec.tokens = 50_000
+    drop('b0b0b0b0') // session B's /junkd:handoff, newer than the arming
+    await turn($)
+    await clock.advance(1000)
+    expect(rec.commands).toEqual([])
+    expect(bodies(rec).some(l => l.includes('external'))).toBe(false)
+    // nor is a Write of a subagent of this session (its tool.call carries an agentId)
+    await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_a9e47000.md`, content: '# h', agentId: 'a1' } as never)
+    drop('a9e47000')
+    await turn($)
+    await clock.advance(1000)
+    expect(rec.commands).toEqual([])
+    expect(bodies(rec).some(l => l.includes('external'))).toBe(false)
+  } finally { undrop() }
+})
+
+test('the external handoff is forgotten when the loop is armed or disarmed: a Write before an off does not fire after the next arming', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  try {
+    await start($)
+    await ahandoff($, '')
+    rec.tokens = 50_000
+    await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_dead0001.md`, content: '# h' })
+    await ahandoff($, 'off')
+    await ahandoff($, '')
+    await turn($)
+    await clock.advance(1000)
+    expect(rec.commands).toEqual([])
+  } finally { undrop() }
+})
+
+// ---- the asks cap counts the first ask on every path that fires
+
+test('the pane\'s "handoff now" counts as the first ask: the cap gives up after 3 in all', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  await handoff($, 'panel') // auto opened it; this closes it
+  await handoff($, 'panel')
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  await hotkey(ui, '1')
+  await hotkey(ui, 'n')
+  await ui.unmount()
+  await clock.advance(1000) // the queued /junkd:handoff runs: ask 1
+  for (let i = 0; i < 6; i++) {
+    await turn($)
+    await clock.advance(1000)
+  }
+  expect(asked(rec)).toBe(3) // 4 without the count: the pane's ask was not one
+  expect(bodies(rec).filter(l => l.includes('decision=give-up:3-tries')).length).toBe(1)
+})
+
+test('arming and disarming reset the asks: a loop armed again after two misses has its 3 tries', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.tokens = 400_000
+  await turn($) // fire: ask 1
+  await turn($) // miss: ask 2
+  await clock.advance(1000)
+  expect(asked(rec)).toBe(2)
+  await ahandoff($, 'off')
+  await ahandoff($, '')
+  rec.commands.length = 0
+  for (let i = 0; i < 6; i++) {
+    await turn($)
+    await clock.advance(1000)
+  }
+  expect(asked(rec)).toBe(3) // a full cap again
+  expect(bodies(rec).filter(l => l.includes('decision=give-up:3-tries')).length).toBe(1)
+})
+
+// ---- a threshold the window can't hold says so
+
+test('the default threshold on a 200k window: arming warns in a toast and the pane note; a reachable threshold stays quiet', { options: { handoff_checkEvery: 1 } }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  passMeasure(on)
+  await start($)
+  await $.session.measure({ context: usage(10).context, rateLimits: [], changed: ['context'] }) // the 200k window is known
+  await ahandoff($, '')
+  expect(rec.toasts).toContain('ahandoff: threshold 300k is not below the 200k window — it will never fire, lower it')
+  await ahandoff($, 'off')
+  rec.toasts.length = 0
+  await $.session.measure({ context: usageTokens(10_000).context, rateLimits: [], changed: ['context'] }) // a 1M window
+  await ahandoff($, '')
+  expect(rec.toasts.filter(t => /never fire/.test(t))).toEqual([])
+})
+
+test('armed before the window is known: the first measurement of a 200k window warns once', { options: { handoff_autoOn: true, handoff_checkEvery: 1 } }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  passMeasure(on)
+  await start($)
+  expect(rec.toasts.filter(t => /never fire/.test(t))).toEqual([])
+  await $.session.measure({ context: usage(10).context, rateLimits: [], changed: ['context'] })
+  await $.session.measure({ context: usage(11).context, rateLimits: [], changed: ['context'] })
+  expect(rec.toasts.filter(t => /never fire/.test(t))).toEqual(['ahandoff: threshold 300k is not below the 200k window — it will never fire, lower it'])
 })
 
 test('the pane shows the used tokens against the limit in tokens, and its Threshold field says thousands of tokens', TOKENS_300, async ($, on) => {

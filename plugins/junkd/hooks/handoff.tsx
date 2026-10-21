@@ -180,24 +180,13 @@ function record(path: string) {
   return id
 }
 
-// The handoff folder's newest file this loop did not write or ask for: not recorded in this session, and written since
-// the loop was armed. The `S.written` watch of the loop's own ask covers its own file; this one covers anyone else's.
-async function externalHandoff($: $): Promise<string | undefined> {
-  if (S.armedAt === null) return undefined
-  const dir = await handoffDir($)
-  const files = await $.fs.list(dir).catch(() => [])
-  const found = files
-    .filter(f => f.kind === 'file' && idOf(f.name) && !S.session.includes(idOf(f.name)!) && f.mtimeMs >= S.armedAt!)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
-  return found && `${dir}/${found.name}`
-}
-
 // The handoff file is there: its id is the last one, /clear and /junkd:handon <id> follow. The asks count belongs to the
 // loop's own requests for a file, so a file nobody asked for does not touch it beyond the reset.
 async function follow($: $, path: string) {
   const id = record(path)
   S.calls = 0
   S.asks = 0
+  S.external = null
   S.count++
   S.phase = 'resume'
   await persist($)
@@ -358,6 +347,15 @@ function toggle($: $, route?: Route) {
   return S.paneOpen ? closePane($) : openPane($, route)
 }
 
+// A threshold the host's window can't hold would never fire; say so in the pane and a toast. ponytail: a warning, not a
+// clamp — the window is not known before the first measurement, and what to lower it to is the person's call.
+function warnUnreachable($: $) {
+  if (S.window <= 0 || thresholdTokens() < S.window) return
+  const text = `ahandoff: threshold ${thresholdText()} is not below the ${kTokens(S.window)} window — it will never fire, lower it`
+  S.note = `✗ ${text}`
+  $.ui.toast(text)
+}
+
 async function arm($: $) {
   if (!S.enabled) {
     S.note = `✗ ${OFF}`
@@ -366,7 +364,10 @@ async function arm($: $) {
   S.armed = true
   S.phase = 'idle'
   S.calls = 0
+  S.asks = 0
+  S.external = null
   S.armedAt = Date.now()
+  warnUnreachable($)
   await persist($)
   await sync($)
 }
@@ -381,6 +382,8 @@ async function disarm($: $) {
   S.fresh = false
   S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
   S.armedAt = null
+  S.asks = 0
+  S.external = null
   await persist($)
   await sync($)
 }
@@ -460,7 +463,10 @@ function api($: $): Api {
     arm: () => arm($),
     disarm: () => void disarm($),
     handoffNow: async () => {
-      if (S.armed) S.phase = 'handoff'
+      if (S.armed) {
+        S.phase = 'handoff'
+        S.asks = 1 // the queued /junkd:handoff is the first ask, as the turn-end fire counts it
+      }
       S.note = '✓ handoff queued'
       queueHandoff($)
       await sync($)
@@ -585,10 +591,20 @@ export async function handoffToolCall($: $, e: ToolCallInput, next: Next<'tool.c
     const { percent, used } = await readUsage($)
     const fire = used >= limit()
     await measured($, 'tool.call', percent, fire ? 'fire' : 'skip:below-limit', '', used)
-    if (fire) S.phase = 'handoff'
+    if (fire) {
+      S.phase = 'handoff'
+      S.asks = 1 // the deny text is the first ask, as the turn-end fire counts it
+    }
     await sync($, percent)
   }
-  if (S.phase !== 'handoff') return next(e)
+  if (S.phase !== 'handoff') {
+    if (!isHandoffWrite || S.phase !== 'idle') return next(e)
+    // A handoff this session's main loop writes while the loop is idle (the person's /junkd:handoff by hand) continues the
+    // chain at the turn end like its own. The handoffs folder is global: other sessions' files are not this loop's.
+    const r = await next(e)
+    if (r.deny === undefined) S.external = String(e.file_path)
+    return r
+  }
   const isHandoffPath = e.tool === 'Bash' && /handoff-path/.test(String(e.command))
   const isHandoffSkill = e.tool === 'Skill' && /handoff/.test(String((e as { skill?: unknown }).skill))
   if (isHandoffWrite) S.written = String(e.file_path)
@@ -670,10 +686,8 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     }
     const { percent, used } = await readUsage($)
     const m = (decision: string) => measured($, 'turn.complete', percent, decision, '', used)
-    // A handoff written since the loop was armed that it did not ask for (the person's, a /junkd:handoff by hand)
-    // continues the chain like its own. ponytail: one folder listing per idle turn; a file counts when the loop never
-    // recorded it and it is newer than the arming — a file written while the loop was off is older.
-    const external = S.phase === 'idle' ? await externalHandoff($) : undefined
+    // A handoff this session's main loop wrote while armed that the loop did not ask for (handoffToolCall noted it).
+    const external = S.phase === 'idle' ? S.external : null
     if (S.fresh) {
       // nothing: the first measurement of the new window decides (session.measure)
       await m('skip:fresh')
@@ -725,7 +739,9 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     }
     if (e.changed.includes('context')) {
       S.tokens = e.context.tokens ?? S.tokens
+      const was = S.window
       S.window = e.context.window ?? S.window
+      if (S.armed && !S.fresh && S.window !== was) warnUnreachable($) // the window is known only now
       const percent = e.context.percent ?? S.percent
       const used = e.context.tokens ?? S.tokens
       let note = e.context.percent === undefined ? 'no-percent' : ''
