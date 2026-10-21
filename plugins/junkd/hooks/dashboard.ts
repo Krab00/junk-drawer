@@ -105,7 +105,7 @@ export const isTaskFile = (name: string) => /\.md$/i.test(name) && !name.startsW
 
 export type Verdicts = { round: number; ac?: [number, number]; acx?: [number, number]; note?: string }
 
-// The last `## Verification` section (`## Verification round N`, or the spec's `## Verification — <branch>` with N = 1):
+// The last `## Verification` section (`## Verification round N`, or the spec's `## Verification — <branch>`, N = its place among the headings):
 // N, and from its `| Criterion | … | Verdict |` table the AC and the ACX
 // rows (an ACX row is one whose criterion starts with ACX, an AC row one starting with AC and a digit), each as
 // [passed, all]. A verdict passes when it starts with PASS; FAIL and PM-REVIEW are named in the note. undefined: no
@@ -114,11 +114,15 @@ export function parseVerification(text: string): Verdicts | undefined {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
   let at = -1
   let round = 0
+  let seen = 0
   lines.forEach((l, i) => {
     const m = /^##\s+Verification\b(?:\s+round\s+(\d+)\b)?/i.exec(l)
     if (m) {
+      seen++
       at = i
-      round = m[1] ? Number(m[1]) : 1
+      // ponytail: a heading without a round is numbered by its place among the file's Verification headings (the
+      // coordinator appends one per re-verify round)
+      round = m[1] ? Number(m[1]) : seen
     }
   })
   if (at < 0) return undefined

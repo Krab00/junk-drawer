@@ -124,6 +124,8 @@ rm -f "$T/T30.md"
 # the spec's `## Verification — <branch>` heading (verify-coordinator.md) is round 1, its table read all the same; a
 # lesson block `## L<n> (date) … · from: T<n>` is named by its from:
 printf -- '---\nid: T5\nstatus: verify\n---\n\n## Verification — task/T5-thing\n\n| Criterion | Evidence | Verdict |\n|---|---|---|\n| AC1 a | ok | PASS |\n| AC2 b | no | FAIL |\n| ACX1 c | ? | PM-REVIEW |\n' >"$T/T5.md"
+# the same branch heading appended again by a re-verify: the second is round 2, with its own verdicts
+printf -- '---\nid: T6\nstatus: verify\n---\n\n## Verification — task/T6\n\n| Criterion | Verdict |\n|---|---|\n| AC1 a | FAIL |\n\n## Verification — task/T6\n\n| Criterion | Verdict |\n|---|---|\n| AC1 a | PASS |\n' >"$T/T6.md"
 cp "$T/_lessons.md" "$tmp/_lessons.keep"
 printf '# Lessons\n\n## L1 (2026-10-18) scope: local · stack: shell · to: smoke · from: T2\nA ported script. More.\n\n## L2 (2026-10-19) scope: local\nNo from here.\n' >"$T/_lessons.md"
 (cd "$proj" && "$bin" --out "$tmp/outv" >/dev/null 2>&1)
@@ -140,7 +142,14 @@ node --input-type=module -e '
 ' "$junkd/hooks/dashboard.ts" "$T" "$tmp/outv/status.js"
 ok $? "dashboard.ts reads the spec heading and the lesson blocks like orch-status"
 cp "$tmp/_lessons.keep" "$T/_lessons.md"
-rm -f "$T/T5.md"
+expect "$tmp/outv/status.js" 'JSON.stringify(S.tasks.find(t => t.id === "T6")) === JSON.stringify({id: "T6", title: "", column: "verify", round: 2, ac: [1, 1]})' "two branch-style headings: the second is round 2"
+node --input-type=module -e '
+  const fs = await import("node:fs")
+  const D = await import(process.argv[1])
+  process.exit(D.parseVerification(fs.readFileSync(process.argv[2], "utf8")).round === 2 ? 0 : 1)
+' "$junkd/hooks/dashboard.ts" "$T/T6.md"
+ok $? "dashboard.ts numbers the branch-style headings alike"
+rm -f "$T/T5.md" "$T/T6.md"
 
 # the window: clamped, rounded; a non-number is 24; the setting when the env is unset
 for pair in 500:168 168:168 169:168 0:1 1:1 -5:1 2.6:3 abc:24 ' 12 ':12 '':24; do

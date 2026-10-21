@@ -166,12 +166,13 @@ build() {
              deps: listof($s.fm.deps // ""; $s.blocks.deps // [])}
           end
         end;
-    # the last "## Verification round N" (or "## Verification — <branch>", N = 1) section: N, the AC and ACX rows as [passed, all], the FAIL/PM-REVIEW note
+    # the last "## Verification round N" (or "## Verification — <branch>", N = its place among the headings) section: N, the AC and ACX rows as [passed, all], the FAIL/PM-REVIEW note
     def verdicts:
       lines as $ls
-      | ([$ls | to_entries[] | select(.value | test("^##\\s+Verification\\b"; "i"))] | last) as $h
+      | ([$ls | to_entries[] | select(.value | test("^##\\s+Verification\\b"; "i"))]) as $hs
+      | ($hs | last) as $h
       | if $h == null then null
-        else ([$h.value | capture("^##\\s+Verification\\b(?:\\s+round\\s+(?<n>\\d+)\\b)?"; "i")][0].n | if . == null then 1 else tonumber end) as $round
+        else ([$h.value | capture("^##\\s+Verification\\b(?:\\s+round\\s+(?<n>\\d+)\\b)?"; "i")][0].n | if . == null then ($hs | length) else tonumber end) as $round
         | ($ls[($h.key + 1):] | (map(test("^##\\s")) | index(true)) as $end | if $end == null then . else .[:$end] end) as $sec
         | (reduce ($sec[] | select(trim | startswith("|")) | trim | gsub("^\\||\\|$"; "") | split("|") | map(trim)) as $row
             ({at: -1, ac: [0, 0], acx: [0, 0], fail: [], pm: []};
