@@ -76,7 +76,7 @@ export PATH="$stubs:$PATH"
 run() { (cd "$repo" && "$watch" "$@"); }
 row() { grep -E "^$1 " <<<"$out" | sed -E 's/  +/|/g'; }
 
-out=$(run --once --idle-minutes 5) || fail "--once exited non-zero"
+out=$(run --once --all --idle-minutes 5) || fail "--once --all exited non-zero"
 head -n1 <<<"$out" | grep -qF 'orch-watch · session s1 · idle stop after 5 min · report only: this host has no agent stop command' ||
     fail "header: $(head -n1 <<<"$out")"
 [ "$(sed -n 2p <<<"$out" | sed -E 's/ +/ /g')" = 'agent role status idle verdict' ] || fail "column header: $(sed -n 2p <<<"$out")"
@@ -106,6 +106,17 @@ row 'claude:105' | grep -qE '^claude:105\|-\|alive\|-\|unknown \(cwd unreadable\
 ! grep -qE '(:104|:107)' <<<"$out" || fail "a non-agent process is listed"
 ! grep -qE 'bad name|broken-T26' <<<"$out" || fail "a bad record is listed"
 [ "$(grep -c . <<<"$out")" = 12 ] || fail "expected 10 rows under the two header lines (helper-T23 and pr-T25 share a time and a text: two rows), got: $out"
+
+# without --all only the live agents are listed (idle, running, alive) and one footer counts the finished: the done
+# rows (verify-T17, the rest of its kind) and the gone one (impl-T19)
+live=$(run --once --idle-minutes 5) || fail "--once exited non-zero"
+fin=$(grep -cE '^[^ ]+ +[^ ]+ +(done|gone) ' <<<"$out")
+[ "$fin" -ge 2 ] || fail "the fixture has fewer than two finished rows: $out"
+! grep -qE '^[^ ]+ +[^ ]+ +(done|gone) ' <<<"$live" || fail "a finished agent is listed: $live"
+! grep -qE '^(verify-T17|impl-T19) ' <<<"$live" || fail "verify-T17 or impl-T19 is listed: $live"
+[ "$(tail -n1 <<<"$live")" = "$fin finished (--all lists them)" ] || fail "footer: $(tail -n1 <<<"$live")"
+[ "$(grep -c . <<<"$live")" = "$(( $(grep -c . <<<"$out") - fin + 1 ))" ] || fail "live rows: $live"
+row impl-T17 >/dev/null && ! grep -q 'finished (--all' <<<"$out" || fail "--all has a footer or lost a live row"
 
 # --no-stop says so; the verdicts stay
 out=$(run --once --no-stop --idle-minutes 5) || fail "--no-stop exited non-zero"
@@ -145,7 +156,7 @@ printf '{"type":"junkd:ui-reviewer","tokens":1}\n' >"$CLAUDE_CONFIG_DIR/junkd/or
 touch -t 202001010000 "$recs"
 out=$(run --once)
 head -n1 <<<"$out" | grep -qF 'session s2' || fail "newest session: $(head -n1 <<<"$out")"
-grep -q '^ui-T30 ' <<<"$out" && ! grep -q '^impl-T17 ' <<<"$out" || fail "s2's rows: $out"
+grep -q '^ui-T30 ' <<<"$(run --once --all)" && ! grep -q '^impl-T17 ' <<<"$out" || fail "s2's rows: $out"
 out=$(run --once --session s1)
 head -n1 <<<"$out" | grep -qF 'session s1' && grep -q '^impl-T17 ' <<<"$out" || fail "--session s1: $out"
 out=$(run --once --session nope)
@@ -182,6 +193,8 @@ row impl-T27 | grep -qE '^impl-T27\|implementer\|idle \(pid 201\)\|0m\|stop, rep
 row impl-T28 | grep -qE '^impl-T28\|implementer\|idle \(pid 202\)\|0m\|kept \(idle under 5 min\)$' || fail "impl-T28 (todo, fresh): $(row impl-T28)"
 row impl-T29 | grep -qE '^impl-T29\|lead-implementer\|idle \(pid 203\)\|[0-9]+m\|stop, report only \(idle over 5 min\)$' || fail "impl-T29 (todo, old): $(row impl-T29)"
 row 'claude:204' | grep -qE '^claude:204 \(T30\)\|-\|running\|-\|ok$' || fail "claude:204 (pwdx): $(row 'claude:204')"
+# live agents alone: no footer
+! grep -q 'finished' <<<"$out" || fail "a footer with nothing finished: $out"
 mv "$tmp/ps.main" "$stubs/ps"
 mv "$tmp/lsof.main" "$stubs/lsof"
 rm "$stubs/pwdx"

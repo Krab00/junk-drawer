@@ -6,7 +6,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { AgentInfo, Args, ContextMcpTool, On } from 'claude-code'
 import {
-  ago, approxTokens, buildTree, clampRefresh, coerce, countSkill, tallyTool, flatten, mcpRows, mcpSplitter, emptyCounters, readWorktrees, pickTranscript,
+  activeOf, ago, approxTokens, buildTree, clampRefresh, coerce, countSkill, tallyTool, flatten, mcpRows, mcpSplitter, emptyCounters, readWorktrees, pickTranscript,
   projectFolder, revealCommand, splitMcp, tokens, toolRows,
 } from './tools'
 
@@ -573,11 +573,19 @@ test('the Agents tab: the main checkout, its worktrees with their branches, each
   for (const surface of SURFACES)
     await onPane($, async ui => {
       expect(await activeTab(ui)).toBe(' 1 Agents ')
-      expect(await nodeKeys(ui)).toEqual(['node:root', 'node:agent:a3', `node:wt:${WT}`, 'node:agent:a1', 'node:agent:a2', `node:wt:${OTHER}`])
+      // the active agents only (a2 finished), and one footer line counting the finished
+      expect(await nodeKeys(ui)).toEqual(['node:root', 'node:agent:a3', `node:wt:${WT}`, 'node:agent:a1', `node:wt:${OTHER}`])
+      expect(await lines(ui)).toContain('  1 finished')
       expect(await nodeText(ui, 'root')).toBe('▾ repo  main')
       expect(await nodeText(ui, `wt:${WT}`)).toBe('├─ ▾ T17  task/T17-tools-pane')
+      expect(await nodeText(ui, 'agent:a1')).toBe('│  └─   ● one  general-purpose  haiku')
+      // a flips to all (a2 back, no footer), a again to active only
+      await ui.press({ key: 'all' })
+      expect(await nodeKeys(ui)).toEqual(['node:root', 'node:agent:a3', `node:wt:${WT}`, 'node:agent:a1', 'node:agent:a2', `node:wt:${OTHER}`])
       expect(await nodeText(ui, 'agent:a1')).toBe('│  ├─   ● one  general-purpose  haiku')
       expect(await nodeText(ui, 'agent:a2')).toBe('│  └─   ○ two  general-purpose  haiku  done')
+      expect((await lines(ui)).some(l => l.includes('finished'))).toBe(false)
+      expect(await lines(ui)).toContain(' active only') // the key hint says what a does next
       expect(await nodeText(ui, 'agent:a3')).toBe('├─   ◐ three  general-purpose  haiku')
       expect(await nodeText(ui, `wt:${OTHER}`)).toBe('└─   feature x  detached')
       // the glyphs in the theme's colours
@@ -587,8 +595,64 @@ test('the Agents tab: the main checkout, its worktrees with their branches, each
       expect(await glyph('○')).toBe('inactive')
       const text = await lines(ui)
       expect(text).toContain('● running ◐ waiting ○ done · agents of this session only')
-      for (const k of ['↑↓', 'enter', 'r', 't', '1-4', 'q']) expect(text, k).toContain(k)
+      for (const k of ['↑↓', 'enter', 'a', 'r', 't', '1-4', 'q']) expect(text, k).toContain(k)
+      await ui.press({ key: 'all' }) // back to active only: the next surface starts there
+      expect(await lines(ui)).toContain('  1 finished')
+      expect(await lines(ui)).toContain(' all')
     }, surface)
+})
+
+test('active agents: running, pending, waiting and idle; the finished are completed, failed and killed', () => {
+  const live = [agent('r', 'running'), agent('p', 'pending'), agent('w', 'waiting'), agent('i', 'idle')]
+  const done = [agent('c', 'completed'), agent('f', 'failed'), agent('k', 'killed')]
+  expect(activeOf([...live, ...done], false).map(a => a.id)).toEqual(['r', 'p', 'w', 'i'])
+  expect(activeOf([...live, ...done], true).map(a => a.id)).toEqual(['r', 'p', 'w', 'i', 'c', 'f', 'k'])
+  expect(activeOf([], false)).toEqual([])
+})
+
+test('3 active and 5 finished: the pane lists the 3 and counts 5 finished; a shows all 8, and stays on through a refresh and a tab switch; a stopped agent leaves within one refresh', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const ids = ['a1', 'a2', 'a3', 'f1', 'f2', 'f3', 'f4', 'f5']
+  for (const id of ids) {
+    rec.nextAgent = id
+    await spawn($, { cwd: WT })
+  }
+  const listed = (stopped: string[] = []) => [
+    agent('a1', stopped.includes('a1') ? 'killed' : 'running', { name: 'one' }), agent('a2', 'waiting', { name: 'two' }), agent('a3', 'idle', { name: 'three' }),
+    agent('f1', 'completed', { name: 'f-one' }), agent('f2', 'completed', { name: 'f-two' }), agent('f3', 'failed', { name: 'f-three' }), agent('f4', 'killed', { name: 'f-four' }),
+    agent('f5', 'running', { name: 'f-five' }),
+  ]
+  rec.agents = listed()
+  await tools($)
+  await rec.clock.settle()
+  rec.agents = listed().slice(0, 7) // f5 was listed running and the engine dropped it: finished too
+  await onPane($, ui => ui.press({ key: 'refresh' }))
+  await rec.clock.settle()
+  const active = ['node:root', `node:wt:${WT}`, 'node:agent:a1', 'node:agent:a2', 'node:agent:a3', `node:wt:${OTHER}`]
+  await onPane($, async ui => {
+    expect(await nodeKeys(ui)).toEqual(active)
+    expect(await lines(ui)).toContain('  5 finished')
+    await ui.press({ key: 'all' })
+    expect((await nodeKeys(ui)).filter(k => k.startsWith('node:agent:'))).toHaveLength(8)
+    expect((await lines(ui)).some(l => l.includes('finished'))).toBe(false)
+    await ui.press({ key: 'refresh' })
+  })
+  await rec.clock.settle()
+  await onPane($, async ui => {
+    expect((await nodeKeys(ui)).filter(k => k.startsWith('node:agent:'))).toHaveLength(8) // the refresh kept the toggle
+    await ui.press({ key: 'tab-tools' })
+    await ui.press({ key: 'tab-agents' })
+    expect((await nodeKeys(ui)).filter(k => k.startsWith('node:agent:'))).toHaveLength(8) // so did the tab switch
+    await ui.press({ key: 'all' })
+  })
+  rec.agents = listed(['a1']).slice(0, 7) // a1 is stopped (f5 still dropped)
+  await onPane($, ui => ui.press({ key: 'refresh' }))
+  await rec.clock.settle()
+  await onPane($, async ui => {
+    expect(await nodeKeys(ui)).toEqual(active.filter(k => k !== 'node:agent:a1'))
+    expect(await lines(ui)).toContain('  6 finished')
+  })
 })
 
 test('the Agents tab with agents_only: the empty worktrees are left out, the main checkout stays', W, async ($, on) => {
@@ -626,7 +690,13 @@ test('an agent the engine dropped from its list stays, as done; outside a repo t
     await ui.press({ key: 'refresh' })
   })
   await rec.clock.settle()
-  await onPane($, async ui => expect(await nodeText(ui, 'agent:a1')).toBe('└─   ○ gone soon  general-purpose  haiku  done'))
+  await onPane($, async ui => {
+    expect(await nodeText(ui, 'agent:a1')).toBeUndefined() // dropped from the list: finished, so off the active list
+    expect(await lines(ui)).toContain('  no active agent') // the one agent seen has finished
+    expect(await lines(ui)).toContain('  1 finished')
+    await ui.press({ key: 'all' })
+    expect(await nodeText(ui, 'agent:a1')).toBe('└─   ○ gone soon  general-purpose  haiku  done')
+  })
 })
 
 test('the tree refreshes on every spawn and at every turn\'s end while open, never while closed', W, async ($, on) => {
@@ -649,7 +719,10 @@ test('the tree refreshes on every spawn and at every turn\'s end while open, nev
   await turnEnd($)
   await rec.clock.settle()
   expect(gitRuns(rec)).toBe(3)
-  await onPane($, async ui => expect(await nodeText(ui, 'agent:a2')).toContain('○ new one'))
+  await onPane($, async ui => {
+    expect(await nodeText(ui, 'agent:a2')).toBeUndefined() // finished: gone from the list within one refresh
+    expect(await lines(ui)).toContain('  1 finished')
+  })
 })
 
 test('reading… until the first load; then the tree', W, async ($, on) => {
@@ -1110,6 +1183,10 @@ test('agents that failed or were killed are done; pending runs', W, async ($, on
   await tools($)
   await rec.clock.settle()
   await onPane($, async ui => {
+    expect(await nodeKeys(ui)).toEqual(['node:root', 'node:agent:p', `node:wt:${WT}`, `node:wt:${OTHER}`]) // failed and killed have left
+    expect(await lines(ui)).toContain('  2 finished')
+    expect(await nodeText(ui, 'agent:p')).toBe('├─   ● pea  general-purpose')
+    await ui.press({ key: 'all' })
     expect(await nodeText(ui, 'agent:f')).toBe('├─   ○ eff  general-purpose  done')
     expect(await nodeText(ui, 'agent:k')).toBe('├─   ○ kay  general-purpose  done')
     expect(await nodeText(ui, 'agent:p')).toBe('├─   ● pea  general-purpose')
@@ -1155,7 +1232,10 @@ test('of two loads side by side, only the newest draws: an older one that ends l
   await rec.clock.settle()
   first()
   await rec.clock.settle()
-  await onPane($, async ui => expect(await nodeText(ui, 'agent:a1')).toBe('├─   ○ one  general-purpose  done'))
+  await onPane($, async ui => {
+    expect(await nodeText(ui, 'agent:a1')).toBeUndefined() // the newest load (completed) drew, not the older one (running)
+    expect(await lines(ui)).toContain('  1 finished')
+  })
 })
 
 test('a refused open: the reason is said, the pane is not open, nothing polls, and the next toggle opens it', W, async ($, on) => {
@@ -1253,10 +1333,18 @@ test('a /clear drops the agents seen before it, done ones too', W, async ($, on)
   rec.agents = [] // the engine dropped it: drawn as done
   await onPane($, ui => ui.press({ key: 'refresh' }))
   await rec.clock.settle()
-  await onPane($, async ui => expect(await nodeText(ui, 'agent:a1')).toBe('├─   ○ one  general-purpose  done'))
+  await onPane($, async ui => {
+    expect(await lines(ui)).toContain('  1 finished')
+    await ui.press({ key: 'all' })
+    expect(await nodeText(ui, 'agent:a1')).toBe('├─   ○ one  general-purpose  done')
+    await ui.press({ key: 'all' })
+  })
   await $.session.end({ reason: 'clear', sessionId: 's1', resume: {} as never })
   await rec.clock.settle()
-  await onPane($, async ui => expect(await nodeKeys(ui)).toEqual(['node:root', `node:wt:${WT}`, `node:wt:${OTHER}`]))
+  await onPane($, async ui => {
+    expect(await nodeKeys(ui)).toEqual(['node:root', `node:wt:${WT}`, `node:wt:${OTHER}`])
+    expect((await lines(ui)).some(l => l.includes('finished'))).toBe(false) // the orphan is not counted after the /clear
+  })
 })
 
 test('a spawn while tools is off is not recorded: the agent has no model and sits under the root', W, async ($, on) => {

@@ -1164,9 +1164,12 @@ The four tabs:
    branch (`detached`, `bare`). Each agent sits under the worktree its directory is in (the `cwd` its spawn gave
    it, else the session's directory at the spawn); an agent in no worktree, or one spawned before the module
    loaded, sits under the root. A row shows the status glyph (`●` running, `◐` waiting, `○` done, in the theme's
-   success, warning and inactive colours), the name, the agent type, the model it got and, once finished, `done`.
-   An agent the engine drops from its list after it ended stays, as done. Outside a repo the root is the
-   session's folder.
+   success, warning and inactive colours), the name, the agent type and the model it got. Only the active agents
+   are listed (running, pending, waiting or idle); a completed, failed, killed or dropped one leaves the tree on
+   the next read, and one dim footer line counts them (`5 finished`). `a` lists all of them (finished rows end in
+   `done`, no footer) and `a` again goes back to active only; the choice holds for the session, through refreshes,
+   tab switches and `/clear`, and starts as active only. An agent the engine drops from its list after it ended
+   counts as finished. Outside a repo the root is the session's folder.
 2. **Tools** — one row per tool the model called: on the main loop (`main`), in subagents (`sub`), and `≈tokens`
    of the results it read (characters ÷ 4). Most calls first. Every MCP tool folds into one `mcp (N servers)` row;
    the MCP tab has them per server.
@@ -1190,6 +1193,7 @@ every turn's end, and on `r`. The reading stops when the pane closes (`q`, its `
 | `1`–`4` | Agents, Tools, MCP, Skills |
 | `↑` `↓`, `j` `k` | Move the selection along the tree's rows (the arrows move the focus ring, which is the selection) |
 | `enter` | Fold or unfold the selected node (a worktree, the root); the fold is kept per node across refreshes |
+| `a` | Agents tab: list all agents or the active ones only (the default); the footer counts the finished |
 | `r` | Read the agents, the worktrees and the MCP schemas again now |
 | `t` | Show this session's transcript: in Finder on macOS (`open -R`), its folder elsewhere (`xdg-open`); the outcome is a toast |
 | `q` | Close the pane |
@@ -1338,7 +1342,7 @@ alarm.
 - **A stall** shows a toast, the `⚠ 1 stalled` segment and one line at the next turn:
   `watchdog: impl-T19 idle 16 min, last call Edit …; ping it or stop it`. Nothing else happens.
 - The segment is red and hidden while nothing is wrong. A press opens the tools pane on its Agents tab, where each
-  agent row carries the watchdog's verdict: `⚠ stalled 16m`, `✝ dead`, `· idle 4m` or `· stopped`.
+  agent row carries the watchdog's verdict: `⚠ stalled 16m`, `✝ dead`, `· idle 4m` or `· stopped` (a dead or stopped agent is finished, so it shows after `a` lists all).
 - `/junkd:orch watchdog` runs a tick now, prints the verdict table (agent, role, status, idle, verdict) to the
   transcript and shows the counts as a toast. `/junkd:orch watchdog off` and `on` flip `orch_watchdog`.
 
@@ -1351,14 +1355,16 @@ ${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/orch/watchdog/<session id>.log
 ### The other hosts: `bin/orch-watch`
 
 ```
-orch-watch [--once] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
+orch-watch [--once] [--all] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
 ```
 
 It reads the stop records of a session (`junkd/orch/_agents/<session>/*.json` as `scripts/orch-agent-stop.sh`
 writes them; the newest session folder unless `--session` names one). It finds the live agents in the process list:
 `claude`, `codex` and `kimi` processes whose working directory (`lsof`, else `pwdx`, else `/proc`) is a task
 worktree. A process whose directory cannot be read is listed by name only. It prints one table, agent, role,
-status, idle and verdict, by the rules above. `--once` prints it and exits 0; otherwise it prints one every
+status, idle and verdict, by the rules above. It lists the live agents (idle, running, alive) only, and one last
+line counts the finished ones (`done` and `gone` rows): `5 finished (--all lists them)`; `--all` lists those too
+and prints no count. `--once` prints it and exits 0; otherwise it prints one every
 `--interval` seconds (1–3600, default 60) until Ctrl-C. `--idle-minutes` defaults to the `orch_idle_stop_minutes`
 row of `settings.json`, else 10. Without `jq` it says so and exits 0.
 

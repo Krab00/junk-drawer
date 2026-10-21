@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # orch-watch — the agent watchdog for hosts with no hooks module (Codex, Kimi, OpenCode) and headless runs. Zero
 # tokens: bash + jq, no model. Prints one table of this session's agents: agent | role | status | idle | verdict.
-#   orch-watch [--once] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
+# Only the live ones (idle, running, alive) are listed; the finished ones (done, gone) are one footer count.
+#   orch-watch [--once] [--all] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
 #     --once            print the table once and exit 0 (otherwise every S seconds until Ctrl-C)
+#     --all             list the finished agents too (no footer count)
 #     --interval S      seconds between tables, 1-3600 (default 60)
 #     --idle-minutes N  idle minutes before an idle leftover is due for a stop, 1-120 (default: the
 #                       orch_idle_stop_minutes setting, else 10)
@@ -24,13 +26,14 @@
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-once=0 interval=60 idle_minutes='' no_stop=0 session=''
+once=0 all=0 interval=60 idle_minutes='' no_stop=0 session=''
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; }
 die() { echo "orch-watch: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --once) once=1 ;;
     --no-stop) no_stop=1 ;;
+    --all) all=1 ;;
     --interval) [ $# -ge 2 ] || die "--interval needs seconds"; interval=$2; shift ;;
     --idle-minutes) [ $# -ge 2 ] || die "--idle-minutes needs minutes"; idle_minutes=$2; shift ;;
     --session) [ $# -ge 2 ] || die "--session needs an id"; session=$2; shift ;;
@@ -157,7 +160,7 @@ table() {
       END { for (i = 1; i <= n; i++) if (!(isid[i] && (k[i] in named))) print st[i] "\t" at[i] "\t" bd[i] }' | sort -t$'\t' -k2,2nr -k1,1)
   fi
 
-  local out='agent	role	status	idle	verdict' name type note role cls idle st verdict alive t
+  local fin=0 out='agent	role	status	idle	verdict' name type note role cls idle st verdict alive t
   local -a used=()
   while IFS=$'\t' read -r name at body; do
     [ -n "$name" ] || continue
@@ -167,7 +170,7 @@ table() {
     [ -n "$role" ] || role='-'
     idle="$(( (now - at) / 60 ))m"
     if [ -n "$note" ]; then
-      out+=$'\n'"$name	$role	gone	$idle	dead ($note)"
+      if [ $all = 1 ]; then out+=$'\n'"$name	$role	gone	$idle	dead ($note)"; else fin=$((fin + 1)); fi
       continue
     fi
     task=$(task_of "$name")
@@ -182,7 +185,7 @@ table() {
       done <<<"$procs"
     fi
     if [ -z "$alive" ]; then
-      out+=$'\n'"$name	$role	done	$idle	done"
+      if [ $all = 1 ]; then out+=$'\n'"$name	$role	done	$idle	done"; else fin=$((fin + 1)); fi
       continue
     fi
     used+=("$alive")
@@ -221,6 +224,7 @@ table() {
   [ $no_stop = 0 ] || mode='report only (--no-stop)'
   echo "orch-watch · session ${sid:-none} · idle stop after $idle_minutes min · $mode"
   column -t -s $'\t' <<<"$out"
+  [ $all = 1 ] || [ $fin = 0 ] || echo "$fin finished (--all lists them)"
 }
 
 if [ $once = 1 ]; then
