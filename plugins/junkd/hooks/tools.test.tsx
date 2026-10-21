@@ -733,6 +733,8 @@ test('live agents: running and waiting stay (a prompt, or an implementer that re
     ['killed', 'killed', undefined, false],
     ['reported, task open (listed completed): waiting', 'completed', 'kept', true],
     ['reported, task open (listed running)', 'running', 'kept', true],
+    ['killed, task open (kept): killed stays out', 'killed', 'kept', false],
+    ['failed, task open (kept): failed stays out', 'failed', 'kept', false],
     ['in a call', 'running', 'call', true],
     ['stalled', 'running', 'stall', true],
     ['waiting verdict', 'waiting', 'waiting', true],
@@ -752,6 +754,8 @@ test('live agents: running and waiting stay (a prompt, or an implementer that re
     expect(node('reported, task open (listed running)')).toBe('waiting')
     expect(node('running')).toBe('running')
     expect(node('completed')).toBe('done')
+    expect(node('killed, task open (kept): killed stays out')).toBe('done') // a killed or failed agent is never drawn as waiting
+    expect(node('failed, task open (kept): failed stays out')).toBe('done')
   } finally {
     WD.state = emptyState()
   }
