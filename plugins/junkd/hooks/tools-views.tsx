@@ -3,7 +3,7 @@
 // Own copies of the few parts the other panes draw alike. Every width comes from `props.bodyColumns`.
 import type { ElementTable, RenderInput } from 'claude-code'
 import {
-  T, ROUTES, activeOf, ago, approxTokens, buildTree, flatten, fold, mcpRows, move, select, selectedIn, skillRows, tokens, toolRows,
+  T, ROUTES, activeOf, ago, approxTokens, buildTree, flatten, fold, mcpRows, move, ofProject, select, selectedIn, skillRows, tokens, toolRows,
   type Node, type Route, type Status,
 } from './tools'
 import { verdictSuffix } from './watchdog.ts'
@@ -104,10 +104,14 @@ const agents: View = (c, act, cols) => {
       {legend('running')} running {legend('waiting')} waiting {legend('done')} done · agents of this session only
     </Text>
   )
-  const keys: Hint[] = [['↑↓', 'select'], ['enter', 'fold'], ['a', T.showAll ? 'active only' : 'all'], ...KEYS_END]
+  const keys: Hint[] = [['↑↓', 'select'], ['enter', 'fold'], ['a', T.activeOnly ? 'all' : 'active only'], ...KEYS_END]
   if (!T.loaded) return { body: <Empty c={c} text="reading…" />, note, keys }
-  const shown = activeOf(T.agents, T.showAll)
-  const finished = T.agents.length - shown.length // 0 when all are shown
+  const mine = ofProject(T.agents, T.spawned, T.worktrees)
+  const shown = activeOf(mine, !T.activeOnly)
+  const foot = [
+    T.activeOnly && mine.length > shown.length ? `${mine.length - shown.length} finished` : '',
+    T.agents.length > mine.length ? `${T.agents.length - mine.length} other project${T.agents.length - mine.length === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ')
   const rows = flatten(buildTree(T.worktrees, shown, T.spawned, T.agentsOnly), T.folded)
   const ids = rows.map(({ node }) => node.id)
   const sel = selectedIn(ids)
@@ -121,7 +125,7 @@ const agents: View = (c, act, cols) => {
       <Box flexDirection="column">
         <Hidden c={c} k="down" hotkey="j" onPress={() => step(1)} />
         <Hidden c={c} k="up" hotkey="k" onPress={() => step(-1)} />
-        <Hidden c={c} k="all" hotkey="a" onPress={() => { T.showAll = !T.showAll; act.redraw() }} />
+        <Hidden c={c} k="all" hotkey="a" onPress={() => { T.activeOnly = !T.activeOnly; act.redraw() }} />
         {rows.map(({ node, guide }, i) =>
           agentRow(c, node, guide, i === sel, cols, () => {
             select(node.id, ids)
@@ -129,8 +133,8 @@ const agents: View = (c, act, cols) => {
             act.redraw()
           }),
         )}
-        {T.agents.length === 0 ? <Empty c={c} text="no agent spawned this session" /> : shown.length === 0 ? <Empty c={c} text="no active agent" /> : null}
-        {finished > 0 ? <Line c={c} k="finished" text={`  ${finished} finished`} color={P.dim} /> : null}
+        {T.agents.length === 0 ? <Empty c={c} text="no agent spawned this session" /> : shown.length === 0 ? <Empty c={c} text={mine.length === 0 ? 'no agent of this project' : 'no active agent'} /> : null}
+        {foot ? <Line c={c} k="foot" text={`  ${foot}`} color={P.dim} /> : null}
       </Box>
     ),
     note,

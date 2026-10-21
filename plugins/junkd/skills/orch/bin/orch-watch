@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # orch-watch — the agent watchdog for hosts with no hooks module (Codex, Kimi, OpenCode) and headless runs. Zero
 # tokens: bash + jq, no model. Prints one table of this session's agents: agent | role | status | idle | verdict.
-# Only the live ones (idle, running, alive) are listed; the finished ones (done, gone) are one footer count.
-#   orch-watch [--once] [--all] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
+# By default only this project's agents are listed (see below); a footer counts the live agents of other projects.
+#   orch-watch [--once] [--all] [--active] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
 #     --once            print the table once and exit 0 (otherwise every S seconds until Ctrl-C)
-#     --all             list the finished agents too (no footer count)
+#     --all             every project: the live agents of other projects too, and the newest session of any
+#                       project (default: this project's agents and its newest session)
+#     --active          only the live agents (idle, running, alive); the finished ones (done, gone) become a
+#                       footer count (default: both listed)
 #     --interval S      seconds between tables, 1-3600 (default 60)
 #     --idle-minutes N  idle minutes before an idle leftover is due for a stop, 1-120 (default: the
 #                       orch_idle_stop_minutes setting, else 10)
@@ -16,8 +19,13 @@
 #     scripts/orch-agent-stop.sh writes ({type, tokens}, by agent id and by name; the module's own carry a deadNote).
 #     A record's mtime is when the agent finished.
 #   - the live agents: claude/codex/kimi processes (ps) whose cwd (lsof, else pwdx, else /proc) is a task worktree
-#     (.../.worktrees/T<n>), each matched to the newest record of its task. A process whose cwd cannot be read is
+#     (.../.worktrees/T<n>) of this project (below the project root, orch-state's root without its /.worktrees/...
+#     tail), each matched to the newest record of its task. A process whose cwd cannot be read is
 #     listed by name only (verdict unknown).
+#   - the project of a session: the records hold none, so it is where the session's transcript sits,
+#     <config dir>/projects/<folder>/<session>.jsonl: this project's folder or one of its worktrees' (the folder
+#     name is the project path with every character outside [A-Za-z0-9] a dash). A session with no transcript found
+#     counts as this project's.
 #   - the task status of an implementer's task: the frontmatter of <tasks_dir>/T<n>.md (orch-state's root and config).
 # The verdict follows the module's rules (hooks/watchdog.ts): a reviewer (verify-coordinator, test-planner,
 # ui-reviewer, orch-ops, a pr-/gh- name) still alive after its record is due for a stop at once; an
@@ -26,7 +34,7 @@
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-once=0 all=0 interval=60 idle_minutes='' no_stop=0 session=''
+once=0 all=0 active=0 interval=60 idle_minutes='' no_stop=0 session=''
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; }
 die() { echo "orch-watch: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
@@ -34,6 +42,7 @@ while [ $# -gt 0 ]; do
     --once) once=1 ;;
     --no-stop) no_stop=1 ;;
     --all) all=1 ;;
+    --active) active=1 ;;
     --interval) [ $# -ge 2 ] || die "--interval needs seconds"; interval=$2; shift ;;
     --idle-minutes) [ $# -ge 2 ] || die "--idle-minutes needs minutes"; idle_minutes=$2; shift ;;
     --session) [ $# -ge 2 ] || die "--session needs an id"; session=$2; shift ;;
@@ -115,13 +124,28 @@ task_status() {
   echo "$st"
 }
 
+# This project: orch-state's root without its /.worktrees/... tail (the orchestrator may sit in a worktree).
+root=$("$here/orch-state" root 2>/dev/null || pwd)
+proj=${root%%/.worktrees/*}
+penc=${proj//[^A-Za-z0-9]/-}
+
+# session_here <id>: the session's transcript is in this project's folder or a worktree's of it (`--` is the `/.` of
+# `/.worktrees`); no transcript found, no way to tell: this project's.
+session_here() {
+  local f d
+  f=$(ls -d "$cfg"/projects/*/"$1.jsonl" 2>/dev/null | head -n1)
+  [ -n "$f" ] || return 0
+  d=$(basename "$(dirname "$f")")
+  [ "$d" = "$penc" ] || [[ "$d" == "$penc"--* ]]
+}
+
 table() {
-  local now dir sid f stem body key at prev rows='' procs='' pid args cmd cwd task
+  local now dir sid f stem body key at prev rows='' procs='' pid args cmd cwd task fin=0 other=0
   now=$(date +%s)
   sid=$session
   if [ -z "$sid" ] && [ -d "$agents_root" ]; then
     # the newest session folder by mtime
-    sid=$(ls -1t "$agents_root" 2>/dev/null | while IFS= read -r d; do [[ "$d" =~ ^[A-Za-z0-9_-]+$ ]] && [ -d "$agents_root/$d" ] && { echo "$d"; break; }; done)
+    sid=$(ls -1t "$agents_root" 2>/dev/null | while IFS= read -r d; do [[ "$d" =~ ^[A-Za-z0-9_-]+$ ]] && [ -d "$agents_root/$d" ] && { [ $all = 1 ] || session_here "$d"; } && { echo "$d"; break; }; done)
   fi
   dir="$agents_root/$sid"
 
@@ -138,6 +162,7 @@ table() {
     fi
     task=$(task_of '' "$cwd")
     [ -n "$task" ] || continue # not in a task worktree: the main loop or another session
+    if [ $all = 0 ] && [ "$cwd" != "$proj" ] && [[ "$cwd" != "$proj"/* ]]; then other=$((other + 1)); continue; fi # another project's
     procs+="$pid	$cmd	$cwd	$task"$'\n'
   done < <(ps -axo pid=,args= 2>/dev/null)
 
@@ -160,7 +185,7 @@ table() {
       END { for (i = 1; i <= n; i++) if (!(isid[i] && (k[i] in named))) print st[i] "\t" at[i] "\t" bd[i] }' | sort -t$'\t' -k2,2nr -k1,1)
   fi
 
-  local fin=0 out='agent	role	status	idle	verdict' name type note role cls idle st verdict alive t
+  local out='agent	role	status	idle	verdict' name type note role cls idle st verdict alive t
   local -a used=()
   while IFS=$'\t' read -r name at body; do
     [ -n "$name" ] || continue
@@ -170,7 +195,7 @@ table() {
     [ -n "$role" ] || role='-'
     idle="$(( (now - at) / 60 ))m"
     if [ -n "$note" ]; then
-      if [ $all = 1 ]; then out+=$'\n'"$name	$role	gone	$idle	dead ($note)"; else fin=$((fin + 1)); fi
+      if [ $active = 0 ]; then out+=$'\n'"$name	$role	gone	$idle	dead ($note)"; else fin=$((fin + 1)); fi
       continue
     fi
     task=$(task_of "$name")
@@ -185,7 +210,7 @@ table() {
       done <<<"$procs"
     fi
     if [ -z "$alive" ]; then
-      if [ $all = 1 ]; then out+=$'\n'"$name	$role	done	$idle	done"; else fin=$((fin + 1)); fi
+      if [ $active = 0 ]; then out+=$'\n'"$name	$role	done	$idle	done"; else fin=$((fin + 1)); fi
       continue
     fi
     used+=("$alive")
@@ -224,7 +249,10 @@ table() {
   [ $no_stop = 0 ] || mode='report only (--no-stop)'
   echo "orch-watch · session ${sid:-none} · idle stop after $idle_minutes min · $mode"
   column -t -s $'\t' <<<"$out"
-  [ $all = 1 ] || [ $fin = 0 ] || echo "$fin finished (--all lists them)"
+  local foot=''
+  [ $fin = 0 ] || foot="$fin finished"
+  [ $other = 0 ] || foot+="${foot:+ · }$other other project$([ $other = 1 ] || echo s)"
+  [ -z "$foot" ] || echo "$foot"
 }
 
 if [ $once = 1 ]; then
