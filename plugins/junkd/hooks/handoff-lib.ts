@@ -24,6 +24,8 @@ export const S = {
   calls: 0,
   pending: null as { id: string; text: string; delivered: boolean } | null, // the continuation the handon turn carries (handoffContinuation)
   asks: 0, // times this cycle asked the model for the handoff file (1 when the loop fires, +1 per re-ask, 0 once it is written); MAX_ASKS then gives up
+  clearFailed: false, // the /clear of a cycle timed out, was denied or threw: the next turn end tries again
+  clearTries: 0, // retries of that /clear since it last worked; MAX_CLEAR_RETRIES then gives up
   count: 0,
   lastId: null as string | null,
   fresh: false, // right after /clear: usage() still reports the old window until the first response
@@ -81,6 +83,11 @@ export const PROMPT_DELAY_MS = 1000
 
 // The user's cap: a handoff asked for this many times and still not written disarms the loop.
 export const MAX_ASKS = 3
+
+// The /clear of a cycle: how long it may take before it counts as lost, and how many turn ends retry it.
+// ponytail: both are the person's figures (10 s, 3), not measured against the host.
+export const CLEAR_TIMEOUT_MS = 10_000
+export const MAX_CLEAR_RETRIES = 3
 
 export const LIMIT_PROMPT = 'Continue where the rate limit stopped you'
 export const LIMIT_GRACE = 120_000 // 2 min after the window resets

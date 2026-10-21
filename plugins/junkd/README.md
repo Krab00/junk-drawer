@@ -424,6 +424,14 @@ it was armed that it did not record (it lists the handoffs folder once per idle 
 and runs the same `/clear`, `/junkd:handon <id>` and continuation as after its own ask. The 3-tries cap below counts only
 the loop's own asks. A handoff written while the loop is off does nothing, and a file older than the arming is not taken.
 
+**A `/clear` that does not happen is retried.** The cycle's `/clear` is issued and logged (`decision=cycle:clear-issued`).
+If the host does not answer within 10 seconds, or the call is rejected (a hook above refused it, or it threw), the log
+says `cycle:clear-failed:timeout` or `cycle:clear-failed:error`, the loop stays in the clear phase and does not run
+`/junkd:handon` in the uncleared session. At the next turn end it logs `cycle:retry-clear` and issues the `/clear` again;
+after 3 retries that all failed, the next turn end logs `give-up:clear`, toasts `ahandoff: /clear failed 4 times —
+disarmed` and disarms the loop. A `/clear` that works resets the count. (The engine hides a hook's `{ deny }` from the
+caller of `$.command.run`, so a refusal that resolves quietly cannot be told from a done clear.)
+
 A handoff the model does not write is asked for at most 3 times in all (the firing turn's ask is the first); after the
 third miss the loop disarms, logs `decision=give-up:3-tries` and toasts `ahandoff: handoff not written after 3 tries —
 disarmed`. A written handoff gives the next cycle its 3 tries again.
@@ -447,7 +455,7 @@ the one after a `/clear`, has its own file):
 `session.start` (a loop taken back after a reload) or `config.set` (a threshold change on an armed loop, `note=rearmed`). `decision` is `fire` (the limit is reached; a handoff is
 asked for), `skip:below-limit`, `skip:fresh` (the first measurement of the window after a handoff is still
 pending), `skip:phase-<phase>` (a handoff is already under way), `skip:disarmed`, `skip:five-hour-limit`,
-`skip:measure-only`, `skip:restored`, `skip:threshold-changed`, `fire:external-handoff` (a handoff the loop did not ask for was written; the chain follows), or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
+`skip:measure-only`, `skip:restored`, `skip:threshold-changed`, `cycle:clear-issued`, `cycle:clear-failed:<reason>`, `cycle:retry-clear`, `give-up:clear`, `fire:external-handoff` (a handoff the loop did not ask for was written; the chain follows), or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
 that turn, or one was written and the clear starts) or `give-up:3-tries` (the handoff was asked for 3 times and never written;
 the loop disarms). `used`, `limit` and `base` are tokens; `window` is the context window the host reported, in tokens; `note=legacy-percent` marks a threshold of 100 or less. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
 on the line of the turn that should have fired it.

@@ -65,6 +65,7 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
     logs: [] as { dir: string; path: string; line: string }[], // the measurement log's appends, in order
     logFails: false, // the append itself fails
     contexts: [] as (readonly string[] | undefined)[], // each submission's context, beside rec.prompts
+    clearMode: 'ok' as 'ok' | 'hang' | 'throw', // what /clear does
     handonHold: undefined as Promise<void> | undefined, // /junkd:handon does not end until this resolves
     dropPrompt: undefined as string | undefined, // the prompt.submit bottom refuses with this reason
   }
@@ -82,6 +83,8 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
   on('command.run', async (_$, e) => {
     rec.commands.push(`${e.command} ${e.args ?? ''}`.trim())
     if (rec.handonHold && /(^|:)handon$/.test(e.command)) await rec.handonHold // the host raises its submission meanwhile
+    if (e.command === 'clear' && rec.clearMode === 'hang') await new Promise(() => {}) // the host never answers
+    if (e.command === 'clear' && rec.clearMode === 'throw') throw new Error('clear blew up')
     return { text: `downstream ${e.command}` }
   })
   on('prompt.submit', (_$, e) => {
@@ -1135,7 +1138,7 @@ const measure = ($: Engine, percent: number) => $.session.measure({ context: usa
 const passMeasure = (on: On) => on('session.measure', (_$, e) => ({ changed: e.changed }))
 // A log line without its time: `<hook> percent=.. used=.. limit=.. armed=.. fresh=.. decision=.. base=.. threshold=.. phase=.. window=..`.
 const bodies = (rec: { logs: { line: string }[] }) => rec.logs.map(l => l.line.replace(/^\S+ /, ''))
-const LOG_LINE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z (tool\.call|turn\.complete|session\.measure|session\.start) percent=\d+ used=\d+ limit=(\d+|Infinity) armed=(true|false) fresh=(true|false) decision=(fire|skip:[a-z-]+|cycle:[a-z-]+) base=\d+ threshold=\d+ phase=\w+ window=\d+( note=\S+)?$/
+const LOG_LINE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z (tool\.call|turn\.complete|session\.measure|session\.start) percent=\d+ used=\d+ limit=(\d+|Infinity) armed=(true|false) fresh=(true|false) decision=(fire|fire:[a-z-]+|skip:[a-z-]+|cycle:[a-z:-]+|give-up:[a-z0-9-]+) base=\d+ threshold=\d+ phase=\w+ window=\d+( note=\S+)?$/
 const THRESHOLD_5 = { options: { handoff_threshold: 5, handoff_checkEvery: 1 } }
 const READ = { tool: 'Read', file_path: '/tmp/a' } as const
 
@@ -2044,4 +2047,139 @@ test('the loop\'s own ask still gives up after 3 tries (the cap counts the loop\
   await turn($) // gives up
   expect(bodies(rec).some(l => l.includes('give-up:3-tries'))).toBe(true)
   expect(rec.toasts.some(t => /not written after 3 tries/.test(t))).toBe(true)
+})
+
+// The engine strips a hook's `{ deny }` from a resolved $.command.run (it resolves `{}`, as a successful /clear may), so a
+// refused /clear cannot be told from a done one; the failures the loop can see are a timeout and a rejection.
+const setClear = (rec: { clearMode: string }, mode: 'ok' | 'hang' | 'throw') => { rec.clearMode = mode }
+
+// ---- a /clear that never happens (seen live: the clear was never queued and the phase stayed `clear` for good)
+
+// Runs the loop to the point where it issues /clear: fire, the model's handoff written, the turn end that continues.
+async function reachClear($: Engine, rec: ReturnType<typeof world>, clock: { advance(ms: number): Promise<unknown> }, id = 'abcdef12') {
+  rec.tokens = 400_000
+  await turn($) // fire: the loop asks for the handoff
+  await clock.advance(1000)
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_${id}.md`, content: '# h' })
+  await turn($) // cycle:continue
+  await clock.advance(1) // the detached chain starts: /clear is issued
+  await settle()
+}
+const settle = () => new Promise(r => setTimeout(r, 20)) // the chain's awaits end
+const clears = (rec: { commands: string[] }) => rec.commands.filter(c => c === 'clear').length
+
+test('a /clear that never answers: after 10 s the log says clear-failed:timeout, the phase stays clear, the handon waits', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  setClear(rec, 'hang')
+  await reachClear($, rec, clock)
+  expect(bodies(rec).some(l => l.includes('cycle:clear-issued'))).toBe(true)
+  await clock.advance(9_000)
+  await settle()
+  expect(bodies(rec).some(l => l.includes('clear-failed')), 'not yet: 9 s').toBe(false)
+  await turn($) // a turn end while the clear is still in flight is no retry
+  expect(lastLog(rec)).toContain('decision=skip:fresh') // the in-flight clear: no retry
+  expect(clears(rec)).toBe(1)
+  await clock.advance(1_000)
+  await settle()
+  expect(lastLog(rec)).toContain('decision=cycle:clear-failed:timeout')
+  expect(lastLog(rec)).toContain('fresh=false')
+  expect(lastLog(rec)).toContain('phase=clear')
+  expect(rec.commands.some(c => c.startsWith('junkd:handon'))).toBe(false)
+})
+
+test('after a lost /clear the next turn end retries it: cycle:retry-clear, then the handon and the continuation', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  setClear(rec, 'hang')
+  await reachClear($, rec, clock)
+  await clock.advance(10_000)
+  await settle()
+  setClear(rec, 'ok') // the host works again
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=cycle:retry-clear')
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(clears(rec)).toBe(2)
+  expect(rec.commands.indexOf('junkd:handon abcdef12')).toBeGreaterThan(rec.commands.lastIndexOf('clear'))
+  expect(rec.contexts.at(-1)?.join('\n')).toContain('continue as they asked: Continue after the handoff')
+})
+
+{
+  const mode = 'throw'
+  const reason = 'error'
+  test('a /clear that throws: clear-failed:error, no handon in the uncleared session, a retry on the next turn end', TOKENS_300, async ($, on) => {
+    const rec = world(on)
+    const clock = mock.clock(on)
+    await start($)
+    await ahandoff($, '')
+    setClear(rec, mode)
+    await reachClear($, rec, clock)
+    expect(lastLog(rec)).toContain(`decision=cycle:clear-failed:${reason}`)
+    expect(lastLog(rec)).toContain('phase=clear')
+    expect(rec.commands.some(c => c.startsWith('junkd:handon')), 'no handon went into the uncleared session').toBe(false)
+    setClear(rec, 'ok')
+    await turn($)
+    expect(lastLog(rec)).toContain('decision=cycle:retry-clear')
+    await handonRuns($, rec, clock, [handonOf('abcdef12')])
+    expect(rec.commands).toContain('junkd:handon abcdef12')
+    expect(clears(rec)).toBe(2)
+  })
+}
+
+test('a /clear lost for good: three retries, then give-up:clear, a toast and the loop disarmed', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  setClear(rec, 'throw')
+  await reachClear($, rec, clock)
+  for (let i = 1; i <= 3; i++) {
+    await turn($)
+    expect(lastLog(rec), `retry ${i}`).toContain('decision=cycle:retry-clear')
+    await clock.advance(1)
+    await settle()
+    expect(lastLog(rec), `retry ${i} failed`).toContain('decision=cycle:clear-failed:error')
+  }
+  expect(clears(rec)).toBe(4) // the first and three retries
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=give-up:clear')
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=skip:disarmed')
+  expect(rec.toasts).toContain('ahandoff: /clear failed 4 times — disarmed')
+  await clock.advance(1000)
+  expect(clears(rec)).toBe(4) // and no fifth
+  expect(await status($ as never).catch(() => ({ armed: false }))).toMatchObject({ armed: false })
+})
+
+test('a /clear that works again restarts the retry count: the next lost clear gets its 3 retries too', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await start($)
+  await ahandoff($, '')
+  setClear(rec, 'throw')
+  await reachClear($, rec, clock)
+  for (let i = 0; i < 2; i++) { // two retries lost
+    await turn($)
+    await clock.advance(1)
+    await settle()
+  }
+  setClear(rec, 'ok')
+  await turn($) // the third retry works
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  await $.session.measure({ context: usageTokens(20_000).context, rateLimits: [], changed: ['context'] }) // the new window opens
+  setClear(rec, 'throw')
+  rec.commands.length = 0
+  await reachClear($, rec, clock, 'abcdef13')
+  for (let i = 0; i < 3; i++) {
+    await turn($)
+    expect(lastLog(rec), `retry ${i + 1} of the second cycle`).toContain('decision=cycle:retry-clear')
+    await clock.advance(1)
+    await settle()
+  }
+  expect(clears(rec)).toBe(4)
 })
