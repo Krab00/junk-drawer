@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Wire junkd's status line into Claude Code, or take it out again. Claude Code only; needs jq.
+#   statusline-setup on [--force] [--config <key>] | off | status
+# CFG = ${CLAUDE_CONFIG_DIR:-$HOME/.claude}; the user settings file is $CFG/settings.json.
+#   on      copies bin/statusline.sh to $CFG/junkd/statusline.sh (a stable path: the plugin's own folder is a
+#           versioned cache, and ${CLAUDE_PLUGIN_ROOT} does not resolve in settings.json) and points
+#           `statusLine` at it. A statusLine of the person's own is refused (exit 1, one line saying why) unless
+#           --force; ours at the legacy path $CFG/junk-drawer-statusline.sh is moved to the new one. The script is
+#           copied on every run, so a plugin update or a stale copy never stays. With --config <key> the command is
+#           `$CFG/junkd/statusline.sh --config <key>`: the pluginConfigs entry (`junkd@inline` for a --plugin-dir
+#           session, `junkd@<marketplace>` for an installed one) whose statusline_* options the script reads; without
+#           it the script reads the first `junkd@` entry. A different key than the wired one rewrites the command.
+#   off     removes the statusLine key and the copies, only while its command is ours (the new path or the legacy
+#           one); a statusLine of the person's own is never touched (one line, exit 0).
+#   status  prints `on`, `off (<other command>)` or `off`.
+# settings.json: a missing or empty file is {}; one that does not parse, or is no object, is never written (exit 1).
+# Every write is temp + mv beside the real file (through a symlink), after a copy to settings.json.bak.
+set -u
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
+command -v jq >/dev/null 2>&1 || { echo "statusline-setup: needs jq" >&2; exit 1; }
+
+CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+DEST="$CFG/junkd/statusline.sh"
+LEGACY="$CFG/junk-drawer-statusline.sh"
+SETTINGS="$CFG/settings.json"
+
+mode="${1:-status}"
+[ $# -eq 0 ] || shift
+force=0
+key=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --force) force=1 ;;
+        --config)
+            if [ -z "${2:-}" ]; then echo "statusline-setup: --config needs a pluginConfigs key" >&2; exit 1; fi
+            key=$2
+            shift
+            ;;
+    esac
+    shift
+done
+# What statusLine.command should be: the copy, and --config <key> when a key is given.
+WANT="$DEST"
+[ -z "$key" ] || WANT="$DEST --config $key"
+
+# The settings as an object; exit 1 when the file is there and not one.
+current='{}'
+if [ -s "$SETTINGS" ]; then
+    current=$(jq -c 'if type == "object" then . else error("not an object") end' "$SETTINGS" 2>/dev/null) || {
+        echo "statusline-setup: $SETTINGS does not parse as a JSON object; not touched" >&2
+        exit 1
+    }
+fi
+# The statusLine's command; a statusLine with no command string of its own is described by its JSON. `theirs` is
+# set while settings.json has a statusLine that is not ours. `"statusLine": null` is none (a removed line can be left so).
+cmd=$(jq -r 'if has("statusLine") and .statusLine != null then (.statusLine.command? | strings) // (.statusLine | tojson) else empty end' <<<"$current")
+is_ours() { case "$1" in "$DEST" | "$DEST --config "* | "$LEGACY") return 0 ;; esac; return 1; }
+theirs=""
+[ -z "$cmd" ] || is_ours "$cmd" || theirs=$cmd
+
+# <jq filter>: apply it to settings.json, backup first, temp + mv beside the real file.
+write_settings() {
+    local real tmp
+    mkdir -p "$CFG" || return 1
+    real=$(readlink -f "$SETTINGS" 2>/dev/null) || real="$SETTINGS"
+    [ -n "$real" ] || real="$SETTINGS"
+    if [ -e "$real" ]; then
+        cp -p "$real" "$SETTINGS.bak" || return 1
+    fi
+    tmp=$(mktemp "$real.XXXXXX") || return 1
+    [ ! -e "$real" ] || cp -p "$real" "$tmp" 2>/dev/null # keep the file's mode
+    if { jq "$1" <<<"$current" > "$tmp" && mv -f "$tmp" "$real"; } 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+case "$mode" in
+    on)
+        if [ -n "$theirs" ] && [ "$force" != 1 ]; then
+            echo "statusline-setup: settings.json has a statusLine of your own ($cmd); not replaced (on --force replaces it)"
+            exit 1
+        fi
+        mkdir -p "$CFG/junkd" && install -m 0755 "$here/statusline.sh" "$DEST" || {
+            echo "statusline-setup: could not copy the status line to $DEST" >&2
+            exit 1
+        }
+        if [ "$cmd" = "$WANT" ] && [ "$(jq -r '.statusLine.type? // empty' <<<"$current")" = command ]; then
+            echo "statusline: on ($WANT)"
+            exit 0
+        fi
+        write_settings "$(printf '.statusLine = {type: "command", command: %s}' "$(jq -Rn --arg d "$WANT" '$d')")" || {
+            echo "statusline-setup: could not write $SETTINGS" >&2
+            exit 1
+        }
+        [ "$cmd" != "$LEGACY" ] || rm -f "$LEGACY"
+        echo "statusline: on ($WANT); backup in $SETTINGS.bak"
+        ;;
+    off)
+        if [ -n "$theirs" ]; then
+            echo "statusline: settings.json has a statusLine of your own ($cmd); left as it is"
+            exit 0
+        fi
+        if [ -n "$cmd" ]; then
+            write_settings 'del(.statusLine)' || { echo "statusline-setup: could not write $SETTINGS" >&2; exit 1; }
+        fi
+        rm -f "$DEST" "$LEGACY"
+        echo "statusline: off"
+        ;;
+    status)
+        if [ -n "$theirs" ]; then echo "off ($theirs)"
+        elif [ -n "$cmd" ]; then echo on
+        else echo off
+        fi
+        ;;
+    *)
+        echo "usage: statusline-setup on [--force] [--config <key>] | off | status" >&2
+        exit 1
+        ;;
+esac

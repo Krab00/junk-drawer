@@ -1,31 +1,47 @@
-// Plugin junkd's one hooks module: handoff, orch and tldr, the core setting and the /junkd frame, each in its own
-// files, composed here. A feature file exports `register<Feature>(on, options)` for the hooks only it has, and plain
+// Plugin junkd's one hooks module: handoff, orch, tldr, ctx, statusline and tools, the core setting and the /junkd
+// frame, each in its own files, composed here. A feature file exports `register<Feature>(on, options)` for the hooks only it has, and plain
 // named functions for the rest (see feature.ts); this file holds what is shared:
 // - `$.junkd`, the noun other mods call (types/index.d.ts): schema answers here; get, set, config, open and
 //   orchGuardState need `$`, which a noun may not capture, so the hooks on junkd.<method> below answer them.
-// - session.start, tool.call and the PromptHint render: the host takes one hook per event and filter from a
-//   module (a repeat `on` fails the load), and more than one feature needs each of them.
+// - session.start, tool.call, the unfiltered command.run and the PromptHint render: the host takes one hook per
+//   event and filter from a module (a repeat `on` fails the load), and more than one feature needs each of them.
 // - handoff.tsx: /junkd:handoff, /junkd:handon, /junkd:ahandoff, the auto handoff loop, the 🪃 segment, its pane.
 // - orch.tsx: the main-loop guard (tool.call, agent.spawn), /junkd:orch panel and its pane.
 // - tldr.tsx: /junkd:tldr's sentences and the terse flag file bin/tldr-hook reads.
+// - ctx.ts: the ctx rows and /junkd:ctx-limit, mirrored into the files bin/ctx-limit-hook reads.
+// - statusline.tsx: the statusline rows, /junkd:statusline, its pane, and bin/statusline-setup on|off.
+// - tools-pane.tsx (with tools.ts and tools-views.tsx): /junkd:tools and its pane, this session's agents over the
+//   repo's worktrees and the tools, MCP servers and skills it used (counted by tool.call and command.run here).
 // - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
 // - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
-// - panel.tsx: /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch).
+// - panel.tsx (with set.ts): /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools, lessons);
+//   a × or q on any pane of the set closes the whole set.
+// - dashboard.tsx (with dashboard.ts): /junkd:dashboard, the orch dashboard's status.js beside a copy of its page.
+// - watchdog.tsx (with watchdog.ts): the agent watchdog of orch, its timer, its ⚠ segment and its prompt.submit line.
+// - lessons.tsx (with lessons.ts, lessons-views.tsx): the lessons loop of orch: its tab, its 📒 segment, the blocking
+//   dialog and its prompt.submit line, /junkd:lessons.
 // Settings: one userConfig row per `<group>_<field>` (settings.ts), the /config row `junkd.<group>_<field>`.
 // Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; the flag files live under its junkd/ folder.
 import type { Register } from 'claude-code'
-import type { JunkdHandoffRoute } from '../types'
+import type { JunkdHandoffRoute, JunkdToolsRoute } from '../types'
 import { registerCache } from './cache'
 import { coreStart, registerCore } from './core'
+import { ctxStart, registerCtx } from './ctx'
 import { allSettings, getSetting, openPane, setSetting } from './dispatch'
-import { handoffSegment, handoffStart, handoffStatus, handoffToolCall, registerHandoff } from './handoff'
+import { handoffContinuation, handoffSegment, handoffStart, handoffStatus, handoffToolCall, registerHandoff } from './handoff'
 import { orchCatchDeny, orchGuardState, orchStart, orchToolDeny, registerOrch } from './orch'
 import { panelButton, panelStart, panelToggle, registerPanel } from './panel'
 import { SCHEMA, isKey } from './settings'
+import { registerStatusline, statuslineStart } from './statusline'
 import { registerTldr, tldrStart } from './tldr'
+import { registerTools, toolsCommandRan, toolsCount, toolsStart } from './tools-pane'
+import { dashboardStart, dashboardToolCall, registerDashboard } from './dashboard.tsx'
+import { registerWatchdog, watchCallEnd, watchCallStart, watchdogKeep, watchdogLines, watchdogSegment, watchdogStart } from './watchdog.tsx'
+import { lessonsPromptLine, lessonsSegment, lessonsStart, registerLessons } from './lessons.tsx'
 
 const NO_HOOK = 'junkd: the hooks module did not answer'
 const ROUTES: readonly JunkdHandoffRoute[] = ['auto', 'handoffs', 'settings']
+const TOOLS_ROUTES: readonly JunkdToolsRoute[] = ['agents', 'tools', 'mcp', 'skills']
 const reason = (err: unknown) => (err as Error)?.message ?? String(err)
 
 export const register: Register = (on, options) => {
@@ -72,12 +88,14 @@ export const register: Register = (on, options) => {
   on('junkd.open', async ($, e) => {
     const pane = e?.pane
     const route = e?.route
-    if (route !== undefined && !ROUTES.includes(route)) return { deny: `junkd: no tab ${String(route)}` }
+    // Each pane its own routes: the tools tabs on the tools pane, handoff's on the others (which refuse them).
+    const known: readonly string[] = pane === 'tools' ? TOOLS_ROUTES : ROUTES
+    if (route !== undefined && !known.includes(route)) return { deny: `junkd: no tab ${String(route)}` }
     try {
       if (pane === 'junkd') {
         if (route !== undefined) return { deny: `junkd: the junkd pane has no tab ${String(route)}` }
         await panelToggle($)
-      } else if (pane === 'handoff' || pane === 'orch') await openPane($, pane, route === undefined ? {} : { route })
+      } else if (pane === 'handoff' || pane === 'orch' || pane === 'statusline' || pane === 'tools' || pane === 'lessons') await openPane($, pane, route === undefined ? {} : { route })
       else return { deny: `junkd: no pane ${String(pane)}` }
     } catch (err) {
       return { deny: reason(err) }
@@ -88,30 +106,63 @@ export const register: Register = (on, options) => {
 
   // Every feature's start, side by side; one that fails leaves the others started, and its error is raised after.
   on('session.start', async ($, e, next) => {
-    const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), panelStart($)])).find(
+    const watched = watchdogStart($).catch(() => undefined) // the watchdog's timer, beside the features
+    const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), ctxStart($), statuslineStart($), toolsStart($), panelStart($)])).find(
       r => r.status === 'rejected',
     )
+    await watched
     if (failed) throw failed.reason
+    await dashboardStart($) // after the features' starts: it reads orch's settings; never throws
+    await lessonsStart($).catch(() => undefined) // after orch's start too: the stores, and the dialog of an orch session
     return next(e)
   })
 
-  // orch's guard first (the model's own calls only), then handoff's gate past the context threshold. A hook that
-  // throws is skipped and the tool runs: the .catch refuses instead while the guard holds the main loop.
+  // The main loop's next turn: the watchdog's pending lines, then the lessons line while the dialog stands, as
+  // context. A prompt that does not enter gives the watchdog's lines back for the next one.
+  on('prompt.submit', async ($, e, next) => {
+    const lines = watchdogLines()
+    const lesson = await lessonsPromptLine($).catch(() => undefined)
+    const continuation = handoffContinuation(e) // the handon turn of the auto loop carries its continuation prompt
+    const context = [...lines.length ? [lines.join('\n')] : [], ...lesson ? [lesson] : [], ...continuation ? [continuation] : []]
+    if (!context.length) return next(e)
+    const r = await next({ ...e, context: [...(e.context ?? []), ...context] })
+    if (r.drop !== undefined && lines.length) watchdogKeep(lines)
+    return r
+  })
+
+  // orch's guard first (the model's own calls only), then handoff's gate past the context threshold, then the tools
+  // pane's count of the model's call (it never throws). A hook that throws is skipped and the tool runs: the .catch
+  // refuses instead while the guard holds the main loop.
   on('tool.call', async ($, e, next) => {
     const deny = next.origin.plugin === 'engine' ? await orchToolDeny($, e) : undefined
     if (deny) return { deny }
-    return handoffToolCall($, e, next)
+    await watchCallStart($, e, next.origin.plugin) // the watchdog: a subagent's call in flight (never throws)
+    const r = await handoffToolCall($, e, next)
+    await watchCallEnd($, e, next.origin.plugin)
+    if (next.origin.plugin === 'engine') await toolsCount($, e, r)
+    if (next.origin.plugin === 'engine') await dashboardToolCall($, e, r)
+    return r
   }).catch(($, e, next) => {
+    void watchCallEnd($, e, next.origin.plugin) // a call the hook above started and could not end
     if (next.called) return next(e)
     const deny = orchCatchDeny(e.agentId)
     return deny ? { deny } : next(e)
+  })
+
+  // Every command, after it ran: the tools pane's Skills tab counts the slash runs. Registered before the features'
+  // own command.run hooks, so it is the outermost and sees a run one of them answers.
+  on('command.run', async ($, run, next) => {
+    const out = await next(run)
+    await toolsCommandRan($, run)
+    return out
   })
 
   // What is beneath (another plugin's hint, or the engine's own line), then 🪃 (handoff) and ✚ junkd, side by side.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const { Box } = $.ui.resolve(e)
     const below = await next(e).catch(() => undefined)
-    const parts = [below, handoffSegment($, e), panelButton($, e)].filter(Boolean)
+    const parts = [below, handoffSegment($, e), lessonsSegment($, e), panelButton($, e)].filter(Boolean)
+    parts.splice(below ? 1 : 0, 0, ...[watchdogSegment($, e, () => void openPane($, 'tools', { route: 'agents' }).catch(err => $.ui.toast(`✗ ${reason(err)}`)))].filter(Boolean))
     if (parts.length === 1) return parts[0]!
     return (
       <Box flexDirection="row" gap={2}>
@@ -125,5 +176,11 @@ export const register: Register = (on, options) => {
   registerHandoff(on, options)
   registerOrch(on, options)
   registerTldr(on, options)
+  registerCtx(on, options)
+  registerStatusline(on, options)
+  registerTools(on, options)
   registerPanel(on, options)
+  registerDashboard(on, options)
+  registerWatchdog(on, options)
+  registerLessons(on, options)
 }

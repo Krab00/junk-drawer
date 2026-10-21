@@ -238,7 +238,7 @@
       <tr>
         <td><strong>No memory</strong></td>
         <td>The loop repeats on task 7 the mistake it made on task 2. Nothing learned in one task informs the next.</td>
-        <td>A <strong>retro step</strong> appends a lesson to <code>_lessons.md</code> at every resolve. Those lessons feed the next task's plan and verification. A pattern recurring across ≥2 tasks is proposed for promotion into a permanent standing check.</td>
+        <td>A <strong>retro step</strong> adds a lesson to <code>_lessons.md</code> when a resolve had a signal (a fix round, a surviving mutant, a verify FAIL). Those lessons feed the next task's plan and verification. A pattern recurring across ≥2 tasks is proposed for promotion into a permanent standing check.</td>
       </tr>
       <tr>
         <td><strong>Tokens burned on unreachable goals</strong></td>
@@ -276,9 +276,9 @@
                               │
                     ┌─────────▼──────────┐
                     │  4. VERIFY (gate)  │  verify-coordinator:
-                    │                    │    test-planner → matrix from the DIFF
+                    │                    │    matrix from the DIFF (test-planner if critical)
                     │                    │    ui-reviewer   → browser, screenshot/criterion
-                    │                    │    test-reviewer → test-quality audit
+                    │                    │    test-quality audit (≥ 5 own mutants)
                     │                    │    + inline curl/build/test + standing checks
                     └─────────┬──────────┘   → ONE merged verdict + FAILING: list
                               │
@@ -288,7 +288,7 @@
                   └───────────┬───────────┘        final round FRESH impl. + diff + why
                               │                     still failing after R → blocked + escalate
                     ┌─────────▼──────────┐
-                    │  6. RETRO          │  append lesson → _lessons.md
+                    │  6. RETRO          │  lesson add on a signal → _lessons.md
                     └─────────┬──────────┘
                               │
                     ┌─────────▼──────────┐
@@ -311,7 +311,7 @@
         <li><strong>Still failing after round R</strong> → the task is <code>blocked</code>, the escalation reason is appended, and the loop moves on.</li>
       </ul>
     </li>
-    <li><strong>Retro.</strong> Every resolve appends a lesson to <code>_lessons.md</code> — see <a href="#s5">§5</a>.</li>
+    <li><strong>Retro.</strong> A resolve with a signal adds a lesson to <code>_lessons.md</code> — see <a href="#s5">§5</a>.</li>
     <li><strong>Draft PR + iterate.</strong> In <code>chain</code>/<code>all</code> the next task branches off the one just finished; in <code>batch</code> verdicts are consumed as coordinators finish. At end of run <code>orch-sync push</code> reflects statuses to the backend, and the run prints its <code>BACKLOG:</code> line.</li>
   </ol>
 
@@ -323,10 +323,9 @@
     <tbody>
       <tr><td><code>implementer</code></td><td>Builds exactly one task on its own branch in its own worktree.</td><td>Scoped changes only (no architectural decisions, no adjacent “improvements”); authors tests for its change; runs the real build/lint/test before reporting; never touches the base branch.</td></tr>
       <tr><td><code>lead-implementer</code></td><td>Builds one <em>big</em> task by fanning out to parallel sub-implementers.</td><td>Freezes the shared contract (types/DTOs/signatures) <strong>first</strong>, so no slice guesses another's interface; slices are <strong>file-disjoint</strong>; merges them back and runs the final gate; <strong>falls back to flat</strong> if the task can't be cut cleanly.</td></tr>
-      <tr><td><code>verify-coordinator</code></td><td>Owns the entire verification of one task.</td><td>Builds and tears down the verify env; spawns the three reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. <strong>No PASS without tool evidence.</strong> Keeps all the heavy output out of the orchestrator's context.</td></tr>
-      <tr><td><code>test-planner</code></td><td>Reads the <strong>diff</strong> and derives the mandatory test matrix.</td><td>One binding row per changed branch / guard / validation / fallback / boundary — happy <strong>and</strong> edge — each with a <em>real</em> induction recipe and a preferred layer (<code>e2e</code>/<code>web</code>/<code>api</code>). A <code>?state=</code>-style preview is never accepted as proof of an error/edge row.</td></tr>
+      <tr><td><code>verify-coordinator</code></td><td>Owns the entire verification of one task.</td><td>Builds and tears down the verify env; audits the shipped tests itself and spawns the reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. <strong>No PASS without tool evidence.</strong> Keeps all the heavy output out of the orchestrator's context.</td></tr>
+      <tr><td><code>test-planner</code></td><td>Reads the <strong>diff</strong> and derives the mandatory test matrix; spawned only for a <code>critical: true</code> task or on request (the coordinator derives the matrix itself otherwise).</td><td>One binding row per changed branch / guard / validation / fallback / boundary — happy <strong>and</strong> edge — each with a <em>real</em> induction recipe and a preferred layer (<code>e2e</code>/<code>web</code>/<code>api</code>). A <code>?state=</code>-style preview is never accepted as proof of an error/edge row.</td></tr>
       <tr><td><code>ui-reviewer</code></td><td>Verifies the UI/browser criteria by driving the real browser.</td><td>One screenshot per criterion via <code>agent-browser</code>; every state (default/empty/loading/error/no-permission); data checked against the real account, not a mock; PASS/FAIL/PM-REVIEW — never on the implementer's word.</td></tr>
-      <tr><td><code>test-reviewer</code></td><td>Audits the tests that ship with the change.</td><td>Judges <em>quality</em> (real assertions, coverage of the change, no over-mocking, modifications truly updated) — not just that the suite is green. Returns <code>OK</code> or <code>GAPS</code>; <code>GAPS</code> is a FAIL.</td></tr>
     </tbody>
   </table></div>
   <div class="note"><p>A note on <strong>where evidence lives</strong>: the <code>verify-coordinator</code>
@@ -356,7 +355,7 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Standing check</th><th>Gated on</th><th>What it proves</th></tr></thead>
     <tbody>
-      <tr><td><strong>Green scoped suite + change covered</strong>, plus an independent <strong>test-quality audit</strong> (<code>test-reviewer</code> <code>GAPS</code> = FAIL) when tests were added/touched</td><td><code>tests</code> declared</td><td>The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions.</td></tr>
+      <tr><td><strong>Green scoped suite + change covered</strong>, plus the coordinator's own <strong>test-quality audit</strong> (real assertions, modified behaviour re-pinned, ≥ 5 own mutants from the diff's branches; <code>GAPS</code> = FAIL) when tests were added/touched</td><td><code>tests</code> declared</td><td>The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions.</td></tr>
       <tr><td><strong>Malformed body → clean 4xx naming the field, never a 500</strong></td><td><code>api</code> declared</td><td>Every touched write-endpoint validates its input. Happy-path-only is not a pass.</td></tr>
       <tr><td><strong>Real-data provenance</strong> — a fresh account created <em>this run</em> with <strong>random</strong> values; rendered == returned == stored</td><td><code>web</code> + <code>api</code> declared</td><td>The screen shows <em>this account's</em> data from the live API — never a mock/demo seed or a <code>?preview=</code> switch a hardcoded value could pass.</td></tr>
       <tr><td><strong>FE actually calls the live API</strong> on data-backed routes, verified <strong>E2E through the UI</strong></td><td><code>web</code> + <code>api</code> declared</td><td>The frontend really consumes the backend end to end — not static content with a silent mock behind it.</td></tr>
@@ -369,9 +368,10 @@
   <h2 id="s5">5. Learning — the retro / <code>_lessons.md</code> <a class="anchor" href="#s5">#</a></h2>
   <p><code>orch</code> learns <em>within a run</em> and, with your approval, <em>across runs</em>.</p>
   <ul>
-    <li><strong>The retro step.</strong> At <strong>every</strong> task resolve — especially after FAIL rounds or a <code>blocked</code> — the orchestrator appends 2–3 sentences to <code>&lt;tasks_dir&gt;/_lessons.md</code>: <em>what failed, why, and what check would have caught it.</em></li>
+    <li><strong>The retro step.</strong> At a task resolve that had a <strong>signal</strong> — a fix round, a surviving mutant, a PM-REVIEW that found a bug, a dead or stalled agent, a verify FAIL — the orchestrator adds a lesson with <code>orch-state lesson add</code>, 2–3 sentences, plus a promotion target; a clean round-0 PASS writes nothing: <em>what failed, why, and what check would have caught it.</em></li>
     <li><strong>Fed forward immediately.</strong> Those lessons are handed into the next task's plan (step 3) and into the next <code>verify-coordinator</code> spawn (step 4). So a mistake made on task 2 informs task 3 in the same run.</li>
     <li><strong>Promotion to a standing check.</strong> When the <strong>same pattern recurs across ≥2 tasks</strong>, the orchestrator proposes promoting it into <code>standing_checks_extra</code> in the config — where it becomes a permanent, always-on check for every future task. This <strong>asks you first; the loop never edits the config silently.</strong></li>
+    <li><strong>Rules need checks.</strong> A rule written in <code>CLAUDE.md</code> (&ldquo;never&rdquo;, &ldquo;always&rdquo;, &ldquo;must&rdquo;, &ldquo;only&rdquo;, a &ldquo;Binding rules&rdquo; section) holds only on the prompt until a tool checks it. <code>/junkd:orch-init</code> scans every <code>CLAUDE.md</code>/<code>AGENTS.md</code> and proposes, per rule, a <code>standing_checks_extra</code> row with a concrete recipe (grep / test / curl), a pointer to the test that already pins it, or &ldquo;stays prose&rdquo;. You confirm each row; re-runs propose only new rules. The starter <code>TEST-POLICY.md</code> it offers makes this a standing rule: a task that adds a binding rule adds its check in the same branch. The retro shortcut: a lesson that names a rule already in <code>CLAUDE.md</code> is proposed for promotion at once (&ldquo;rule exists in CLAUDE.md &sect;X, no check&rdquo;), without waiting for a second task.</li>
   </ul>
   <p>This is the missing feedback loop in naive agent runs: without it, the same class of bug gets
   re-litigated task after task.</p>
@@ -480,7 +480,7 @@ criteria_source: derived # verbatim | derived
     <li><strong>Adhoc task created.</strong> <code>orch-state new ADHOC-1 "fix login redirect bug"</code> writes the skeleton file; the orchestrator fills the description from your prompt.</li>
     <li><strong>Criteria frozen (interactively).</strong> No structured DoD exists, so the loop <em>derives</em> criteria — e.g. <em>“AC1: after a successful login the user lands on <code>/dashboard</code>, not <code>/login</code> (modality: ui)”</em> — each traceable to a sentence in your prompt, and shows them to you for approval.</li>
     <li><strong>Delegated.</strong> A short plan + the current lessons go to an <code>implementer</code>, spawned in its own worktree on branch <code>task/adhoc-1-fix-login-redirect</code>, fed the dev-server and test commands from the config.</li>
-    <li><strong>Verified.</strong> <code>verify-coordinator</code> boots the app, has <code>test-planner</code> derive the matrix from the diff (including the <em>failed</em>-login and <em>already-logged-in</em> branches), has <code>ui-reviewer</code> drive the real browser through the redirect on a fresh random account, runs the standing checks, and returns a merged verdict.</li>
+    <li><strong>Verified.</strong> <code>verify-coordinator</code> boots the app, derives the matrix from the diff (including the <em>failed</em>-login and <em>already-logged-in</em> branches), has <code>ui-reviewer</code> drive the real browser through the redirect on a fresh random account, runs the standing checks, and returns a merged verdict.</li>
     <li><strong>Resolved.</strong> All PASS → the task is <code>done</code>, a <strong>draft PR</strong> is opened (<code>gh pr create --draft …</code>), and a lesson is appended to <code>_lessons.md</code>. The run prints <code>BACKLOG: DRAINED</code>.</li>
   </ol>
   <p>You review and merge the PR — <code>orch</code> never does.</p>

@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook: enforce the session context-size limit.
+# Off unless <junkd folder>/ctx-limit-threshold holds a number (the folder as bin/ctx-limit spells it: Claude Code
+# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/, Codex and Kimi Code <home>/junk-drawer/junkd/). Past it, the action
+# in ctx-limit-action:
+#   block (default) -> Codex: hook JSON {continue:false}; Claude Code and Kimi Code: exit 2, the reason on stderr
+#   warn            -> stdout added to context, prompt proceeds
+#   cmd             -> run ctx-limit-cmd with CTX_TOKENS and CTX_LIMIT set, prompt proceeds
+# The host comes from host-lib (JUNK_DRAWER_RUNTIME, else what the host exports to its hooks); a host it cannot tell
+# exits 0: the guard never blocks on a guess. Needs only jq; reads transcript_path from the hook's JSON stdin.
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac # no dirname: a hook may run with a bare PATH
+. "$here/host-lib" 2>/dev/null || exit 0
+jd_host 2>/dev/null || exit 0
+if [ "$JD_HOST" = claude ]; then cfg="$JD_CFG/junkd"; else cfg="$JD_FLAGS/junkd"; fi
+thrf="$cfg/ctx-limit-threshold"
+[ -f "$thrf" ] || exit 0
+thr=$(cat "$thrf"); case "$thr" in ''|*[!0-9]*) exit 0 ;; esac
+
+input=$(cat)
+# Escape hatches: the control and handoff commands, /clear and /compact (the block message names it) pass even over the limit, else the guard could lock you out
+# (no /junkd:ctx-limit off, no /junkd:handoff to recover). Slash commands arrive in .prompt as
+# "/<plugin>:<command> [args]" (e.g. /junkd:ctx-limit 300k); /ctx-limit, /handoff and /handon are the OpenCode
+# wrappers' names. Whole command/skill names only, so lookalikes such as /ctx-limiter or $handoffs do not pass.
+p=$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)
+p="${p#"${p%%[![:space:]]*}"}"   # trim leading whitespace
+if [[ "$p" =~ ^(/junkd:(ctx-limit|handoff|handon|ahandoff)|/ctx-limit|/handoff|/handon|/clear|/compact|/skill:(ctx-limit|handoff|handon))([[:space:]]|$) ]] ||
+   [[ "$p" =~ ^(\$ctx-limit|\$handoff)([[:space:]]|$) ]] ||
+   [[ "$p" =~ ^Use[[:space:]]+(\$ctx-limit|\$handoff)([[:space:]]|$) ]]; then
+    exit 0
+fi
+tp=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
+if [ -z "$tp" ] && [ "$JD_HOST" = kimi ]; then
+    # Kimi hooks pass session_id/cwd, not transcript_path; resolve the live wire.jsonl ourselves.
+    sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
+    tp=$(ls -t "${KIMI_CODE_HOME:-$HOME/.kimi-code}/sessions"/*/"${sid:-__none__}"/agents/main/wire.jsonl 2>/dev/null | head -1)
+fi
+[ -n "$tp" ] && [ -f "$tp" ] || exit 0
+# ponytail: inline the token count — plugin bin/ is NOT on a hook's PATH, so we can't call
+# ctx-tokens here. jq over the transcript is all it needs. Keep in sync with ctx-tokens' math.
+ctx=$(jq -rs '
+    [ .[] | select(.type == "event_msg" and .payload.type == "token_count") ][-1]
+    | .payload.info.last_token_usage.input_tokens // empty
+' "$tp" 2>/dev/null)
+if [ -z "$ctx" ]; then
+    ctx=$(jq -rs '
+        [ .[] | select(.type == "context.append_loop_event" and .event.type == "step.end" and .event.usage) ][-1]
+        | if . == null then empty
+          else .event.usage as $u | (($u.inputOther // 0) + ($u.inputCacheRead // 0) + ($u.inputCacheCreation // 0))
+          end
+    ' "$tp" 2>/dev/null)
+fi
+if [ -z "$ctx" ]; then
+    ctx=$(grep '"usage"' "$tp" 2>/dev/null | tail -n1 | jq -r '
+        (.message.usage // .usage) as $u
+        | (($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0))' 2>/dev/null)
+fi
+case "$ctx" in ''|*[!0-9]*) exit 0 ;; esac
+[ "$ctx" -ge "$thr" ] 2>/dev/null || exit 0
+
+action=$(cat "$cfg/ctx-limit-action" 2>/dev/null); action=${action:-block}
+case "$action" in
+    warn)
+        if [ "$JD_HOST" != claude ]; then
+            echo "ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider compaction or invoke the handoff skill."
+        else
+            echo "ctx-limit: context is ${ctx} tokens (limit ${thr}). Consider /junkd:handoff then /clear."
+        fi
+        ;;
+    cmd)
+        c=$(cat "$cfg/ctx-limit-cmd" 2>/dev/null)
+        [ -n "$c" ] && CTX_TOKENS="$ctx" CTX_LIMIT="$thr" bash -c "$c" >/dev/null 2>&1
+        ;;
+    *)
+        msg="ctx-limit reached: ${ctx} >= ${thr} tokens. Use /junkd:handoff to prepare a fresh continuation, compact, or disable ctx-limit."
+        if [ "$JD_HOST" = codex ]; then
+            jq -cn --arg msg "$msg" '{continue:false, stopReason:$msg, systemMessage:$msg}'
+        else
+            echo "$msg" >&2
+            exit 2
+        fi
+        ;;
+esac
+exit 0

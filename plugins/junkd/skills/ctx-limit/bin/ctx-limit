@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Configure the per-session context-size limit the UserPromptSubmit hook (ctx-limit-hook) enforces. The state is
+# three files the hook reads fresh each turn, so a change is live (no new session):
+#   ctx-limit-threshold  the limit in tokens; no file = off
+#   ctx-limit-action     block (the default), warn or cmd
+#   ctx-limit-cmd        the shell command of action cmd
+# They live in the host's junkd folder (host-lib picks the host: JUNK_DRAWER_RUNTIME, else auto-detected; an unknown
+# host exits 2 and writes nothing): Claude Code ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/ (the junkd hooks module
+# spells it the same), Codex ${CODEX_HOME:-$HOME/.codex}/junk-drawer/junkd/, Kimi Code
+# ${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/junkd/, OpenCode ${XDG_DATA_HOME:-$HOME/.local/share}/opencode/
+# junk-drawer/junkd/ (OpenCode runs no hook: there the files are only recorded).
+#   ctx-limit | ctx-limit status    -> show status
+#   ctx-limit on                    -> enable at the default (300000 on Claude Code, 200000 elsewhere) if no threshold set yet
+#   ctx-limit <number>              -> set threshold and enable; accepts 300000, 300k, 1m
+#   ctx-limit off | reset           -> disable
+#   ctx-limit action <block|warn|cmd>
+#   ctx-limit cmd <shell command>   -> command for `action cmd` (also switches action to cmd)
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
+. "$here/host-lib" || exit 2
+jd_host || exit 2
+if [ "$JD_HOST" = claude ]; then cfg="$JD_CFG/junkd"; def=300000; else cfg="$JD_FLAGS/junkd"; def=200000; fi
+thrf="$cfg/ctx-limit-threshold"; actf="$cfg/ctx-limit-action"; cmdf="$cfg/ctx-limit-cmd"
+
+# Parse a token count with optional k/m suffix (case-insensitive) into a plain integer. Fails on junk.
+parse_tokens() {
+    local v="$1" mult=1
+    case "$v" in
+        *[kK]) mult=1000;    v="${v%?}" ;;
+        *[mM]) mult=1000000; v="${v%?}" ;;
+    esac
+    case "$v" in ''|*[!0-9]*) return 1 ;; esac
+    echo $((v * mult))
+}
+# Only a write creates the folder: status and off leave a host that never used the guard as it was.
+mkcfg() { mkdir -p "$cfg" || exit 1; }
+case "${1:-status}" in
+    status)
+        if [ -f "$thrf" ]; then state="ON @ $(cat "$thrf") tokens"; else state="OFF"; fi
+        act=$(cat "$actf" 2>/dev/null); act=${act:-block}
+        echo "ctx-limit: $state — action: $act"
+        [ "$act" = cmd ] && echo "  cmd: $(cat "$cmdf" 2>/dev/null)"
+        [ "$JD_HOST" != opencode ] || echo "  (OpenCode runs no hook: the limit is recorded, not enforced)"
+        ;;
+    on) mkcfg; [ -f "$thrf" ] || echo "$def" > "$thrf"; echo "ctx-limit ON @ $(cat "$thrf") tokens." ;;
+    off|reset) rm -f "$thrf"; echo "ctx-limit OFF." ;;
+    action)
+        case "${2:-}" in
+            block|warn|cmd) mkcfg; echo "$2" > "$actf"; echo "ctx-limit action: $2." ;;
+            *) echo "usage: ctx-limit action <block|warn|cmd>" >&2; exit 1 ;;
+        esac ;;
+    cmd)
+        shift; [ -n "${1:-}" ] || { echo "usage: ctx-limit cmd <shell command>" >&2; exit 1; }
+        mkcfg; printf '%s\n' "$*" > "$cmdf"; echo cmd > "$actf"
+        echo "ctx-limit cmd set; action switched to cmd." ;;
+    *)  n=$(parse_tokens "$1") || { echo "usage: ctx-limit [<number>[k|m]|on|off|reset|status|action <mode>|cmd <shell>]" >&2; exit 1; }
+        mkcfg; echo "$n" > "$thrf"; echo "ctx-limit ON @ $n tokens (takes effect next prompt)." ;;
+esac

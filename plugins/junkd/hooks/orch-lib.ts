@@ -37,10 +37,31 @@ export const SCHEMA: readonly OrchSchemaEntry[] = rowsOf('orch').map(f => ({
   ...(f.options ? { options: f.options } : {}),
 }))
 export const isField = (key: unknown): key is OrchField => SCHEMA.some(f => f.key === key)
-// The two number rows take a whole number in these bounds; the manifest has no min/max field, so they live here.
-export const ORCH_RANGE: Record<'implementer_ctx_k' | 'rounds', readonly [number, number]> = { implementer_ctx_k: [50, 1000], rounds: [1, 10] }
-export type OrchValues = { enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number; claude_md: boolean }
-export const O: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false }
+// The dashboard's two number rows: any finite number, rounded and clamped to these bounds (the manifest has no
+// min/max: the engine would refuse the whole module over a stored value out of range).
+export type DashField = 'dashboard_refresh' | 'dashboard_window_h'
+export type DashValues = { dashboard_refresh: number; dashboard_window_h: number }
+export const DASH_RANGE: Record<DashField, readonly [number, number]> = { dashboard_refresh: [5, 600], dashboard_window_h: [1, 168] }
+export const DASH_DEFAULTS: DashValues = { dashboard_refresh: 30, dashboard_window_h: 24 }
+export const isDashField = (key: unknown): key is DashField => key === 'dashboard_refresh' || key === 'dashboard_window_h'
+export const clampDash = (key: DashField, n: number): number => Math.min(DASH_RANGE[key][1], Math.max(DASH_RANGE[key][0], Math.round(n)))
+// A number, or a string holding one (trimmed); NaN for anything else.
+const asNumber = (raw: unknown): number => (typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN)
+// The number rows take a whole number in these bounds; the manifest has no min/max field, so they live here.
+export type OrchNumberField = 'implementer_ctx_k' | 'rounds' | 'idle_stop_minutes' | 'stall_minutes'
+export const ORCH_RANGE: Record<OrchNumberField, readonly [number, number]> = { implementer_ctx_k: [50, 1000], rounds: [1, 10], idle_stop_minutes: [1, 120], stall_minutes: [1, 120] }
+// The watchdog's minutes are clamped on every write (any finite number is taken, rounded into the bounds); the other
+// two number rows refuse a value out of their bounds.
+export const CLAMPED: ReadonlySet<string> = new Set(['idle_stop_minutes', 'stall_minutes'])
+const clampTo = (key: OrchNumberField, n: number) => Math.min(ORCH_RANGE[key][1], Math.max(ORCH_RANGE[key][0], Math.round(n)))
+export type OrchValues = {
+  enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number; claude_md: boolean
+  watchdog: boolean; idle_stop: boolean; idle_stop_minutes: number; stall_minutes: number; lessons: boolean
+} & DashValues
+export const O: OrchValues = {
+  enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false,
+  watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, lessons: true, ...DASH_DEFAULTS,
+}
 
 // A raw value (typed in the pane, handed to $.junkd.set, or written in the /config menu) to the field's kind;
 // `error` when it does not fit. The one check for every write path.
@@ -49,6 +70,16 @@ export function coerce(key: OrchField, raw: unknown): Coerced {
   if (key === 'guard') {
     const v = String(raw).trim().toLowerCase()
     return v === 'fable' || v === 'always' || v === 'off' ? { value: v } : { error: `${String(raw)} is not a valid guard (fable, always or off)` }
+  }
+  if (isDashField(key)) {
+    const n = asNumber(raw)
+    const [lo, hi] = DASH_RANGE[key]
+    return Number.isFinite(n) ? { value: clampDash(key, n) } : { error: `${String(raw)} is not a valid ${key} (a number, ${lo}–${hi})` }
+  }
+  if (key === 'idle_stop_minutes' || key === 'stall_minutes') {
+    const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN
+    const [lo, hi] = ORCH_RANGE[key]
+    return Number.isFinite(n) ? { value: clampTo(key, n) } : { error: `${String(raw)} is not a valid ${key} (minutes, ${lo}–${hi})` }
   }
   if (key === 'implementer_ctx_k' || key === 'rounds') {
     const [lo, hi] = ORCH_RANGE[key]
@@ -68,11 +99,17 @@ export function applyOrchSettings(v: Record<string, unknown>): void {
   O.ui_review = v.ui_review === undefined ? true : v.ui_review === true
   O.inject_rules = v.inject_rules === undefined ? true : v.inject_rules === true
   O.claude_md = v.claude_md === true
-  for (const key of ['implementer_ctx_k', 'rounds'] as const) {
+  O.watchdog = v.watchdog === undefined ? true : v.watchdog === true
+  O.idle_stop = v.idle_stop === undefined ? true : v.idle_stop === true
+  O.lessons = v.lessons === undefined ? true : v.lessons === true
+  for (const key of ['implementer_ctx_k', 'rounds', 'idle_stop_minutes', 'stall_minutes'] as const) {
     const x = v[key]
     const n = Math.round(typeof x === 'number' ? x : typeof x === 'string' && x.trim() ? Number(x) : NaN)
-    const [lo, hi] = ORCH_RANGE[key]
-    O[key] = Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : (SCHEMA.find(f => f.key === key)!.default as number)
+    O[key] = Number.isFinite(n) ? clampTo(key, n) : (SCHEMA.find(f => f.key === key)!.default as number)
+  }
+  for (const key of ['dashboard_refresh', 'dashboard_window_h'] as const) {
+    const n = asNumber(v[key])
+    O[key] = Number.isFinite(n) ? clampDash(key, n) : DASH_DEFAULTS[key]
   }
 }
 
@@ -81,8 +118,12 @@ export function applyOrchSettings(v: Record<string, unknown>): void {
 const ALLOW = new Set([
   'ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill',
   'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger',
+  'ReadNotifications', // the session's own notification queue (the handoff chain reads it): nothing to delegate
 ])
-const REVIEWER = /^(junkd:)?(verify-coordinator|ui-reviewer|test-planner|test-reviewer)$/
+const AGENT_ID = /^a[0-9a-f]{15,}$/ // a subagent's id (`a` + 16 hex); any other recipient is a peer session (by name), `main` or a protocol reply
+// A SendMessage recipient as the guard reads it: trimmed, ListAgents' " [ref]" dropped, trimmed again.
+export const recipient = (to: unknown): string => String(to).trim().replace(/ \[[^\]]*\]$/, '').trim()
+const REVIEWER = /^(junkd:)?(verify-coordinator|ui-reviewer|test-planner)$/
 const MODELS = new Set(['opus', 'sonnet', 'haiku']) // an Agent's `model`: never inherit; fable only as below
 const FABLE = /fable/i // `fable` or a full Fable id: an Agent's explicit model, only with allow_fable_agents
 const PLAIN_PATH = /^\/[\x20-\x7e]*$/ // absolute, printable ASCII: no `~`-relative, no Unicode alias of a name
@@ -206,7 +247,9 @@ export function orchGuard(e: { tool: string; agentId?: string; [k: string]: unkn
     }
     case 'SendMessage': {
       const a = s.agent
-      if (a === null) return `${PREFIX} no agent "${String(e.to)}" is known (not in the agent list, no SubagentStop record). Spawn a fresh agent.`
+      // Unknown: refused only when it is spelled as a subagent id of this session. A name nobody carries (a peer
+      // session, ListAgents' " [ref]" dropped) is the engine's to resolve; it reaches no subagent of this loop.
+      if (a === null) return AGENT_ID.test(recipient(e.to).toLowerCase()) ? `${PREFIX} no agent "${String(e.to)}" is known (not in the agent list, no SubagentStop record). Spawn a fresh agent.` : undefined
       const type = a?.type ?? ''
       if (REVIEWER.test(type)) return `${PREFIX} ${type.replace(/^junkd:/, '')} is a reviewer, and reviewers are always fresh: spawn a new one.`
       if (a?.tokens !== undefined && a.tokens > o.implementer_ctx_k * 1000)

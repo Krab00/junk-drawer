@@ -68,8 +68,36 @@ tests — this is part of "done":
   no runner, that's an architectural call — STOP and raise it as a Blocker; don't introduce a
   framework yourself.
 
-An independent `test-reviewer` audits these for quality (real assertions, coverage of the change,
-that modifications truly updated the tests) — write them to be read, not to pad a count.
+The verify-coordinator audits these for quality on its own (real assertions, coverage of the change,
+that modifications truly updated the tests, ≥ 5 mutants of its own) — write them to be read, not to pad a count.
+
+**What past rounds failed on** (apply each before the first report):
+- **One test per branch, up front.** Every branch of a parser, `if`, guard and fallback gets its own case before
+  the first report (comment, indent, quoted, CRLF, trailing space for a text parser; a missing file, a failing
+  read, a thrown call for an engine read), and each failure path pins "the last good state is kept". Take the
+  list from the diff's branches, not from the task's checklist: a fix round that answers only the named gap
+  leaves the sibling branch for the next one.
+- **Bounds and spellings exactly.** A boundary test asserts the bound itself and the value on each side; a
+  coercion that takes several spellings (`true`, `'true'`, `'on'`) gets one assertion per spelling through every
+  write path (the direct call and the menu or hook path).
+- **Through the real path.** A "still resolves / still registers" test must fail when the hook path breaks, not
+  only a direct call; a test that repeats an existing assertion is a gap, not coverage. An ordering invariant
+  ("before the first await") needs a world that can hold a read pending and look at the call log meanwhile.
+- **Escapes and edges.** Every path or prefix check gets an escape probe (the token inside an argument, a sibling
+  folder, a trailing slash, `..`, a symlink); a text-rewriting script gets a fixture per state and an untouched
+  mode checked byte for byte (`cmp`, not grep). Narrow-width tests include a width where every cut happens.
+  A module with a timer and a writer pins "a failed write keeps or stops the timer", and every settings field
+  gets a submit with a bad value.
+- **Shell tests.** Take the temp dir as a physical path once (`cd "$(mktemp -d)" && pwd -P`): a TMPDIR ending in
+  `/` puts a `//` into every derived path. Never `cat f >> f`. Every diagnostic message of a script has one
+  fixture that produces it. A required file is checked with `test -f`, never inferred.
+- **Prose and docs.** A check on a spec or a Markdown rule pins a full unique sentence inside its section, never a
+  short fragment, and every sentence the task requires gets its own check; your mutants include "flip the meaning,
+  keep the keyword". When you add a skill or a row, grep every README for the spelled-out counts ("twelve").
+- **Ported text.** Sweep every added line (over 30 characters) with `grep -F` against the reference you ported
+  from, and rename its distinctive identifiers.
+- **The machine's state.** A task that describes how the machine is set up is checked read-only first; a stale
+  premise is an Open Question, not a build.
 
 ## Before reporting (mandatory, real commands)
 
@@ -81,7 +109,13 @@ Commit in small steps with clear messages, and push your branch (`git push -u or
 boundary you wrote, mutate the source (flip / remove / bound-shift), run the targeted suite,
 confirm a test goes RED, revert, and confirm a clean `git status` after every revert. Commit
 source fixes BEFORE the sweep — a revert-based sweep can wipe uncommitted work. Your sweep does
-not replace the verifier's: an independent mutant author runs its own set afterward.
+not replace the verifier's: an independent mutant author runs its own set afterward. Run sweeps
+and suites in the foreground with a timeout; never idle waiting for a notification.
+
+**Before the report line:** `git status` is clean, and `git branch --contains HEAD` names your task
+branch (a detached HEAD leaves the work unreachable to the verifier). Scratch folders in a shared
+scratchpad get unique names (task id and pid). A spec step you wrote that says "compare with the
+earlier result" names where that result lives, and its dry run has been run twice.
 
 ## Report (keep it short)
 

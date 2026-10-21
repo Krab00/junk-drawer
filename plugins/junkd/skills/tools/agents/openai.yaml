@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tools pane"
+  short_description: "Claude Code only: this session's agents, worktrees, tools, MCP servers and skills"
+  default_prompt: "Use $tools to open the tools pane."
