@@ -255,6 +255,27 @@ test('tick: a stop record older than the agent\'s last call start is from an ear
   expect(spawned.events).toEqual([])
 })
 
+test('tick: an agent resumed from done is not finished again by its old stop record: no idle stop 11 min after the first finish', () => {
+  const done = [agent('a1', 'completed', { type: 'general-purpose', name: 'scout' })]
+  const back = [agent('a1', 'running', { type: 'general-purpose', name: 'scout' })]
+  const old = { a1: T0 } // the record of the first run
+  let r = run(emptyState(), [snap(done, { records: old })]) // finished at T0
+  expect(r.st.agents.a1!.finishedAt).toBe(T0)
+  r = run(r.st, [snap(back, { records: old })], T0 + 5 * MINUTE) // resumed by a SendMessage
+  expect(r.st.agents.a1!.finishedAt).toBe(undefined)
+  r = run(r.st, [snap(back, { records: old })], T0 + 11 * MINUTE) // the old record must not finish it again
+  expect(r.events).toEqual([])
+  expect(r.st.agents.a1!.finishedAt).toBe(undefined)
+  expect(r.st.verdicts.a1).toMatchObject({ kind: 'running' })
+  // it reports again: the new record is the finish, and the idle clock starts there
+  const fresh = { a1: T0 + 12 * MINUTE }
+  r = run(r.st, [snap(done, { records: fresh })], T0 + 13 * MINUTE)
+  expect(r.st.agents.a1!.finishedAt).toBe(T0 + 12 * MINUTE)
+  expect(r.events).toEqual([])
+  r = run(r.st, [snap(done, { records: fresh })], T0 + 22 * MINUTE + 1)
+  expect(r.events.map(e => [e.kind, e.stop])).toEqual([['idle-stopped', true]])
+})
+
 test('tick: an idle reviewer is stopped once; with orch_idle_stop off it is reported once and never stopped', () => {
   const listed = [agent('a1', 'completed', { type: 'junkd:verify-coordinator', name: 'verify-T17' })]
   const on = run(emptyState(), [snap(listed), snap(listed), snap(listed)])
@@ -446,6 +467,7 @@ function world(on: On, o: Opts = {}) {
     opened: [] as string[],
     runs: [] as string[][],
     hold: undefined as Promise<void> | undefined, // a subagent call waits on it while set
+    existsHold: undefined as Promise<void> | undefined, // fs.exists waits on it while set
     stopThrow: '', // TaskStop throws this while set
     noRepo: false, // the toplevel lookup fails: the session is outside a repo
     missingDirs: new Set<string>(), // a write into one of these fails until mkdir -p makes it
@@ -491,7 +513,10 @@ function world(on: On, o: Opts = {}) {
     if ((e as { boom?: boolean }).boom) throw new Error('boom')
     return { result: 'ok', text: 'ok' }
   })
-  on('fs.exists', (_$, e) => ({ value: e.path in rec.files }))
+  on('fs.exists', async (_$, e) => {
+    await rec.existsHold
+    return { value: e.path in rec.files }
+  })
   on('fs.stat', (_$, e) => {
     if (!(e.path in rec.files)) throw new Error(`ENOENT ${e.path}`)
     return { value: { kind: 'file' as const, size: 0, mtimeMs: rec.mtimes[e.path] ?? clock.now(), isLink: false, realPath: e.path } }
@@ -702,19 +727,38 @@ test('the stop record on disk counts too (a reload lost the module\'s), its mtim
   expect(w.rec.stops).toEqual(['v1', 'v2'])
 })
 
-test('a stop that fails is said once, logged, and not tried again; a denied one too', async ($, on) => {
+test('a stop that fails is said once per reason and logged, never marked stopped, and retried at every tick until it works', W_, async ($, on) => {
   const w = world(on)
   await start($)
+  const table = async () => (await run$($, 'junkd:orch', 'watchdog'), w.rec.logs.at(-1)!) // reads the verdicts; ticks once more
   w.rec.stopAnswer = { result: 'x', isError: true, text: 'no such task' }
   w.rec.agents = [agent('v1', 'completed', { type: 'ui-reviewer', name: 'ui-T17' }), agent('v2', 'completed', { type: 'ui-reviewer', name: 'ui-T18' })]
   await ticks(w, 1)
   expect(w.rec.toasts).toEqual(['⚠ could not stop ui-T17: no such task', '⚠ could not stop ui-T18: no such task'])
+  expect(await table()).toMatch(/ui-T17 .* stop \(reviewers/) // wanted, not done: never "stopped"
+  expect(w.rec.stops).toHaveLength(4)
+  await ticks(w, 2)
+  expect(w.rec.stops).toHaveLength(8) // tried again at every tick
+  expect(w.rec.toasts.filter(t => /could not/.test(t))).toHaveLength(2) // the same reason is not said again
+  // a denied one is another reason: said once, then retried quietly
   w.rec.stopAnswer = { deny: 'refused' }
-  w.rec.agents.push(agent('v3', 'completed', { type: 'ui-reviewer', name: 'ui-T19' }))
+  await ticks(w, 2)
+  expect(w.rec.stops).toHaveLength(12)
+  expect(w.rec.toasts.filter(t => /could not/.test(t)).slice(2)).toEqual(['⚠ could not stop ui-T17: refused', '⚠ could not stop ui-T18: refused'])
+  expect(logLines(w).map(l => [l.agent, l.kind, l.note])).toEqual([
+    ['ui-T17', 'stop-failed', 'no such task'], ['ui-T18', 'stop-failed', 'no such task'],
+    ['ui-T17', 'stop-failed', 'refused'], ['ui-T18', 'stop-failed', 'refused'],
+  ])
+  // it works at last: stopped, said, and not tried again
+  w.rec.stopAnswer = { result: 'ok', text: 'stopped' }
+  await ticks(w, 1)
+  expect(w.rec.stops).toHaveLength(14)
+  expect(w.rec.toasts.filter(t => /⚠ stopped/.test(t))).toHaveLength(2)
+  expect(await table()).toMatch(/ui-T17 .* stopped \(reviewers/)
+  expect(logLines(w).slice(4).map(l => l.kind)).toEqual(['idle-stopped', 'idle-stopped'])
   await ticks(w, 3)
-  expect(w.rec.stops).toEqual(['v1', 'v2', 'v3'])
-  expect(w.rec.toasts.at(-1)).toBe('⚠ could not stop ui-T19: refused')
-  expect(logLines(w).map(l => [l.kind, l.note])).toEqual([['stop-failed', 'no such task'], ['stop-failed', 'no such task'], ['stop-failed', 'refused']])
+  expect(w.rec.stops).toHaveLength(14)
+  expect(w.rec.toasts.filter(t => /⚠/.test(t))).toHaveLength(6)
 })
 
 test('ACX2: no stop for a nested agent, nor for a listed agent the main loop never spawned by a parent', async ($, on) => {
@@ -904,6 +948,24 @@ test('/clear resets everything: the alarms, the segment, the agents seen; the ti
   w.rec.agents = []
   await w.clock.advance(60 * MINUTE)
   expect(w.rec.toasts.length).toBe(lists)
+})
+
+test('/clear during a tick: the tick that was already reading does not bring the wiped state back', async ($, on) => {
+  const w = world(on)
+  await start($)
+  await spawn($, { name: 'impl-T19' })
+  w.rec.agents = [agent('a1', 'running', { name: 'impl-T19' })]
+  await ticks(w, 1)
+  await w.clock.advance(16 * MINUTE)
+  expect(await hintText($)).toMatch(/⚠ 1 stalled/)
+  let release = () => {}
+  w.rec.existsHold = new Promise<void>(r => { release = r })
+  await w.clock.advance(TICK_MS) // a tick begins, has taken the state, and waits on the task file
+  await $.session.end({ reason: 'clear', sessionId: SID, resume: {} as never })
+  release()
+  await new Promise(r => setTimeout(r, 20)) // the held tick finishes
+  expect(await hintText($)).not.toMatch(/⚠/) // not the stall of the agent seen before the /clear
+  expect(w.rec.toasts.filter(t => /stalled/.test(t))).toHaveLength(1)
 })
 
 test('the ⚠ segment is red, sits after what is beneath, and a press opens the tools pane on Agents', async ($, on) => {
@@ -1131,7 +1193,9 @@ test('ACX3: a TaskStop that throws is a failed stop, said and logged; the rest o
   expect(w.rec.toasts[1]).toMatch(/^⚠ could not stop ui-T18: \S/)
   expect(logLines(w).map(l => [l.agent, l.kind])).toEqual([['ui-T17', 'stop-failed'], ['ui-T18', 'stop-failed']])
   await ticks(w, 3)
-  expect(w.rec.stops).toEqual(['v1', 'v2'])
+  expect(w.rec.stops).toEqual(['v1', 'v2', 'v1', 'v2', 'v1', 'v2', 'v1', 'v2']) // retried, and said only once
+  expect(w.rec.toasts).toHaveLength(2)
+  expect(logLines(w)).toHaveLength(2)
 })
 
 test('the first log line of a session makes the watchdog folder (mkdir -p) when the write finds none', async ($, on) => {
