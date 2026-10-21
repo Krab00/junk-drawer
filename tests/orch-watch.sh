@@ -108,7 +108,13 @@ row 'claude:105' | grep -qE '^claude:105\|-\|alive\|-\|unknown \(cwd unreadable\
 [ "$(grep -c . <<<"$out")" = 12 ] || fail "expected 10 rows under the two header lines (helper-T23 and pr-T25 share a time and a text: two rows), got: $out"
 
 # --no-stop says so; the verdicts stay
-out=$(run --once --no-stop --idle-minutes 5) || fail "--no-stop exited non-zero"
+# a live agent whose task is done (impl-T18) is due for a stop: out of the default view, counted as finished, and
+# listed with --all (the same rule as the tools pane)
+live=$(run --once --idle-minutes 5)
+! grep -q '^impl-T18 ' <<<"$live" || fail "an agent of a done task is listed by default: $live"
+grep -q '^impl-T17 ' <<<"$live" && grep -q '^kimi:103 ' <<<"$live" || fail "the live agents are gone from the default view: $live"
+[ "$(tail -n1 <<<"$live")" = "$(( $(grep -cE '^[^ ]+ +[^ ]+ +(done|gone) ' <<<"$out") + $(grep -cE 'stop, report only' <<<"$out") )) finished" ] || fail "footer of the default: $(tail -n1 <<<"$live")"
+out=$(run --once --all --no-stop --idle-minutes 5) || fail "--no-stop exited non-zero"
 head -n1 <<<"$out" | grep -qF 'report only (--no-stop)' || fail "--no-stop header: $(head -n1 <<<"$out")"
 row impl-T18 | grep -qF 'stop, report only (T18 is done)' || fail "--no-stop impl-T18: $(row impl-T18)"
 
@@ -196,7 +202,9 @@ cat >"$stubs/pwdx" <<EOF
 [ "\$1" = 204 ] && echo "204: $wt/T30" || exit 1
 EOF
 chmod +x "$stubs/ps" "$stubs/lsof" "$stubs/pwdx"
-out=$(run --once --session s3 --idle-minutes 5) || fail "s3 exited non-zero"
+out=$(run --once --session s3 --idle-minutes 5)
+! grep -qE '^impl-T2[79] ' <<<"$out" && grep -q '^impl-T28 ' <<<"$out" && [ "$(tail -n1 <<<"$out")" = '2 finished' ] || fail "s3 by default: T27 (blocked) and T29 (idle over) are due for a stop, out: $out"
+out=$(run --once --all --session s3 --idle-minutes 5) || fail "s3 exited non-zero"
 row impl-T27 | grep -qE '^impl-T27\|implementer\|idle \(pid 201\)\|0m\|stop, report only \(T27 is blocked\)$' || fail "impl-T27 (blocked): $(row impl-T27)"
 row impl-T28 | grep -qE '^impl-T28\|implementer\|idle \(pid 202\)\|0m\|kept \(idle under 5 min\)$' || fail "impl-T28 (todo, fresh): $(row impl-T28)"
 row impl-T29 | grep -qE '^impl-T29\|lead-implementer\|idle \(pid 203\)\|[0-9]+m\|stop, report only \(idle over 5 min\)$' || fail "impl-T29 (todo, old): $(row impl-T29)"

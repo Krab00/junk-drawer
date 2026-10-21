@@ -230,6 +230,7 @@ export const statusOf = (status: string): Status =>
 // finished implementer from one waiting for a fix round any other way.
 const DUE = new Set(['stop', 'idle', 'stopped'])
 export function isLive(a: AgentInfo): boolean {
+  if (a.status === 'killed' || a.status === 'failed') return false // the watchdog's `kept` never revives these
   const kind = W.state.verdicts[a.id]?.kind
   return kind === 'kept' || (!DUE.has(kind ?? '') && !isDone(a.status))
 }
@@ -278,7 +279,7 @@ export function buildTree(worktrees: readonly Worktree[], agents: readonly Agent
       label: a.name || s?.name || a.description || a.type,
       type: a.type,
       model: s ? shortModel(s.model) : undefined,
-      status: W.state.verdicts[a.id]?.kind === 'kept' ? 'waiting' : statusOf(a.status), // reported, waiting for its next round
+      status: W.state.verdicts[a.id]?.kind === 'kept' && isLive(a) ? 'waiting' : statusOf(a.status), // reported, waiting for its next round
       children: [],
     }
     const cwd = s?.cwd

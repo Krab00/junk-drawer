@@ -7,7 +7,8 @@
 #     --once            print the table once and exit 0 (otherwise every S seconds until Ctrl-C)
 #     --all             everything: the finished agents (done, gone) too, the live agents of other projects, and
 #                       the newest session of any project (default: the live agents (idle, running, alive) of
-#                       this project and its newest session; --active, the old name of that, is accepted)
+#                       this project and its newest session, minus those due for a stop; --active, the old name
+#                       of that, is accepted)
 #     --interval S      seconds between tables, 1-3600 (default 60)
 #     --idle-minutes N  idle minutes before an idle leftover is due for a stop, 1-120 (default: the
 #                       orch_idle_stop_minutes setting, else 10)
@@ -229,6 +230,8 @@ table() {
       esac
     fi
     if [ "$want" = 1 ]; then verdict="stop, report only ($why)"; else verdict="kept ($why)"; fi
+    # due for a stop (a reviewer that reported, a closed task, idle past the minutes): out of the default view, as in the pane
+    if [ "$want" = 1 ] && [ $all = 0 ]; then fin=$((fin + 1)); continue; fi
     out+=$'\n'"$name	$role	idle (pid $alive)	$idle	$verdict"
   done <<<"$recs"
 
