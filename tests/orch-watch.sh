@@ -76,7 +76,7 @@ export PATH="$stubs:$PATH"
 run() { (cd "$repo" && "$watch" "$@"); }
 row() { grep -E "^$1 " <<<"$out" | sed -E 's/  +/|/g'; }
 
-out=$(run --once --idle-minutes 5) || fail "--once exited non-zero"
+out=$(run --once --all --idle-minutes 5) || fail "--once --all exited non-zero"
 head -n1 <<<"$out" | grep -qF 'orch-watch · session s1 · idle stop after 5 min · report only: this host has no agent stop command' ||
     fail "header: $(head -n1 <<<"$out")"
 [ "$(sed -n 2p <<<"$out" | sed -E 's/ +/ /g')" = 'agent role status idle verdict' ] || fail "column header: $(sed -n 2p <<<"$out")"
@@ -161,9 +161,10 @@ done
 mkdir -p "$CLAUDE_CONFIG_DIR/junkd/orch/_agents/s2"
 printf '{"type":"junkd:ui-reviewer","tokens":1}\n' >"$CLAUDE_CONFIG_DIR/junkd/orch/_agents/s2/ui-T30.json"
 touch -t 202001010000 "$recs"
-out=$(run --once)
+out=$(run --once --all)
 head -n1 <<<"$out" | grep -qF 'session s2' || fail "newest session: $(head -n1 <<<"$out")"
 grep -q '^ui-T30 ' <<<"$out" && ! grep -q '^impl-T17 ' <<<"$out" || fail "s2's rows: $out"
+! grep -q '^ui-T30 ' <<<"$(run --once)" || fail "a finished agent is listed without --all"
 out=$(run --once --session s1)
 head -n1 <<<"$out" | grep -qF 'session s1' && grep -q '^impl-T17 ' <<<"$out" || fail "--session s1: $out"
 out=$(run --once --session nope)
@@ -224,7 +225,7 @@ run2() { (cd "$repo" && CLAUDE_CONFIG_DIR="$cfg2" "$watch" --once "$@"); }
 head -n1 <<<"$(run2)" | grep -qF 'session s7' || fail "this project's newest session: $(head -n1 <<<"$(run2)")"
 head -n1 <<<"$(run2 --all)" | grep -qF 'session s8' || fail "--all: the newest session of any project: $(head -n1 <<<"$(run2 --all)")"
 head -n1 <<<"$(run2 --session s6)" | grep -qF 'session s6' || fail "--session names a session of another project"
-grep -q '^note-s7 ' <<<"$(run2)" && ! grep -q '^note-s[68] ' <<<"$(run2)" || fail "s7's rows: $(run2)"
+grep -q '^note-s7 ' <<<"$(run2 --all --session s7)" || fail "s7's rows: $(run2 --all --session s7)"
 
 # the agents of this project, of another and the finished: 3 live and 5 finished here, 2 live in another repo's
 # task worktrees
@@ -236,6 +237,7 @@ for n in 41 42 43; do
     printf '{"type":"junkd:implementer","tokens":1}\n' >"$s5/impl-T$n.json"
 done
 for n in 51 52 53 54 55; do printf '{"type":"general-purpose","tokens":1}\n' >"$s5/fin-T$n.json"; done
+printf '{"type":"general-purpose","tokens":null,"deadNote":"no SubagentStop record"}\n' >"$s5/fin-T56.json" # a gone one: finished too
 cp "$stubs/ps" "$tmp/ps.main"
 cp "$stubs/lsof" "$tmp/lsof.main"
 printf '#!/usr/bin/env bash\nprintf "  301 claude\\n  302 claude\\n  303 claude\\n  304 claude\\n  305 claude\\n"\n' >"$stubs/ps"
@@ -251,18 +253,14 @@ printf 'p%s\nfcwd\nn%s\n' "\$pid" "\$d"
 EOF
 body() { grep -vE '^(orch-watch ·|agent )' <<<"$1"; }
 out=$(run --once --session s5)
-[ "$(body "$out" | grep -cE '^(impl|fin)-T')" = 8 ] && ! grep -qE ':30[45]' <<<"$out" || fail "default: this project's 8, none of the other: $out"
-[ "$(tail -n1 <<<"$out")" = '2 other projects' ] || fail "footer of the default: $(tail -n1 <<<"$out")"
-out=$(run --once --session s5 --active)
-[ "$(body "$out" | grep -cE '^impl-T4[123] ')" = 3 ] && [ "$(body "$out" | grep -cE '^fin-T')" = 0 ] || fail "--active: the 3 live: $out"
-[ "$(tail -n1 <<<"$out")" = '5 finished · 2 other projects' ] || fail "footer of --active: $(tail -n1 <<<"$out")"
+[ "$(body "$out" | grep -cE '^impl-T4[123] ')" = 3 ] && [ "$(body "$out" | grep -cE '^fin-T')" = 0 ] && ! grep -qE ':30[45]' <<<"$out" || fail "default: the 3 live of this project, no finished, none of the other: $out"
+[ "$(tail -n1 <<<"$out")" = '6 finished · 2 other projects' ] || fail "footer of the default: $(tail -n1 <<<"$out")"
+[ "$(run --once --session s5 --active)" = "$out" ] || fail "--active (the default's old name) differs from the default"
 out=$(run --once --session s5 --all)
-[ "$(( $(grep -c . <<<"$out") - 2 ))" = 10 ] && grep -q '^claude:304 ' <<<"$out" && grep -q '^claude:305 ' <<<"$out" || fail "--all: all 10: $out"
+[ "$(( $(grep -c . <<<"$out") - 2 ))" = 11 ] && grep -q '^claude:304 ' <<<"$out" && grep -q '^claude:305 ' <<<"$out" || fail "--all: all 11 (3 live, 6 finished, 2 of another project): $out"
 ! grep -qE 'finished|other project' <<<"$out" || fail "--all has a footer: $out"
-out=$(run --once --session s5 --all --active)
-[ "$(( $(grep -c . <<<"$out") - 3 ))" = 5 ] && [ "$(tail -n1 <<<"$out")" = '5 finished' ] || fail "--all --active: 3 + 2 live, 5 finished: $out"
-printf '#!/usr/bin/env bash\nprintf "  301 claude\\n  304 claude\\n"\n' >"$stubs/ps"
-[ "$(tail -n1 <<<"$(run --once --session s5)")" = '1 other project' ] || fail "one other project: $(run --once --session s5)"
+printf '#!/usr/bin/env bash\nprintf "  301 claude\\n  304 claude\\n"\n' >"$stubs/ps" # T42 and T43 lost their processes: finished too
+[ "$(tail -n1 <<<"$(run --once --session s5)")" = '8 finished · 1 other project' ] || fail "one other project: $(run --once --session s5)"
 mv "$tmp/ps.main" "$stubs/ps"
 mv "$tmp/lsof.main" "$stubs/lsof"
 
