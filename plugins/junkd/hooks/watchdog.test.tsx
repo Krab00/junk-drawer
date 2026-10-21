@@ -752,6 +752,31 @@ test('implementers: kept while the task is in a verify round, stopped once it is
   expect(w.rec.toasts).toEqual(['⚠ stopped impl-T17: reported 101 min ago']) // finished at the first tick, 30 s in
 })
 
+test('the tools pane keeps the agents the verdicts call live: an implementer that reported with its task open waits (hollow dot); a reviewer that reported and a stopped one are out', async ($, on) => {
+  const w = world(on)
+  await start($)
+  w.rec.files[TASK] = taskFile('in_progress')
+  await spawn($, { name: 'impl-T17' })
+  w.rec.nextAgent = 'v1'
+  await spawn($, { subagentType: 'junkd:verify-coordinator', name: 'verify-T17' })
+  w.rec.nextAgent = 'p1'
+  await spawn($, { subagentType: 'general-purpose', name: 'worker' })
+  // the implementer is completed in the list but its task is open (kept); the reviewer reported (due for a stop at
+  // once); the worker still runs
+  w.rec.agents = [
+    agent('a1', 'completed', { name: 'impl-T17' }), agent('v1', 'completed', { type: 'junkd:verify-coordinator', name: 'verify-T17' }),
+    agent('p1', 'running', { type: 'general-purpose', name: 'worker' }),
+  ]
+  await ticks(w, 1)
+  await run$($, 'junkd:tools', 'agents')
+  const pane = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', component: 'Pane', requestId: 'junkd-tools', props: { title: 'tools', isFocused: true, bodyColumns: 120, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } } as never)
+  const texts = (await pane.findAll({ type: 'Button' })).map(b => b.text ?? '')
+  expect(texts.some(t => /◐ impl-T17.*· idle/.test(t))).toBe(true)
+  expect(texts.some(t => /● worker/.test(t))).toBe(true)
+  expect(texts.some(t => /verify-T17/.test(t))).toBe(false)
+  await pane.unmount()
+})
+
 test('implementers: a task that left in_progress (todo) or has no file goes after the idle minutes', async ($, on) => {
   const w = world(on)
   await start($)

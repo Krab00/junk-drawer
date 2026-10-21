@@ -1207,21 +1207,26 @@ the pane is a Claude Code mod and the host has none.
 
 The four tabs:
 
-1. **Agents** — a tree of this session's agents over the repo's git worktrees (`git worktree list --porcelain`).
-   The root is the main checkout with its branch; under it the other worktrees, each by its folder name and
-   branch (`detached`, `bare`). Each agent sits under the worktree its directory is in (the `cwd` its spawn gave
-   it, else the session's directory at the spawn); an agent in no worktree, or one spawned before the module
-   loaded, sits under the root. A row shows the status glyph (`●` running, `◐` waiting, `○` done, in the theme's
-   success, warning and inactive colours), the name, the agent type and the model it got and, once finished,
-   `done`. Only this project's agents are listed: the ones whose directory (the spawn's `cwd`) is in a worktree of
-   the session's repo, the main checkout included; the records hold no project of their own, so the spawn's
-   directory is the match, and an agent with no spawn record counts as this project's. The agents of other
-   projects are left out and one dim footer line counts them (`2 other projects`). `a` narrows the list to the
-   active agents (running, pending, waiting or idle; a completed, failed, killed or dropped one leaves the tree on
-   the next read) and the footer then also counts the finished ones (`5 finished · 2 other projects`); `a` again
-   lists the finished too. The choice holds for the session, through refreshes, tab switches and `/clear`, and
-   starts as all of this project's. An agent the engine drops from its list after it ended stays, as done.
-   Outside a repo the root is the session's folder.
+1. **Agents** — a tree of this project's live agents over the repo's worktrees (`git worktree list
+   --porcelain`). The root is the main checkout with its branch and is always there. Another worktree is a node,
+   by its folder name and branch, only while a live agent sits in it; the rest (finished agents' leftovers,
+   detached, `orch/run`, `T<n>` and `agent-*` worktrees) are one dim footer line, `30 worktrees without a live
+   agent`. Each agent sits under the worktree its directory is in (the `cwd` its spawn gave it, else the session's
+   directory at the spawn); an agent in no worktree, or one spawned before the module loaded, sits under the
+   root. A row shows the status glyph (`●` running, `◐` waiting, `○` done, in the theme's success, warning and
+   inactive colours), the name, the agent type and the model it got. **Live** is running, or waiting: a prompt,
+   or an implementer that reported and waits for its next review or fix round. The agent list calls that one
+   completed, so the watchdog's records decide: a stop record, no stop sent and its task still open is `kept`
+   (shown as waiting, `◐ ... · idle 4m`); a stopped agent, a reviewer that reported, a task that is done or
+   blocked, and a completed, failed, killed or dropped agent are out. With no verdict (the watchdog off, a nested
+   agent) the list's status decides. Only this project's agents are listed: the ones whose directory (the
+   spawn's `cwd`) is in a worktree of the session's repo, the main checkout included; the records hold no project
+   of their own, so the spawn's directory is the match, and an agent with no spawn record counts as this
+   project's. The agents of other projects are left out and counted in the footer (`30 worktrees without a live
+   agent · 2 other projects`), in both views. `a` shows everything of this project: every worktree and the finished
+   agents too (finished rows end in `done`); `a` again goes back to the live view. The choice holds for the
+   session, through refreshes, tab switches and `/clear`, and starts as the live view. Outside a repo the root is
+   the session's folder.
 2. **Tools** — one row per tool the model called: on the main loop (`main`), in subagents (`sub`), and `≈tokens`
    of the results it read (characters ÷ 4). Most calls first. Every MCP tool folds into one `mcp (N servers)` row;
    the MCP tab has them per server.
@@ -1245,7 +1250,7 @@ every turn's end, and on `r`. The reading stops when the pane closes (`q`, its `
 | `1`–`4` | Agents, Tools, MCP, Skills |
 | `↑` `↓`, `j` `k` | Move the selection along the tree's rows (the arrows move the focus ring, which is the selection) |
 | `enter` | Fold or unfold the selected node (a worktree, the root); the fold is kept per node across refreshes |
-| `a` | Agents tab: list only the active agents, or this project's all again (the default); the footer counts the finished and the other projects' |
+| `a` | Agents tab: show everything of this project (every worktree, finished agents), or the live view again (the default); the footer counts the worktrees without a live agent and the other projects' agents |
 | `r` | Read the agents, the worktrees and the MCP schemas again now |
 | `t` | Show this session's transcript: in Finder on macOS (`open -R`), its folder elsewhere (`xdg-open`); the outcome is a toast |
 | `q` | Close the pane |
@@ -1394,7 +1399,7 @@ alarm.
 - **A stall** shows a toast, the `⚠ 1 stalled` segment and one line at the next turn:
   `watchdog: impl-T19 idle 16 min, last call Edit …; ping it or stop it`. Nothing else happens.
 - The segment is red and hidden while nothing is wrong. A press opens the tools pane on its Agents tab, where each
-  agent row carries the watchdog's verdict: `⚠ stalled 16m`, `✝ dead`, `· idle 4m` or `· stopped` (a dead or stopped agent is finished, so `a` hides it).
+  agent row carries the watchdog's verdict: `⚠ stalled 16m`, `✝ dead`, `· idle 4m` or `· stopped` (a stopped agent is out of the live view, `a` shows it).
 - `/junkd:orch watchdog` runs a tick now, prints the verdict table (agent, role, status, idle, verdict) to the
   transcript and shows the counts as a toast. `/junkd:orch watchdog off` and `on` flip `orch_watchdog`.
 
@@ -1407,7 +1412,7 @@ ${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/orch/watchdog/<session id>.log
 ### The other hosts: `bin/orch-watch`
 
 ```
-orch-watch [--once] [--all] [--active] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
+orch-watch [--once] [--all] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
 ```
 
 It reads the stop records of a session (`junkd/orch/_agents/<session>/*.json` as `scripts/orch-agent-stop.sh`
@@ -1419,11 +1424,11 @@ verdict, by the rules above.
 
 The records hold no project, so a session belongs to the project whose folder in `projects/` holds its transcript
 (`<session>.jsonl`): this project's folder or one of its worktrees'; a session with no transcript found counts as this
-project's. By default the table has this project's agents only, the finished ones (`done`, `gone`) too, and a last
-line counts the live agents of other projects (`2 other projects`). `--active` lists the live agents (idle, running,
-alive) only and the line counts the finished ones too (`5 finished · 2 other projects`). `--all` lists every project:
-the live agents of other projects and the newest session of any project (no count of other projects). `--once`
-prints it and exits 0; otherwise it prints one every
+project's. By default the table has the live agents of this project only (status `idle`, `running`, `alive`) and a
+last line counts the finished ones (`done`, `gone` rows) and the live agents of other projects
+(`5 finished · 2 other projects`). `--all` lists everything: the finished agents, the live agents of other projects
+and the newest session of any project (no footer count). `--active`, the old name of the default, is still
+accepted. `--once` prints it and exits 0; otherwise it prints one every
 `--interval` seconds (1–3600, default 60) until Ctrl-C. `--idle-minutes` defaults to the `orch_idle_stop_minutes`
 row of `settings.json`, else 10. Without `jq` it says so and exits 0.
 

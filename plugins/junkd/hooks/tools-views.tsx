@@ -104,15 +104,18 @@ const agents: View = (c, act, cols) => {
       {legend('running')} running {legend('waiting')} waiting {legend('done')} done · agents of this session only
     </Text>
   )
-  const keys: Hint[] = [['↑↓', 'select'], ['enter', 'fold'], ['a', T.activeOnly ? 'all' : 'active only'], ...KEYS_END]
+  const keys: Hint[] = [['↑↓', 'select'], ['enter', 'fold'], ['a', T.showAll ? 'live only' : 'all'], ...KEYS_END]
   if (!T.loaded) return { body: <Empty c={c} text="reading…" />, note, keys }
   const mine = ofProject(T.agents, T.spawned, T.worktrees)
-  const shown = activeOf(mine, !T.activeOnly)
+  const shown = activeOf(mine, T.showAll)
+  // Live view: a worktree is a node only while a live agent sits in it (the root always is).
+  const tree = buildTree(T.worktrees, shown, T.spawned, T.agentsOnly || !T.showAll)
+  const stale = T.worktrees.length - 1 - tree.children.filter(n => n.kind === 'worktree').length
   const foot = [
-    T.activeOnly && mine.length > shown.length ? `${mine.length - shown.length} finished` : '',
+    !T.showAll && stale > 0 ? `${stale} worktree${stale === 1 ? '' : 's'} without a live agent` : '',
     T.agents.length > mine.length ? `${T.agents.length - mine.length} other project${T.agents.length - mine.length === 1 ? '' : 's'}` : '',
   ].filter(Boolean).join(' · ')
-  const rows = flatten(buildTree(T.worktrees, shown, T.spawned, T.agentsOnly), T.folded)
+  const rows = flatten(tree, T.folded)
   const ids = rows.map(({ node }) => node.id)
   const sel = selectedIn(ids)
   const step = (by: number) => {
@@ -125,7 +128,7 @@ const agents: View = (c, act, cols) => {
       <Box flexDirection="column">
         <Hidden c={c} k="down" hotkey="j" onPress={() => step(1)} />
         <Hidden c={c} k="up" hotkey="k" onPress={() => step(-1)} />
-        <Hidden c={c} k="all" hotkey="a" onPress={() => { T.activeOnly = !T.activeOnly; act.redraw() }} />
+        <Hidden c={c} k="all" hotkey="a" onPress={() => { T.showAll = !T.showAll; act.redraw() }} />
         {rows.map(({ node, guide }, i) =>
           agentRow(c, node, guide, i === sel, cols, () => {
             select(node.id, ids)
@@ -133,7 +136,7 @@ const agents: View = (c, act, cols) => {
             act.redraw()
           }),
         )}
-        {T.agents.length === 0 ? <Empty c={c} text="no agent spawned this session" /> : shown.length === 0 ? <Empty c={c} text={mine.length === 0 ? 'no agent of this project' : 'no active agent'} /> : null}
+        {T.agents.length === 0 ? <Empty c={c} text="no agent spawned this session" /> : shown.length === 0 ? <Empty c={c} text={mine.length === 0 ? 'no agent of this project' : 'no live agent'} /> : null}
         {foot ? <Line c={c} k="foot" text={`  ${foot}`} color={P.dim} /> : null}
       </Box>
     ),

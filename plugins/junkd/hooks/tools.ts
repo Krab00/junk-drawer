@@ -4,6 +4,7 @@
 // $.session.usage); tools-views.tsx draws from it.
 import type { ContextMcpTool, AgentInfo } from 'claude-code'
 import type { JunkdToolsField, JunkdToolsRoute } from '../types'
+import { W } from './watchdog.ts'
 
 export type Route = JunkdToolsRoute
 export const ROUTES: readonly Route[] = ['agents', 'tools', 'mcp', 'skills']
@@ -72,7 +73,7 @@ export const T = {
   enabled: true,
   refresh: REFRESH_DEFAULT,
   agentsOnly: false,
-  activeOnly: false, // the Agents tab lists this project's agents, finished ones too; `a` narrows it to the active ones, for the session
+  showAll: false, // the Agents tab lists this project's live agents and the worktrees they sit in; `a` lists everything, for the session
   open: false,
   loaded: false, // a first load since the pane opened has finished: until then the tabs draw `reading…`
   route: 'agents' as Route,
@@ -91,7 +92,7 @@ export const T = {
 // Every field back to its start: a register is a fresh load of the module.
 export function resetTools(): void {
   Object.assign(T, {
-    activeOnly: false, open: false, loaded: false, route: 'agents', selected: null, selectedAt: 0, folded: Object.create(null), since: 0,
+    showAll: false, open: false, loaded: false, route: 'agents', selected: null, selectedAt: 0, folded: Object.create(null), since: 0,
     counters: emptyCounters(), worktrees: [], agents: [], seen: Object.create(null), spawned: Object.create(null), mcp: [],
   })
 }
@@ -220,8 +221,19 @@ export const isDone = (status: string) => status === 'completed' || status === '
 export const statusOf = (status: string): Status =>
   isDone(status) ? 'done' : status === 'waiting' || status === 'idle' ? 'waiting' : 'running'
 
-// Active = running or waiting (idle); finished = completed, failed or killed, the statuses the agent list already carries.
-export const activeOf = (agents: readonly AgentInfo[], all: boolean) => (all ? agents : agents.filter(a => !isDone(a.status)))
+// Live = running, or waiting: a prompt, or an implementer that reported and waits for its next review or fix round. The
+// engine lists that one as completed, so the watchdog's verdict decides: `kept` (a stop record, no stop, its task still
+// open) is waiting and stays; `stop`, `idle` and `stopped` (a reviewer that reported, a task done or blocked, a stop
+// sent) are out. With no verdict (the watchdog off, a nested agent) the list's status decides: completed, failed,
+// killed, or gone from the list is finished.
+// ponytail: "agent record, no stop event, task not closed" is the one rule for waiting; the records cannot tell a
+// finished implementer from one waiting for a fix round any other way.
+const DUE = new Set(['stop', 'idle', 'stopped'])
+export function isLive(a: AgentInfo): boolean {
+  const kind = W.state.verdicts[a.id]?.kind
+  return kind === 'kept' || (!DUE.has(kind ?? '') && !isDone(a.status))
+}
+export const activeOf = (agents: readonly AgentInfo[], all: boolean) => (all ? agents : agents.filter(isLive))
 
 export type NodeKind = 'root' | 'worktree' | 'agent'
 export type Node = {
@@ -266,7 +278,7 @@ export function buildTree(worktrees: readonly Worktree[], agents: readonly Agent
       label: a.name || s?.name || a.description || a.type,
       type: a.type,
       model: s ? shortModel(s.model) : undefined,
-      status: statusOf(a.status),
+      status: W.state.verdicts[a.id]?.kind === 'kept' ? 'waiting' : statusOf(a.status), // reported, waiting for its next round
       children: [],
     }
     const cwd = s?.cwd
