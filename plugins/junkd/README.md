@@ -1424,9 +1424,12 @@ verdict, by the rules above.
 
 The records hold no project, so a session belongs to the project whose folder in `projects/` holds its transcript
 (`<session>.jsonl`): this project's folder or one of its worktrees'; a session with no transcript found counts as this
-project's. By default the table has the live agents of this project only (status `idle`, `running`, `alive`) and a
-last line counts the finished ones (`done`, `gone` rows) and the live agents of other projects
-(`5 finished · 2 other projects`). `--all` lists everything: the finished agents, the live agents of other projects
+project's. By default the table has the live agents of this project only (status `idle`, `running`, `alive`), the
+ones marked `stop, report only` included: on these hosts the table is the only place that shows which live agents
+need a manual stop. A last line counts the finished ones (`done`, `gone` rows) and the live agents of other
+projects (`5 finished · 2 other projects`). A process in a task worktree belongs to the task's implementer record
+when it has one, not to a newer reviewer record of the same task (a fix round). `--all` lists everything: the
+finished agents, the live agents of other projects
 and the newest session of any project (no footer count). `--active`, the old name of the default, is still
 accepted. `--once` prints it and exits 0; otherwise it prints one every
 `--interval` seconds (1–3600, default 60) until Ctrl-C. `--idle-minutes` defaults to the `orch_idle_stop_minutes`

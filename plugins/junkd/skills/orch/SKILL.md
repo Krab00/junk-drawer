@@ -2,7 +2,7 @@
 name: orch
 description: Orchestrate implementation and independent verification of one task or a backlog using specialized subagents, isolated Git worktrees, evidence gates, fix rounds, and draft pull requests. Use when the user asks to run orch, process task ids, drain a backlog, delegate implementation and verification, or execute batch, chain, all, deep, or single-PR modes.
 argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel | dashboard [close]] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
 ---
 
 # Orchestrate tasks
@@ -20,7 +20,7 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 - The spec's `/junkd:orch` is this skill (`/junkd:orch` on Claude Code, `$orch` on Codex, `/skill:orch` on Kimi Code, `/orch` on OpenCode through the command wrapper `bin/opencode-commands.sh` generates, or "use the orch skill"), and its `/junkd:orch-init` the sibling `orch-init` skill (`/junkd:orch-init`, `$orch-init`, `/skill:orch-init`, `/orch-init`). When you tell the user a command, name the one of the host you run on.
 - `.orch/config.md` is primary; `.claude/orch.config.md` is a read-only compatibility fallback.
 - Resolve helpers as `./bin/orch-state`, `./bin/orch-worktree`, and `./bin/orch-sync` inside this skill directory (on Claude Code, see below). On Codex and Kimi Code the plugin root has no `bin/` (their installers drop or rewrite its symlinks), so a `${CLAUDE_PLUGIN_ROOT}/bin/` path from the spec is always this skill's `./bin` there; the same on OpenCode, which installs the skills alone.
-- `watchdog` is a mode of its own, not a run: on a host with no hooks module (Codex, Kimi Code, OpenCode), run `./bin/orch-watch --once` and show its table of this session's agents (agent, role, status, idle, verdict). It only reports: these hosts have no agent stop command. `watchdog on|off` there is no mode; say in one line that the switch is the Claude Code module's `orch_watchdog` row.
+- `watchdog` is a mode of its own, not a run: on a host with no hooks module (Codex, Kimi Code, OpenCode), run `./bin/orch-watch --once` and show its table of this session's agents (agent, role, status, idle, verdict). It only reports: these hosts have no agent stop command, so the live agents it marks `stop, report only` are the ones to stop by hand. `watchdog on|off` there is no mode; say in one line that the switch is the Claude Code module's `orch_watchdog` row.
 - Replace Claude's `Task` operation with your host's subagent mechanism (see below).
 - Read the matching role file under `./roles/` and include its full task-relevant instructions in each agent prompt (Claude Code has them as agent types, see below).
 

@@ -108,12 +108,15 @@ row 'claude:105' | grep -qE '^claude:105\|-\|alive\|-\|unknown \(cwd unreadable\
 [ "$(grep -c . <<<"$out")" = 12 ] || fail "expected 10 rows under the two header lines (helper-T23 and pr-T25 share a time and a text: two rows), got: $out"
 
 # --no-stop says so; the verdicts stay
-# a live agent whose task is done (impl-T18) is due for a stop: out of the default view, counted as finished, and
-# listed with --all (the same rule as the tools pane)
+# a live agent due for a stop (impl-T18, its task done) stays in the default view: this tool cannot stop it, so the
+# table is where the user sees it; only the done/gone rows leave the default view, counted as finished
 live=$(run --once --idle-minutes 5)
-! grep -q '^impl-T18 ' <<<"$live" || fail "an agent of a done task is listed by default: $live"
+row_live() { grep -E "^$1 " <<<"$live" | sed -E 's/  +/|/g'; }
+row_live impl-T18 | grep -qE '\|stop, report only \(T18 is done\)$' || fail "a live agent due for a stop is hidden by default: $live"
+row_live tplan-T22 | grep -qE 'stop, report only' && row_live helper-T24 | grep -qE 'stop, report only' || fail "the stop-due agents are gone from the default view: $live"
 grep -q '^impl-T17 ' <<<"$live" && grep -q '^kimi:103 ' <<<"$live" || fail "the live agents are gone from the default view: $live"
-[ "$(tail -n1 <<<"$live")" = "$(( $(grep -cE '^[^ ]+ +[^ ]+ +(done|gone) ' <<<"$out") + $(grep -cE 'stop, report only' <<<"$out") )) finished" ] || fail "footer of the default: $(tail -n1 <<<"$live")"
+! grep -qE '^(verify-T17|impl-T19) ' <<<"$live" || fail "a done or gone row is listed by default: $live"
+[ "$(tail -n1 <<<"$live")" = "$(grep -cE '^[^ ]+ +[^ ]+ +(done|gone) ' <<<"$out") finished" ] || fail "footer of the default: $(tail -n1 <<<"$live")"
 out=$(run --once --all --no-stop --idle-minutes 5) || fail "--no-stop exited non-zero"
 head -n1 <<<"$out" | grep -qF 'report only (--no-stop)' || fail "--no-stop header: $(head -n1 <<<"$out")"
 row impl-T18 | grep -qF 'stop, report only (T18 is done)' || fail "--no-stop impl-T18: $(row impl-T18)"
@@ -203,7 +206,7 @@ cat >"$stubs/pwdx" <<EOF
 EOF
 chmod +x "$stubs/ps" "$stubs/lsof" "$stubs/pwdx"
 out=$(run --once --session s3 --idle-minutes 5)
-! grep -qE '^impl-T2[79] ' <<<"$out" && grep -q '^impl-T28 ' <<<"$out" && [ "$(tail -n1 <<<"$out")" = '2 finished' ] || fail "s3 by default: T27 (blocked) and T29 (idle over) are due for a stop, out: $out"
+[ "$(grep -cE '^impl-T2[789] ' <<<"$out")" = 3 ] && ! grep -q finished <<<"$out" || fail "s3 by default: T27 (blocked) and T29 (idle over) are due for a stop but live, so listed; nothing finished, out: $out"
 out=$(run --once --all --session s3 --idle-minutes 5) || fail "s3 exited non-zero"
 row impl-T27 | grep -qE '^impl-T27\|implementer\|idle \(pid 201\)\|0m\|stop, report only \(T27 is blocked\)$' || fail "impl-T27 (blocked): $(row impl-T27)"
 row impl-T28 | grep -qE '^impl-T28\|implementer\|idle \(pid 202\)\|0m\|kept \(idle under 5 min\)$' || fail "impl-T28 (todo, fresh): $(row impl-T28)"
@@ -212,6 +215,32 @@ row 'claude:204' | grep -qE '^claude:204 \(T30\)\|-\|running\|-\|ok$' || fail "c
 mv "$tmp/ps.main" "$stubs/ps"
 mv "$tmp/lsof.main" "$stubs/lsof"
 rm "$stubs/pwdx"
+
+# a fix round: the implementer of T60 was resumed after verify-T60 reported, so the newer record is the reviewer's
+# while the one process in .worktrees/T60 is the implementer's: it is the implementer's row (task in progress, kept),
+# the reviewer's record is done, and the view is not empty. A task with no implementer record (tplan-T22 above)
+# still hands its process to the reviewer's record.
+printf -- '---\nid: T60\nstatus: in_progress\n---\n' >"$repo/.orch/tasks/T60.md"
+s9="$CLAUDE_CONFIG_DIR/junkd/orch/_agents/s9"
+mkdir -p "$s9"
+printf '{"type":"junkd:implementer","tokens":1}\n' >"$s9/impl-T60.json"
+printf '{"type":"junkd:verify-coordinator","tokens":1}\n' >"$s9/verify-T60.json"
+touch -t 202001010000 "$s9/impl-T60.json"
+cp "$stubs/ps" "$tmp/ps.main"
+cp "$stubs/lsof" "$tmp/lsof.main"
+printf '#!/usr/bin/env bash\nprintf "  401 claude\\n"\n' >"$stubs/ps"
+cat >"$stubs/lsof" <<EOF
+#!/usr/bin/env bash
+printf 'p401\nfcwd\nn%s\n' "$wt/T60"
+EOF
+chmod +x "$stubs/lsof"
+out=$(run --once --session s9 --idle-minutes 5)
+row impl-T60 | grep -qE '^impl-T60\|implementer\|idle \(pid 401\)\|[0-9]+m\|kept \(T60 in progress\)$' || fail "fix round: the implementer lost its process to the newer reviewer record: $out"
+! grep -q '^verify-T60 ' <<<"$out" && [ "$(tail -n1 <<<"$out")" = '1 finished' ] || fail "fix round: the reviewer's record is a finished row: $out"
+out=$(run --once --all --session s9 --idle-minutes 5)
+row verify-T60 | grep -qE '\|done\|[0-9]+m\|done$' || fail "fix round --all: verify-T60: $out"
+mv "$tmp/ps.main" "$stubs/ps"
+mv "$tmp/lsof.main" "$stubs/lsof"
 
 # the project of a session is where its transcript sits: this project's folder or one of its worktrees' (`--` is
 # the `/.` of `/.worktrees`); the newest session of another project, or of a sibling folder that merely starts with

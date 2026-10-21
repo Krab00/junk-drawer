@@ -11,7 +11,7 @@ Arguments: `$ARGUMENTS`
 (`/junkd:orch panel` never reaches this text: on Claude Code the plugin's hooks module answers it by
 toggling the settings pane. On any other host, `panel` is not a mode. `/junkd:orch watchdog [on|off]` does not
 reach it either: the hooks module prints the agent watchdog's table or flips `orch_watchdog`; on another host,
-`watchdog` runs the skill's `./bin/orch-watch --once` and shows its table.)
+`watchdog` runs the skill's `./bin/orch-watch --once` and shows its table; the live agents it marks `stop, report only` are the ones to stop by hand.)
 
 You are the ORCHESTRATOR. You **never implement or verify code yourself** — implementation
 goes to an `implementer` (or `lead-implementer`) subagent, and the whole verification of a
