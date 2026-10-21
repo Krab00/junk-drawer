@@ -24,8 +24,7 @@ export const S = {
   calls: 0,
   pending: null as { id: string; text: string; delivered: boolean } | null, // the continuation the handon turn carries (handoffContinuation)
   asks: 0, // times this cycle asked the model for the handoff file (1 when the loop fires, +1 per re-ask, 0 once it is written); MAX_ASKS then gives up
-  clearFailed: false, // the /clear of a cycle timed out, was denied or threw: the next turn end tries again
-  clearTries: 0, // retries of that /clear since it last worked; MAX_CLEAR_RETRIES then gives up
+  clearTries: 0, // retries of a /clear that timed out or threw since one last worked; MAX_CLEAR_RETRIES then gives up
   count: 0,
   lastId: null as string | null,
   fresh: false, // right after /clear: usage() still reports the old window until the first response

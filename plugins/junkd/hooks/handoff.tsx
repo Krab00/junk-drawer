@@ -248,15 +248,13 @@ function continueFrom($: $, id: string) {
     void sync($)
     void measured($, 'cycle', S.percent, 'cycle:clear-issued')
     // The host may never answer, a hook may refuse it or it may throw (seen live: the clear was never queued and the phase stayed `clear`
-    // for good): any of the three leaves the phase at `clear` with clearFailed set, and the next turn end retries.
+    // for good): any of the three leaves the phase at `clear` with fresh off, and the next turn end retries.
     const failed = await clearFailure($, cleared)
     if (failed) {
-      S.clearFailed = true
       S.fresh = false // the window was not cleared: the next turn end is judged as a turn end, not as a fresh window
       await measured($, 'cycle', S.percent, `cycle:clear-failed:${failed}`)
       return void (await sync($))
     }
-    S.clearFailed = false
     S.clearTries = 0
     S.phase = 'resume'
     void sync($)
@@ -372,7 +370,6 @@ async function disarm($: $) {
   cancelResume()
   S.phase = 'idle'
   S.written = null
-  S.clearFailed = false
   S.clearTries = 0
   S.fresh = false
   S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
@@ -678,15 +675,14 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
       await m(`give-up:${MAX_ASKS}-tries`)
       await disarm($)
       $.ui.toast(`ahandoff: handoff not written after ${MAX_ASKS} tries — disarmed`)
-    } else if (S.phase === 'clear' && S.clearFailed) {
-      // the cycle's /clear was lost: ask for it again, MAX_CLEAR_RETRIES times
+    } else if (S.phase === 'clear') {
+      // the cycle's /clear was lost (a clear in flight has fresh on, and the branch above skips): ask again, MAX_CLEAR_RETRIES times
       if (S.clearTries >= MAX_CLEAR_RETRIES) {
         await m('give-up:clear')
         await disarm($)
         $.ui.toast(`ahandoff: /clear failed ${MAX_CLEAR_RETRIES + 1} times — disarmed`)
       } else {
         S.clearTries++
-        S.clearFailed = false
         await m('cycle:retry-clear')
         continueFrom($, S.lastId!)
       }
