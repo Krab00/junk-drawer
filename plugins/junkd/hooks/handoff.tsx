@@ -9,7 +9,7 @@ import type { JunkdAhandoff as Ahandoff } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { isSets, shutSet } from './set'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
-import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, MAX_ASKS, PROMPT_DELAY_MS, S, coerce, current, idOf, isField, isLegacy, kTokens, limit, loadOptions, status, thresholdText, thresholdTokens, type $, type Entry, type Field, type Route } from './handoff-lib'
+import { CLEAR_TIMEOUT_MS, DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, MAX_ASKS, MAX_CLEAR_RETRIES, PROMPT_DELAY_MS, S, coerce, current, idOf, isField, isLegacy, kTokens, limit, loadOptions, status, thresholdText, thresholdTokens, type $, type Entry, type Field, type Route } from './handoff-lib'
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
 import { VIEWS } from './handoff-views'
 import { toolsTurnEnd } from './tools-pane'
@@ -64,7 +64,7 @@ async function handoffDir($: $): Promise<string> {
 // that cannot be written is dropped, the loop never waits on it for more than the one append. The last line (without
 // its time) is also kept in S.last, for `/junkd:ahandoff status`.
 const PLAIN_ID = /^[A-Za-z0-9_-]+$/
-type Hook = 'session.start' | 'tool.call' | 'turn.complete' | 'session.measure' | 'config.set'
+type Hook = 'session.start' | 'tool.call' | 'turn.complete' | 'session.measure' | 'config.set' | 'cycle'
 async function logPath($: $): Promise<string | undefined> {
   const sid = await $.session.id().catch(() => '')
   return PLAIN_ID.test(sid) ? `${await configDir($)}/junkd/handoff/${sid}.log` : undefined
@@ -216,6 +216,23 @@ function queueHandoff($: $) {
   void $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') }))
 }
 
+// Why the /clear did not happen: `timeout` (no answer in CLEAR_TIMEOUT_MS) or `error` (the call rejected: a hook above
+// refused it — the engine turns a hook's `{ deny }` into a rejection and strips it from a resolved result — or it
+// threw); undefined when it ran.
+async function clearFailure($: $, cleared: Promise<unknown>): Promise<'timeout' | 'error' | undefined> {
+  let timer: { cancel(): void } | undefined
+  const timeout = new Promise<'timeout'>(done => { timer = $.clock.after(CLEAR_TIMEOUT_MS, () => done('timeout')) })
+  try {
+    const r = await Promise.race([cleared, timeout])
+    return r === 'timeout' ? 'timeout' : undefined
+  } catch {
+    return 'error'
+  } finally {
+    timer?.cancel()
+    cleared.catch(() => {}) // a clear that fails after the timeout is not an unhandled rejection
+  }
+}
+
 // /clear → /junkd:handon <id> carrying the continuation prompt, detached like queueHandoff.
 // One turn does both: the continuation rides the handon submission as hidden context (handoffContinuation), so the
 // model loads the handoff and goes on in the same turn, however it loads it (under the orch guard an agent does,
@@ -229,7 +246,18 @@ function continueFrom($: $, id: string) {
     // ponytail: queue /clear before any other await — a headless session exits right after the turn.
     const cleared = $.command.run({ command: 'clear' })
     void sync($)
-    await cleared
+    void measured($, 'cycle', S.percent, 'cycle:clear-issued')
+    // The host may never answer, a hook may refuse it or it may throw (seen live: the clear was never queued and the phase stayed `clear`
+    // for good): any of the three leaves the phase at `clear` with clearFailed set, and the next turn end retries.
+    const failed = await clearFailure($, cleared)
+    if (failed) {
+      S.clearFailed = true
+      S.fresh = false // the window was not cleared: the next turn end is judged as a turn end, not as a fresh window
+      await measured($, 'cycle', S.percent, `cycle:clear-failed:${failed}`)
+      return void (await sync($))
+    }
+    S.clearFailed = false
+    S.clearTries = 0
     S.phase = 'resume'
     void sync($)
     const pending = (S.pending = { id, text, delivered: false })
@@ -344,6 +372,8 @@ async function disarm($: $) {
   cancelResume()
   S.phase = 'idle'
   S.written = null
+  S.clearFailed = false
+  S.clearTries = 0
   S.fresh = false
   S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
   S.armedAt = null
@@ -648,6 +678,18 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
       await m(`give-up:${MAX_ASKS}-tries`)
       await disarm($)
       $.ui.toast(`ahandoff: handoff not written after ${MAX_ASKS} tries — disarmed`)
+    } else if (S.phase === 'clear' && S.clearFailed) {
+      // the cycle's /clear was lost: ask for it again, MAX_CLEAR_RETRIES times
+      if (S.clearTries >= MAX_CLEAR_RETRIES) {
+        await m('give-up:clear')
+        await disarm($)
+        $.ui.toast(`ahandoff: /clear failed ${MAX_CLEAR_RETRIES + 1} times — disarmed`)
+      } else {
+        S.clearTries++
+        S.clearFailed = false
+        await m('cycle:retry-clear')
+        continueFrom($, S.lastId!)
+      }
     } else if (S.phase === 'handoff' && !S.written) {
       await m('cycle:ask-handoff')
       S.asks++
