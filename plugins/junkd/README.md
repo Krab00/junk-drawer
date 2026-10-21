@@ -17,6 +17,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 | `/junkd:ctx-tokens` | How full the context is, from the session transcript |
 | `/junkd:statusline [on \| off \| status]` | The colored status line in settings.json, a switch per segment; no argument toggles its pane (Claude Code only) |
 | `/junkd:tools [agents \| tools \| mcp \| skills]` | Open or close the tools pane: this session's agents over the repo's worktrees, and the tools, MCP servers and skills it used (Claude Code only) |
+| `/junkd:lessons [list \| promote <id> \| drop <id> \| up <id>]` | Show the pending orch lessons of the three stores (local, repo, global) to promote, drop or move up a store; an orch run does not end while one is pending (Claude Code tab) |
 | `/junkd:explain <topic>` | Explain a topic from the repo in the format that fits: a slider page for parameters, a Mermaid diagram for structure or flow, STE text otherwise |
 | `/junkd:junkd` (`/junkd` where the host resolves it) | Open or close the junkd set of panes (Claude Code only) |
 
@@ -1183,7 +1184,7 @@ Every write of a row (a click, `a`–`g`, `/config`) makes Claude Code read `plu
 while the pane is still on the screen. The new copy starts with nothing in memory and takes the pane back at once: it finds
 `statusline` among the panes Claude Code has up, draws the switches, the key row and the preview from the files, and shows
 the note of the flip (kept in the plugin's `$.store` for 10 s, since the copy that wrote the row is cancelled before it can
-say how it went). Before 0.11.5 none of this happened: after the first flip the `wired` switch read off while the line was
+say how it went). Before 0.11.9 none of this happened: after the first flip the `wired` switch read off while the line was
 on, the preview read `(nothing to draw)`, `/junkd:statusline` opened a pane that was already up, and the `config:` row was
 gone, so every row below it moved up by one and a click aimed where a row had been hit its neighbour (the last one, nothing).
 The `config:` row is now drawn from the first frame, whatever has been read.

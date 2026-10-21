@@ -1,5 +1,5 @@
 {
-  "name": "junkd", "version": "0.11.8",
+  "name": "junkd", "version": "0.11.9",
   "description": "Handoff, orch, tldr, ctx-limit, ctx-tokens and the status line in one plugin: save and resume durable task context, drain a backlog with implementation and independent verification subagents, score the code against the spec files, summarize or keep replies terse, guard and read the context size. The /junkd pane, the tools pane, the automatic handoff loop, the main-loop guard and the status line are Claude Code mods or settings and do nothing here.",
   "author": { "name": "Krab00" }, "repository": "https://github.com/Krab00/junk-drawer",
   "keywords": ["handoff", "orchestration", "subagents", "summary", "concise", "context", "tokens"], "skills": "./skills/", "hooks": "./.codex-plugin/hooks.json",

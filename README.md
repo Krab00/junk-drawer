@@ -79,7 +79,8 @@ Codex notes:
 
 handoff, orch, tldr, ctx-limit, ctx-tokens and statusline are part of junkd; every command is `/junkd:<name>`
 (`/junkd:handoff`, `/junkd:handon`, `/junkd:ahandoff`, `/junkd:orch`, `/junkd:orch-init`, `/junkd:tldr`,
-`/junkd:ctx-limit`, `/junkd:ctx-tokens`, `/junkd:statusline`). Coming from the separate `handoff`, `orch`, `tldr`,
+`/junkd:ctx-limit`, `/junkd:ctx-tokens`, `/junkd:statusline`, `/junkd:direction`, `/junkd:tools`, `/junkd:dashboard`,
+`/junkd:lessons`, `/junkd:explain`). Coming from the separate `handoff`, `orch`, `tldr`,
 `ctx-limit`, `ctx-tokens` or `statusline` plugins: uninstall them and see "Moving from the handoff, orch, tldr,
 ctx-limit, ctx-tokens and statusline plugins" in [`plugins/junkd/README.md`](plugins/junkd/README.md) for the renamed
 commands, settings keys and state files.
@@ -144,7 +145,7 @@ Code and `/direction` on OpenCode: it scores the code against the spec files of 
 The mod parts (the pane, the auto handoff loop, the guard) and the status line are Claude Code only.
 
 `/junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs (junkd, handoff's,
-orch's, statusline's) and closes them together: `×` or `q` in any pane of the set closes the whole set at once, while
+orch's, statusline's, tools' and lessons') and closes them together: `×` or `q` in any pane of the set closes the whole set at once, while
 a pane opened on its own (`/junkd:orch panel`, a `settings ▸` jump) closes alone. The junkd pane has three sections:
 
 - **Plugins**: every plugin of the marketplace, on or off at user scope; a number flips one, then
@@ -254,7 +255,7 @@ Known limits of the skills-only install:
 | Plugin | What it does | Codex / Kimi entry point |
 |---|---|---|
 | `junk-drawer` | Runtime catalog of the marketplace | `$junk-drawer` / `/skill:junk-drawer` |
-| `junkd` | handoff (`/junkd:handoff`, `/junkd:handon`; `/junkd:ahandoff` continues past a context threshold and resumes after the 5h rate limit on Claude Code), orch (`/junkd:orch-init`, then `/junkd:orch`: implementation and independent verification through subagents; `/junkd:direction` scores the code against the spec files), tldr (`/junkd:tldr`: summarize on demand, optional persistent terse mode), ctx-limit (`/junkd:ctx-limit`: a context threshold hook that blocks, warns or runs a command), ctx-tokens (`/junkd:ctx-tokens`: context usage from Claude, Codex or Kimi transcripts), statusline (`/junkd:statusline`: the Claude Code status line with a switch per segment; Codex footer configuration; Kimi footer notes), and on Claude Code the `/junkd` frame: tabs for junkd, handoff, orch and statusline, every plugin on/off, the setting groups, the commands | `$handoff`, `$orch-init`, `$orch`, `$direction`, `$tldr`, `$ctx-limit`, `$ctx-tokens`, `$statusline` / `/skill:<name>` |
+| `junkd` | handoff (`/junkd:handoff`, `/junkd:handon`; `/junkd:ahandoff` continues past a context threshold and resumes after the 5h rate limit on Claude Code), orch (`/junkd:orch-init`, then `/junkd:orch`: implementation and independent verification through subagents; `/junkd:direction` scores the code against the spec files), tldr (`/junkd:tldr`: summarize on demand, optional persistent terse mode), ctx-limit (`/junkd:ctx-limit`: a context threshold hook that blocks, warns or runs a command), ctx-tokens (`/junkd:ctx-tokens`: context usage from Claude, Codex or Kimi transcripts), statusline (`/junkd:statusline`: the Claude Code status line with a switch per segment; Codex footer configuration; Kimi footer notes), and on Claude Code the `/junkd` frame: tabs for junkd, handoff, orch, statusline, tools and lessons, every plugin on/off, the setting groups, the commands | `$handoff`, `$orch-init`, `$orch`, `$direction`, `$tldr`, `$ctx-limit`, `$ctx-tokens`, `$statusline` / `/skill:<name>` |
 
 ## Layout
 
