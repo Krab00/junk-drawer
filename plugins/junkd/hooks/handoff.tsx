@@ -216,21 +216,28 @@ function queueHandoff($: $) {
   void $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') }))
 }
 
-// Why the /clear did not happen: `timeout` (no answer in CLEAR_TIMEOUT_MS) or `error` (the call rejected: a hook above
-// refused it — the engine turns a hook's `{ deny }` into a rejection and strips it from a resolved result — or it
-// threw); undefined when it ran.
-async function clearFailure($: $, cleared: Promise<unknown>): Promise<'timeout' | 'error' | undefined> {
+// Why the /clear did not happen: `timeout` (no answer in CLEAR_TIMEOUT_MS), `error` (the call rejected or threw) or `denied`
+// (it resolved without a string `text`: a hook above answered `{ deny }`, which the engine hands back as `{}` — a `text`
+// holding undefined — or with a `deny` field; a clear that ran resolves `{ text: "" }` and opens a fresh window); undefined when it ran.
+async function clearFailure($: $, cleared: Promise<unknown>): Promise<'timeout' | 'error' | 'denied' | undefined> {
   let timer: { cancel(): void } | undefined
   const timeout = new Promise<'timeout'>(done => { timer = $.clock.after(CLEAR_TIMEOUT_MS, () => done('timeout')) })
   try {
     const r = await Promise.race([cleared, timeout])
-    return r === 'timeout' ? 'timeout' : undefined
+    if (r === 'timeout') return 'timeout'
+    return clearRan(r) ? undefined : 'denied'
   } catch {
     return 'error'
   } finally {
     timer?.cancel()
     cleared.catch(() => {}) // a clear that fails after the timeout is not an unhandled rejection
   }
+}
+
+// The success shape of a resolved /clear: an object whose `text` is a string (empty is fine) and with no `deny`. A refused
+// one has a `text` key too, holding undefined (it prints as `{}`), so the value is what tells them apart.
+function clearRan(r: unknown): boolean {
+  return typeof r === 'object' && r !== null && typeof (r as { text?: unknown }).text === 'string' && !('deny' in r)
 }
 
 // /clear → /junkd:handon <id> carrying the continuation prompt, detached like queueHandoff.
@@ -247,8 +254,8 @@ function continueFrom($: $, id: string) {
     const cleared = $.command.run({ command: 'clear' })
     void sync($)
     void measured($, 'cycle', S.percent, 'cycle:clear-issued')
-    // The host may never answer, a hook may refuse it or it may throw (seen live: the clear was never queued and the phase stayed `clear`
-    // for good): any of the three leaves the phase at `clear` with fresh off, and the next turn end retries.
+    // The host may never answer, a hook may refuse it (denied) or it may throw (seen live: the clear was never queued and the phase stayed
+    // `clear` for good): any of the three leaves the phase at `clear` with fresh off, and the next turn end retries.
     const failed = await clearFailure($, cleared)
     if (failed) {
       S.fresh = false // the window was not cleared: the next turn end is judged as a turn end, not as a fresh window

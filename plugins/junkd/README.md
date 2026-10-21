@@ -425,12 +425,12 @@ and runs the same `/clear`, `/junkd:handon <id>` and continuation as after its o
 the loop's own asks. A handoff written while the loop is off does nothing, and a file older than the arming is not taken.
 
 **A `/clear` that does not happen is retried.** The cycle's `/clear` is issued and logged (`decision=cycle:clear-issued`).
-If the host does not answer within 10 seconds, or the call is rejected (a hook above refused it, or it threw), the log
-says `cycle:clear-failed:timeout` or `cycle:clear-failed:error`, the loop stays in the clear phase and does not run
-`/junkd:handon` in the uncleared session. At the next turn end it logs `cycle:retry-clear` and issues the `/clear` again;
-after 3 retries that all failed, the next turn end logs `give-up:clear`, toasts `ahandoff: /clear failed 4 times —
-disarmed` and disarms the loop. A `/clear` that works resets the count. (The engine hides a hook's `{ deny }` from the
-caller of `$.command.run`, so a refusal that resolves quietly cannot be told from a done clear.)
+If the host does not answer within 10 seconds, the call is rejected (it threw), or it answers with no text (a hook above
+refused it and the answer is `{}`; a `/clear` that ran answers `{ text: "" }`), the log says `cycle:clear-failed:timeout`,
+`:error` or `:denied`, the loop stays in the clear phase and does not run `/junkd:handon` in the uncleared session. At the
+next turn end it logs `cycle:retry-clear` and issues the `/clear` again; after 3 retries that all failed, the next turn end
+logs `give-up:clear`, toasts `ahandoff: /clear failed 4 times — disarmed` and disarms the loop. A `/clear` that works resets
+the count.
 
 A handoff the model does not write is asked for at most 3 times in all (the firing turn's ask is the first); after the
 third miss the loop disarms, logs `decision=give-up:3-tries` and toasts `ahandoff: handoff not written after 3 tries —
