@@ -1542,11 +1542,11 @@ the enforcement is the spec (`commands/orch.md` §7 and §8), the context line b
 | `lesson add [--scope local\|repo\|global] [--stack <tags>] --to <target> --from T<id> "<text>"` | Appends the block (scope `local`, stack the repo's by default) and prints its id, `local:L4` |
 | `lesson list [--pending] [--scope <s>] [--json]` | The table id · scope · stack · to · from · first sentence; `--json` for scripts |
 | `lesson promote <id> [--to <target>] [--yes]` | To its `to` (or `--to`): `repo`/`global` moves it one store up (renumbered, `scope` rewritten) and deletes it below; `check` appends the text to `standing_checks_extra` in `.orch/config.md` only with `--yes` (without it: the proposed line, exit 3), and only when that file has a frontmatter block (`---` … `---`) to hold the key (else exit 2, nothing changed, the lesson kept); `test`/`smoke` prints the fix-round line and marks it `to: test·handed`; `role` writes a task `T<next>.md` into the backlog when this repo is junk-drawer (elsewhere it prints the text to paste and writes nothing); `drop` deletes |
-| `lesson up <id>` | One store up, the `to` kept |
+| `lesson up <id>` | One store up, its `to` set to that store: the lesson rests there and is no longer pending |
 | `lesson drop <id>` | Deletes it |
 | `lesson prune [--months N] [--yes]` | Lists the lessons older than N months (default 6) whose stack is not this repo's; `--yes` drops them |
-| `lesson pending` | The count of pending lessons of the three stores; exit 1 when there are any |
-| `lesson inject` | The lessons whose stack meets the repo's (and `any`), as the text the session start prints |
+| `lesson pending` | The count of pending lessons of the three stores (a global lesson of another stack than this repo's is left out); exit 1 when there are any |
+| `lesson inject` | The lessons whose stack meets the repo's (and `any`), as the text the session start prints. Outside git the stack is read (4 levels deep) only where a `lessons.md` or local store already is, else it is `any` |
 
 `<id>` is `L3`, or `local:L3`, `repo:L3`, `global:L3` when two stores have an `L3`. It is the one writer of the
 stores: each write is a temp file and an `mv`, a CRLF file is written back LF, and a file that cannot be written
