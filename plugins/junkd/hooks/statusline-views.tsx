@@ -5,7 +5,7 @@ import type { ElementTable, RenderInput } from 'claude-code'
 import type { JunkdStatuslineField as Field, JunkdStatuslineSegment as Segment } from '../types'
 
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button'>
-export type StatuslineActs = { close(): void; toggle(field: Field): void }
+export type StatuslineActs = { close(): void }
 // `values.enabled` is whether settings.json's statusLine is junkd's; `config` is the pluginConfigs key the segment rows
 // are stored under and the second-config warning ('' when there is none).
 export type StatuslineData = { values: Record<Field, boolean>; preview: string; note: string; config: { key: string; warn: string } }
@@ -18,6 +18,9 @@ const LETTERS = 'abcdefghijklmnoprstuvwxyz' // q closes
 export const SEGMENTS: readonly Segment[] = ['ctx', 'branch', 'worktree', 'model', 'effort', 'limits']
 // The rows in hotkey order: enabled (a), then the segments (b-g).
 export const FIELDS: readonly Field[] = ['enabled', ...SEGMENTS]
+// A press on a switch is served by statusline.tsx's `ui.press` hook (the closure of a drawing is gone for a moment after the host
+// has loaded the module again); the closure the Button asks for does nothing.
+const SERVED_BY_THE_HOOK = () => undefined
 export const hotkeyOf = (field: Field): string => LETTERS[FIELDS.indexOf(field)]!
 const LABELS: Record<Field, [string, string]> = {
   enabled: ['wired', 'statusLine in settings.json points at junkd/statusline.sh'],
@@ -55,7 +58,7 @@ export function statuslineView(els: Els, props: RenderInput<'Pane'>['props'], da
           </Text>
         </Box>
         <Box width={6} flexShrink={0}>
-          <Button key={`set:${field}`} plain dimColor hotkey={hotkeyOf(field)} label={isOn ? 'off' : 'on'} onPress={() => act.toggle(field)} />
+          <Button key={`set:${field}`} plain dimColor hotkey={hotkeyOf(field)} label={isOn ? 'off' : 'on'} onPress={SERVED_BY_THE_HOOK} />
         </Box>
         <Box flexShrink={1} overflow="hidden">
           <Text color={P.secondary} wrap="truncate-end">

@@ -420,7 +420,6 @@ export function registerStatusline(on: On, options: Record<string, unknown>): vo
     if (e.surface === 'mobile') return next(e)
     return statuslineView($.ui.resolve(e) as Els, e.props, { values: { ...S, enabled: S.enabled && wired }, preview, note, config: { ...configInfo, key: configInfo.key || pluginKey($.plugin.root) } }, {
       close: () => void (isSets(owner) ? shutSet($) : closePane($)),
-      toggle: field => void toggleRow($, field),
     })
   })
 }
