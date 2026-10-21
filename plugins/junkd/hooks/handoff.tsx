@@ -217,8 +217,8 @@ function queueHandoff($: $) {
 }
 
 // Why the /clear did not happen: `timeout` (no answer in CLEAR_TIMEOUT_MS), `error` (the call rejected or threw) or `denied`
-// (it resolved without a string `text`: a hook above answered `{ deny }`, which the engine hands back as `{}` — a `text`
-// holding undefined — or with a `deny` field; a clear that ran resolves `{ text: "" }` and opens a fresh window); undefined when it ran.
+// (it resolved without a string `text`: a hook above answered `{ deny }` and the engine hands that back as `{}`; a clear that
+// ran resolves `{ text: "" }` and opens a fresh window); undefined when it ran.
 async function clearFailure($: $, cleared: Promise<unknown>): Promise<'timeout' | 'error' | 'denied' | undefined> {
   let timer: { cancel(): void } | undefined
   const timeout = new Promise<'timeout'>(done => { timer = $.clock.after(CLEAR_TIMEOUT_MS, () => done('timeout')) })
@@ -234,10 +234,10 @@ async function clearFailure($: $, cleared: Promise<unknown>): Promise<'timeout' 
   }
 }
 
-// The success shape of a resolved /clear: an object whose `text` is a string (empty is fine) and with no `deny`. A refused
+// The success shape of a resolved /clear: an object whose `text` is a string (empty is fine). A refused
 // one has a `text` key too, holding undefined (it prints as `{}`), so the value is what tells them apart.
 function clearRan(r: unknown): boolean {
-  return typeof r === 'object' && r !== null && typeof (r as { text?: unknown }).text === 'string' && !('deny' in r)
+  return typeof r === 'object' && r !== null && typeof (r as { text?: unknown }).text === 'string'
 }
 
 // /clear → /junkd:handon <id> carrying the continuation prompt, detached like queueHandoff.
