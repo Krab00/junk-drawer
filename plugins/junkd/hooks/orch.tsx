@@ -7,7 +7,7 @@ import type { EngineInterface, On, RenderInput, ToolCallInput } from 'claude-cod
 import type { JunkdOrchField as OrchField, JunkdOrchGuard as OrchGuard } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { isSets, shutSet } from './set'
-import { O, PREFIX, applyOrchSettings, coerce, guardActive, isField, orchGuard, orchSpawn, transcriptTokens, type AgentRecord, type OrchState } from './orch-lib'
+import { O, PREFIX, applyOrchSettings, coerce, guardActive, isField, orchGuard, orchSpawn, recipient, transcriptTokens, type AgentRecord, type OrchState } from './orch-lib'
 import { orchView, type Els } from './orch-views'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 import { toolsSpawned } from './tools-pane'
@@ -63,9 +63,10 @@ async function savedRecord($: $, key: string): Promise<AgentRecord | undefined> 
 // SubagentStop record (by id, and by name for a named agent), which also holds its context tokens: the one on disk,
 // else the one in memory. null: none of them knows it.
 async function orchAgent($: $, to: string): Promise<AgentRecord | null> {
-  const key = to.replace(/ \[[^\]]*\]$/, '')
-  const listed = (await $.agent.list().catch(() => [])).find(a => a.id === key || a.name === key)
-  const id = listed?.id ?? key
+  const key = recipient(to)
+  const low = key.toLowerCase() // ids are hex: their case does not tell agents apart
+  const listed = (await $.agent.list().catch(() => [])).find(a => a.id.toLowerCase() === low || a.name === key)
+  const id = listed?.id ?? (/^a[0-9a-f]+$/.test(low) ? low : key)
   const saved = (await savedRecord($, id)) ?? records.get(id) ?? records.get(key)
   if (!listed && !saved) return null
   return { type: listed?.type ?? saved?.type, tokens: saved?.tokens }

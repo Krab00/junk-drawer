@@ -121,6 +121,8 @@ const ALLOW = new Set([
   'ReadNotifications', // the session's own notification queue (the handoff chain reads it): nothing to delegate
 ])
 const AGENT_ID = /^a[0-9a-f]{15,}$/ // a subagent's id (`a` + 16 hex); any other recipient is a peer session (by name), `main` or a protocol reply
+// A SendMessage recipient as the guard reads it: trimmed, ListAgents' " [ref]" dropped, trimmed again.
+export const recipient = (to: unknown): string => String(to).trim().replace(/ \[[^\]]*\]$/, '').trim()
 const REVIEWER = /^(junkd:)?(verify-coordinator|ui-reviewer|test-planner)$/
 const MODELS = new Set(['opus', 'sonnet', 'haiku']) // an Agent's `model`: never inherit; fable only as below
 const FABLE = /fable/i // `fable` or a full Fable id: an Agent's explicit model, only with allow_fable_agents
@@ -247,7 +249,7 @@ export function orchGuard(e: { tool: string; agentId?: string; [k: string]: unkn
       const a = s.agent
       // Unknown: refused only when it is spelled as a subagent id of this session. A name nobody carries (a peer
       // session, ListAgents' " [ref]" dropped) is the engine's to resolve; it reaches no subagent of this loop.
-      if (a === null) return AGENT_ID.test(String(e.to).replace(/ \[[^\]]*\]$/, '')) ? `${PREFIX} no agent "${String(e.to)}" is known (not in the agent list, no SubagentStop record). Spawn a fresh agent.` : undefined
+      if (a === null) return AGENT_ID.test(recipient(e.to).toLowerCase()) ? `${PREFIX} no agent "${String(e.to)}" is known (not in the agent list, no SubagentStop record). Spawn a fresh agent.` : undefined
       const type = a?.type ?? ''
       if (REVIEWER.test(type)) return `${PREFIX} ${type.replace(/^junkd:/, '')} is a reviewer, and reviewers are always fresh: spawn a new one.`
       if (a?.tokens !== undefined && a.tokens > o.implementer_ctx_k * 1000)

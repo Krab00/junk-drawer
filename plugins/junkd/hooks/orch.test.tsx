@@ -336,10 +336,10 @@ test('T35: SendMessage to a peer session, main or a protocol reply passes in eve
   const send = (to: string) => main('SendMessage', { to, message: 'hello' })
   for (const [guard, model] of [['fable', FABLE], ['always', FABLE], ['always', OPUS]] as const) {
     const o = { ...on_, guard }
-    for (const to of ['HANDON', 'HANDON [69f752]', 'main', 'shutdown_response', 'claude-5-peer [x] [y]', 'peer@team', 'a000000000000000x', 'xa000000000000000', 'a000000000000000 [x] y', 'b000000000000000', 'a00000000000000g', 'a00000000000000', 'A000000000000000'])
+    for (const to of ['HANDON', 'HANDON [69f752]', 'main', 'shutdown_response', 'claude-5-peer [x] [y]', 'peer@team', 'a000000000000000x', 'xa000000000000000', 'a000000000000000 [x] y', 'b000000000000000', 'a00000000000000g', 'a00000000000000'])
       expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toBeUndefined()
-    for (const to of [UNKNOWN, `${UNKNOWN} [69f752]`, 'a0123456789abcdef', 'a0123456789abcdef0123'])
-      expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toMatch(/^Orchestrator mode \(orch\): no agent ".*" is known \(not in the agent list, no SubagentStop record\)\. Spawn a fresh agent\.$/)
+    for (const to of [UNKNOWN, `${UNKNOWN} [69f752]`, ` ${UNKNOWN}\n`, `${UNKNOWN.toUpperCase()}`, ` ${UNKNOWN} [69f752] `, 'a0123456789abcdef', 'a0123456789abcdef0123'])
+      expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toMatch(/^Orchestrator mode \(orch\): no agent "[^]*" is known \(not in the agent list, no SubagentStop record\)\. Spawn a fresh agent\.$/)
     // the tools of the inbox
     for (const tool of ['ReadNotifications', 'ListAgents']) expect(orchGuard(main(tool), st({ model, agent: null }), o), `${guard} ${tool}`).toBeUndefined()
   }
@@ -359,6 +359,33 @@ test('T35: a peer session absent from the agent list passes SendMessage by name,
   expect(denial(await send(`${UNKNOWN} [69f752]`))).toMatch(/no agent/)
   expect(denial(await $.tool.call({ tool: 'ReadNotifications' }))).toBeUndefined()
   expect(denial(await $.tool.call({ tool: 'ListAgents' }))).toBeUndefined()
+})
+
+test('T35: a work tool carrying a peer-looking `to` is still denied in every active mode', () => {
+  for (const [guard, model] of [['fable', FABLE], ['always', FABLE], ['always', OPUS]] as const) {
+    const o = { ...on_, guard }
+    for (const [tool, args] of [['Bash', { command: 'git push' }], ['Monitor', { command: 'git push' }], ['Edit', {}], ['WebFetch', {}], ['Grep', {}], ['mcp__atlassian__getJiraIssue', {}]] as const)
+      for (const to of ['HANDON', 'HANDON [69f752]', 'main'])
+        expect(orchGuard(main(tool, { ...args, to }), st({ model, agent: null }), o), `${guard} ${tool} ${to}`).toMatch(new RegExp(`^${PREFIX.replace(/[()]/g, '\\$&')} .*${tool === 'Monitor' ? 'Monitor' : tool}`))
+  }
+})
+
+test('T35: a recipient is trimmed and its id read in lower case, so a known subagent cannot pass as a peer', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'ping' })
+  const ID = 'a1b2c3d4e5f60718'
+  rec.agents = [{ id: ID, type: 'junkd:ui-reviewer', name: 'rev' }, { id: 'imp1', type: 'junkd:implementer', name: 'impl' }]
+  for (const to of [' rev', 'rev\n', '\trev [x1] ', ` ${ID}`, `${ID}\n`, ID.toUpperCase(), ` ${ID.toUpperCase()} [x1]`])
+    expect(denial(await send(to)), JSON.stringify(to)).toMatch(/ui-reviewer is a reviewer/)
+  // a stopped agent's record answers by the same normalised id
+  rec.files[`${RECORDS}/${SID}/a0f0e0d0c0b0a090.json`] = record('junkd:implementer', 450_000)
+  for (const to of ['a0f0e0d0c0b0a090', ' a0F0E0D0C0B0A090\n', 'a0f0e0d0c0b0a090 [x1] '])
+    expect(denial(await send(to)), JSON.stringify(to)).toMatch(/exceeds cap 400k/)
+  // still unknown, still refused, whatever the spelling; a peer name stays a peer
+  for (const to of [` ${UNKNOWN}\n`, UNKNOWN.toUpperCase(), ` ${UNKNOWN} [x1] `])
+    expect(denial(await send(to)), JSON.stringify(to)).toMatch(/no agent/)
+  expect(denial(await send(' HANDON \n'))).toBeUndefined()
 })
 
 test('settings: defaults for missing or wrong types, the number rows clamped to their bounds at load', () => {
