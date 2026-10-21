@@ -1,9 +1,6 @@
 {
   "version": "2",
   "plugins": [
-    { "id": "statusline", "displayName": "Status Line", "source": "./plugins/statusline" },
-    { "id": "ctx-tokens", "displayName": "Context Tokens", "source": "./plugins/ctx-tokens" },
-    { "id": "ctx-limit", "displayName": "Context Limit", "source": "./plugins/ctx-limit" },
     { "id": "junk-drawer", "displayName": "Junk Drawer", "source": "./plugins/junk-drawer" },
     { "id": "junkd", "displayName": "junkd", "source": "./plugins/junkd" }
   ]

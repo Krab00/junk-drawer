@@ -6,9 +6,14 @@
 import type { EngineInterface, On, RenderInput, ToolCallInput } from 'claude-code'
 import type { JunkdOrchField as OrchField, JunkdOrchGuard as OrchGuard } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
-import { O, PREFIX, applyOrchSettings, coerce, guardActive, isField, orchGuard, orchSpawn, transcriptTokens, type AgentRecord, type OrchState } from './orch-lib'
+import { isSets, shutSet } from './set'
+import { O, PREFIX, applyOrchSettings, coerce, guardActive, isField, orchGuard, orchSpawn, recipient, transcriptTokens, type AgentRecord, type OrchState } from './orch-lib'
 import { orchView, type Els } from './orch-views'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
+import { toolsSpawned } from './tools-pane'
+import { dashboardAgentStop, dashboardClose, dashboardOpen, dashboardRetime, dashboardSpawned } from './dashboard.tsx'
+import { watchSpawned, watchStopped, watchdogApplied, watchdogReport } from './watchdog.tsx'
+import { lessonsApplied, lessonsRunStart } from './lessons.tsx'
 
 type $ = EngineInterface
 
@@ -58,9 +63,10 @@ async function savedRecord($: $, key: string): Promise<AgentRecord | undefined> 
 // SubagentStop record (by id, and by name for a named agent), which also holds its context tokens: the one on disk,
 // else the one in memory. null: none of them knows it.
 async function orchAgent($: $, to: string): Promise<AgentRecord | null> {
-  const key = to.replace(/ \[[^\]]*\]$/, '')
-  const listed = (await $.agent.list().catch(() => [])).find(a => a.id === key || a.name === key)
-  const id = listed?.id ?? key
+  const key = recipient(to)
+  const low = key.toLowerCase() // ids are hex: their case does not tell agents apart
+  const listed = (await $.agent.list().catch(() => [])).find(a => a.id.toLowerCase() === low || a.name === key)
+  const id = listed?.id ?? (/^a[0-9a-f]+$/.test(low) ? low : key)
   const saved = (await savedRecord($, id)) ?? records.get(id) ?? records.get(key)
   if (!listed && !saved) return null
   return { type: listed?.type ?? saved?.type, tokens: saved?.tokens }
@@ -149,10 +155,10 @@ function redraw($: $) {
   return $.ui.invalidate('ui.render')
 }
 
-// enabled off and inject_rules off are the flag files scripts/orch-context.sh falls back to when settings.json holds
-// no value it can read (a shell hook reads no `$.config`): ${CLAUDE_CONFIG_DIR}/junkd/orch-off and
-// .../junkd/orch-rules-off, each written at every change of its row and at session start.
-const FLAGS = { enabled: 'orch-off', inject_rules: 'orch-rules-off' } as const
+// enabled off, inject_rules off and lessons off are the flag files scripts/orch-context.sh falls back to when
+// settings.json holds no value it can read (a shell hook reads no `$.config`): ${CLAUDE_CONFIG_DIR}/junkd/orch-off,
+// .../junkd/orch-rules-off and .../junkd/orch-lessons-off, each written at every change of its row and at session start.
+const FLAGS = { enabled: 'orch-off', inject_rules: 'orch-rules-off', lessons: 'orch-lessons-off' } as const
 async function writeFlag($: $, key: keyof typeof FLAGS): Promise<void> {
   const flag = `${await configDir($)}/junkd/${FLAGS[key]}`
   // Something that is no file under the flag's name (a directory) is not ours: the hook reads only a file (`-f`), so
@@ -185,8 +191,11 @@ async function runClaudeMd($: $): Promise<void> {
 // the menu's write reaches the hook.
 async function apply($: $, key: OrchField, value: OrchGuard | number | boolean): Promise<void> {
   ;(O as Record<string, unknown>)[key] = value
-  if (key === 'enabled' || key === 'inject_rules') await writeFlag($, key)
+  if (key === 'enabled' || key === 'inject_rules' || key === 'lessons') await writeFlag($, key)
   if (key === 'claude_md') await runClaudeMd($)
+  if (key === 'dashboard_refresh') dashboardRetime($)
+  await watchdogApplied($) // the watchdog's timer follows enabled and watchdog
+  if (key === 'enabled' || key === 'lessons') await lessonsApplied($) // the tab, the segment and the dialog follow them
   redraw($)
 }
 
@@ -262,7 +271,7 @@ export async function orchHide($: $, input: HideInput = {}): Promise<void> {
 }
 // Each flag on its own: one that fails leaves the other written.
 export async function orchStart($: $): Promise<void> {
-  await Promise.all([writeFlag($, 'enabled').catch(() => undefined), writeFlag($, 'inject_rules').catch(() => undefined)])
+  await Promise.all([writeFlag($, 'enabled').catch(() => undefined), writeFlag($, 'inject_rules').catch(() => undefined), writeFlag($, 'lessons').catch(() => undefined)])
 }
 // Inactive while orch is disabled; the model is read either way (only the fable guard's read toasts).
 export async function orchGuardState($: $): Promise<{ active: boolean; model: string }> {
@@ -277,6 +286,18 @@ export async function orchToolDeny($: $, e: ToolCallInput): Promise<string | und
 // hold (orch enabled, guard not off) refuses instead; a subagent's call (agentId, parentAgentId) passes.
 export function orchCatchDeny(agentId?: string): string | undefined {
   return O.enabled && O.guard !== 'off' && !agentId ? `${PREFIX} guard error` : undefined
+}
+
+// /junkd:orch watchdog: the verdict table (watchdog.tsx); `on` and `off` flip orch_watchdog as the pane does.
+async function orchWatchdog($: $, arg: string): Promise<{ text?: string }> {
+  const mode = arg.toLowerCase()
+  if (mode === '') {
+    await watchdogReport($)
+    return {}
+  }
+  if (mode !== 'on' && mode !== 'off') return { text: `junkd: /junkd:orch watchdog takes on, off or nothing, not "${arg}"` }
+  const r = await setOption($, 'watchdog', mode === 'on')
+  return { text: r.deny !== undefined ? `✗ ${r.deny}` : `watchdog ${mode}` }
 }
 
 export function registerOrch(on: On, options: Record<string, unknown>): void {
@@ -295,10 +316,16 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
   })
 
   // The spawn as the engine resolved it (fork, model), behind the Agent rule of the guard; the model's own spawns
-  // only, as for tool.call.
+  // only, as for tool.call. The module's one agent.spawn hook: the tools pane records each started agent's model and
+  // directory here too (toolsSpawned never throws).
   on('agent.spawn', async ($, e, next) => {
     const deny = next.origin.plugin === 'engine' ? orchSpawn(e) : undefined
-    return deny ? { deny } : next(e)
+    if (deny) return { deny }
+    const r = await next(e)
+    await toolsSpawned($, e, r)
+    await dashboardSpawned($, e, r)
+    await watchSpawned($, e, r) // the watchdog: when, where and by whom (never throws)
+    return r
   }).catch(($, e, next) => {
     if (next.called) return next(e)
     const deny = orchCatchDeny(e.parentAgentId)
@@ -313,33 +340,49 @@ export function registerOrch(on: On, options: Record<string, unknown>): void {
     records.set(e.agent_id, record)
     const name = (await $.agent.list().catch(() => [])).find(a => a.id === e.agent_id)?.name
     if (name) records.set(name, record)
+    await dashboardAgentStop($, e.agent_id, record.tokens)
+    await watchStopped($, e.agent_id) // the watchdog: this agent reported
     return next(e)
   })
 
   // /junkd:orch panel toggles the pane; anything else is the plain skill.
   on('command.run', { command: 'junkd:orch' }, async ($, e, next) => {
-    if (e.args.trim() !== 'panel') return next(e)
+    // `dashboard` and `dashboard close`: /junkd:dashboard's own path (dashboard.tsx).
+    const dash = /^dashboard(?:\s+(open|close))?$/i.exec(e.args.trim())
+    if (dash) {
+      const text = dash[1]?.toLowerCase() === 'close' ? await dashboardClose($) : await dashboardOpen($)
+      return text ? { text } : {}
+    }
+    if (/^watchdog(\s|$)/.test(e.args.trim())) return orchWatchdog($, e.args.trim().slice('watchdog'.length).trim())
+    if (e.args.trim() !== 'panel') {
+      await lessonsRunStart($) // a run: lessons pending open the dialog before the skill selects a task
+      return next(e)
+    }
     await togglePane($)
     return {}
   })
 
   // The person's closes (q, ×) pass here; ours go through closePane.
-  on('ui.close', { id: PANE }, (_$, e, next) => {
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const isSet = isSets(owner)
     paneOpen = false
     owner = undefined
-    return next(e)
+    const r = await next(e)
+    if (isSet) await shutSet($)
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e: RenderInput<'Pane'>, next) => {
     if (e.surface === 'mobile') return next(e)
     return orchView($.ui.resolve(e) as Els, e.props, { ...O }, note, {
-      close: () => void closePane($),
+      close: () => void (isSets(owner) ? shutSet($) : closePane($)),
       set: (key, value) => void setOption($, key, value),
       focus: key => void $.ui.focus({ requestId: PANE, key }).catch(() => undefined), // a refused ring is no error
       refuse: text => {
         note = text
         redraw($)
       },
+      dashboard: () => void dashboardOpen($).then(text => { if (text) { note = text; redraw($) } }),
     })
   })
 }

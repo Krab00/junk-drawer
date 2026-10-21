@@ -1,0 +1,1 @@
+[36mctx 139k free / 61k used (30%)[0m[2m │ [0m[32mfeature/golden[0m[2m │ [0m[35m⑂wt-golden[0m[2m │ [0m[1;34mOpus[0m[2m │ [0m[33meffort:high[0m[2m │ [0m[2m5h:[0m[38;2;34;197;94m42%[0m [2mweek:[0m[1;38;2;239;68;68m88%[0m

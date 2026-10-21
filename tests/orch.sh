@@ -386,7 +386,7 @@ stop_event '"s1"' '"j1"' "$tr_dir/plain.jsonl" | PATH="$tmp/nojq-stop" "$stop" |
 export CLAUDE_CONFIG_DIR="$tmp/cfg"
 
 # ---------------------------------------------------------------- agents (AC1)
-for agent in implementer verify-coordinator ui-reviewer orch-ops lead-implementer test-planner test-reviewer; do
+for agent in implementer verify-coordinator ui-reviewer orch-ops lead-implementer test-planner; do
     f="$plugin/agents/$agent.md"
     [ -f "$f" ] || fail "missing agent $agent"
     model=$(awk 'NR==1 && !/^---/ {exit} /^---/ {n++; if (n==2) exit; next} /^model:/ {sub(/^model:[ \t]*/, ""); print}' "$f")
@@ -397,10 +397,112 @@ for agent in implementer verify-coordinator ui-reviewer orch-ops lead-implemente
     name=$(awk '/^---/ {n++; if (n==2) exit; next} /^name:/ {sub(/^name:[ \t]*/, ""); print}' "$f")
     [ "$name" = "$agent" ] || fail "agent $agent: frontmatter name is '$name'"
 done
-for pair in implementer:opus lead-implementer:opus verify-coordinator:opus ui-reviewer:sonnet test-planner:sonnet test-reviewer:sonnet orch-ops:haiku; do
+for pair in implementer:opus lead-implementer:opus verify-coordinator:opus ui-reviewer:sonnet test-planner:sonnet orch-ops:haiku; do
     model=$(awk '/^---/ {n++; if (n==2) exit; next} /^model:/ {sub(/^model:[ \t]*/, ""); print}' "$plugin/agents/${pair%%:*}.md")
     [ "$model" = "${pair##*:}" ] || fail "agent ${pair%%:*}: model '$model', expected ${pair##*:}"
 done
+
+# ---------------------------------------------------------------- security standing check (T22)
+# The check is a prompt rule: orch.md §4 and the verify-coordinator's standing checks carry the same gate, spawn
+# and row rules, init.md proposes the block, and the orchestrator session env (ENABLE_STOP_REVIEW=0) is documented.
+# Every needle is a whole clause of the rule, so a flipped model, gate, row kind or threshold fails the test.
+orch_md="$plugin/skills/orch/commands/orch.md"
+vc_md="$plugin/agents/verify-coordinator.md"
+init_md="$plugin/skills/orch/commands/init.md"
+# section <file> <start regex> <end regex>: the lines from the start line up to (not including) the end line
+section() { awk -v a="$2" -v b="$3" '$0 ~ a {on=1} on && $0 ~ b && !($0 ~ a) {exit} on' "$1"; }
+# flat <text>: one line, leading blanks of every line dropped, so a rule wrapped across lines still matches
+flat() { printf '%s\n' "$1" | sed 's/^ *//' | tr '\n' ' '; }
+needs() {   # needs <label> <text> <needle>...: every needle appears verbatim in the text
+    local label=$1 text=$2 n; shift 2
+    for n in "$@"; do printf '%s\n' "$text" | rg -qF -- "$n" || fail "$label: no '$n'"; done
+}
+names='auth|login|session|token|secret|upload|exec|spawn|sql|query'
+classes='injection, XSS, SSRF, IDOR, auth bypass, secret, deserialization, path traversal, …'
+s4=$(flat "$(section "$orch_md" '^### 4[.] ' '^### 5[.] ')")
+needs "orch.md §4" "$s4" \
+    '**`security` declared** (`capabilities.security: { severity: <low|medium|high> }`) → the coordinator spawns ONE fresh security reviewer, no new agent type: a general-purpose subagent on' \
+    "\`model: sonnet\`, or \`model: opus\` when a path in \`git diff --name-only <base>...<branch>\` matches \`$names\` (case-insensitive)." \
+    'It runs the built-in `security-review` skill against `git diff <base>...<branch>` in the verify worktree; scope: the changed files plus what they call.' \
+    "Every finding at or above \`severity\` is its own \`FAIL\` row naming \`file:line\` and the class ($classes)." \
+    'Findings below `severity` are notes under the table, never rows.' \
+    'No finding at or above it → one `PASS` row `security: no findings ≥ <severity>`.' \
+    'A reviewer that cannot run (the skill is missing on the host) → one `PM-REVIEW` row with the reason, never a silent skip.' \
+    'It runs on **every** round, re-verify rounds too: a fix round changes the diff.' \
+    '`security` absent from the config → no reviewer and no security row at all.' \
+    'A `severity` that is missing or not one of `low`, `medium`, `high` is read as `high`, with the note `security: severity <value> read as high` under the table.' \
+    '**only the failing criteria** (the `security` check still runs in full).'
+vc_checks=$(flat "$(section "$vc_md" '^5[.] [*][*]Standing checks' '^## Where evidence goes')")
+needs "verify-coordinator standing checks" "$vc_checks" \
+    '**Security (`capabilities.security` declared, `{ severity: <low|medium|high> }`):** spawn ONE fresh security reviewer in step 0 — no new agent type: a general-purpose subagent on' \
+    "\`model: sonnet\`, or \`model: opus\` when a path in \`git diff --name-only <base>...<branch>\` matches \`$names\` (case-insensitive)." \
+    'Brief it to run the built-in `security-review` skill against `git diff <base>...<branch>` in the verify worktree, scope: the changed files plus what they call, and to return each finding with `file:line`, class and severity.' \
+    "every finding at or above \`severity\` → its own \`FAIL\` row, \`security: <class> at <file>:<line>\`; the class is one of $classes (the reviewer's word when none fits);" \
+    '- findings below `severity` → listed as notes under the table, never rows;' \
+    '- no finding at or above it → one `PASS` row `security: no findings ≥ <severity>`;' \
+    '- the reviewer cannot run (the `security-review` skill is missing on the host, the spawn fails) → one `PM-REVIEW` row with the reason, never a silent skip, and never a self-review standing in for it.' \
+    'It runs on every round, re-verify rounds included. `security` absent from the config → no reviewer and no security row at all.' \
+    'A `severity` that is missing or not one of `low`, `medium`, `high` is read as `high`, with the note `security: severity <value> read as high` under the table.'
+needs "verify-coordinator step 0" "$(flat "$(section "$vc_md" '^0[.] [*][*]Plan the matrix' '^1[.] [*][*]Build the verify env')")" \
+    '**`security` declared → spawn the security reviewer in this same step** (see the standing check below), so it too overlaps the env build: run `<bin>/orch-worktree add` first'
+needs "verify-coordinator inputs" "$(flat "$(section "$vc_md" '^## Inputs' '^## What you do')")" \
+    'The `security` standing check is not narrowed by it: it runs in full on every round, because a fix round changes the diff.' \
+    'no test runner → build/behaviour checks stand in; no `security` → no security reviewer).'
+needs "verify-coordinator evidence" "$(flat "$(section "$vc_md" '^## Where evidence goes' '^## Teardown')")" \
+    'The `security` rows join the same table; the findings below `severity` go under it as `Security notes (below <severity>)`.'
+# the literal grep of AC1 hits all three files
+for f in "$orch_md" "$vc_md" "$init_md"; do
+    grep -q "capabilities.security\|security-review" "$f" || fail "$(basename "$f"): no capabilities.security / security-review"
+done
+# init.md: the scan condition, the proposal only under it, and the template line carrying severity: high
+needs "init.md" "$(flat "$(cat "$init_md")")" \
+    "- **Security surface** — does the repo have a **web** app, an **api**, or any file whose name matches \`$names\` (case-insensitive, \`git ls-files\`)? Any one of the three → propose the \`security\` block (step 3); none → leave it out." \
+    'The same holds for `security`: propose it with `severity: high` only when the scan found its surface (step 1)' \
+    'Declared, it makes every verify round run the built-in `security-review` skill over the task diff (`capabilities.security`, see `/junkd:orch` §4); without it no security check runs.'
+rg -q '^  security: \{ severity: high \} +# only with a web app, an api, or a security-named file; omit otherwise$' "$init_md" ||
+    fail "init.md: the config template has no 'security: { severity: high }' line"
+needs "orch-init SKILL.md" "$(flat "$(cat "$plugin/skills/orch-init/SKILL.md")")" \
+    '- The spec'"'"'s `security` block is proposed by the same scan on every host. On Codex, Kimi Code and OpenCode a declared `security` needs a `security-review` skill on that host for the verify leg to run it; without one each verify round gives a `PM-REVIEW` row, so say that when you propose the block. On Claude Code `security-review` is a built-in skill.'
+# the orchestrator session env: orch.md §0, the rule sheet, README and the guide, and why the commit/push review stays on
+needs "orch.md §0" "$(flat "$(section "$orch_md" '^## 0[.] ' '^## Canonical')")" \
+    '**Session env:** the orchestrator session runs with `ENABLE_STOP_REVIEW=0` (recommended, set by the user where the session starts, never from a hook).' \
+    'Its commit/push review stays on, in the agent that commits. The check that gates `done` is the `security` standing check (§4).'
+needs "ORCHESTRATOR.md" "$(flat "$(cat "$sheet")")" \
+    '- An orch session starts with `ENABLE_STOP_REVIEW=0` in its env, set by the user, never from a hook: the `security-guidance` Stop review stays off, its commit/push review stays on, and the verify leg'"'"'s `security` standing check gates `done`'
+readme=$(flat "$(cat "$plugin/README.md")")
+needs "README.md" "$readme" \
+    'security: { severity: high } # omit unless there is a web app, an api, or a security-named file' \
+    'Each finding at or above `severity` is a `FAIL` row with `file:line` and the class; a lower finding is a note under the table; no finding is one `PASS` row; a reviewer that cannot run is a `PM-REVIEW` row. Absent, no security check runs.' \
+    'Start the session that runs `/junkd:orch` with `ENABLE_STOP_REVIEW=0` in its environment (for example `ENABLE_STOP_REVIEW=0 claude`). junkd does not set it from a hook.' \
+    'The commit/push review stays on: it runs in the implementer at the moment it commits, on that commit alone, so it is still a useful first warning.'
+guide=$(flat "$(cat "$plugin/docs/orch-guide.md")")
+needs "orch-guide.md" "$guide" '### Security' \
+    '| **Security review of the diff** — one fresh reviewer runs the built-in `security-review` skill; each finding at or above `severity` is a FAIL row | `security` declared |' \
+    'a reviewer that cannot run (no such skill on the host) is one `PM-REVIEW` row with the reason. The check runs on every round, because a fix round changes the diff. Without the block there is no security row at all.' \
+    'The orchestrator session itself runs with `ENABLE_STOP_REVIEW=0`, set by you where the session starts (`ENABLE_STOP_REVIEW=0 claude`), never by a hook.' \
+    'Its commit/push review stays on, because it runs in the implementer at the moment of the commit, on that commit alone, and is a cheap early warning.' \
+    'security: { severity: high } # omit unless there is a web app, an api, or a security-named file' \
+    '| `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row; a missing or other value is read as `high`, with a note under the table. Absent → no security check'
+
+# ---------------------------------------------------------------- test quality is the coordinator's own step (T31)
+# There is no test reviewer agent: the verify-coordinator audits the shipped tests itself, and test-planner is spawned
+# only on a critical task or on request. Whole-sentence needles, so a deleted mutant count or a spawn line put back fails.
+needs "verify-coordinator step 3" "$(flat "$(section "$vc_md" '^3[.] [*][*]Test gate' '^4[.] [*][*]Verdict rules')")" \
+    '**Test quality (when the change added/touched tests):** you audit the shipped tests yourself, as the independent reader of the change.' \
+    "- Real assertions: the tests assert observable behaviour and exact values, not tautologies, \"it didn't throw\", or snapshots that lock in nothing; mocks stand in for true externals, never for the logic under test." \
+    '- Modified behaviour re-pinned: for changed logic the existing tests assert the NEW behaviour, not deleted, `.skip`-ped, loosened, or still asserting the old behaviour;' \
+    "- Apply ≥ 5 own mutants of your choosing, taken from the diff's branches (guard, validation, fallback, boundary, error mapping): flip the condition, remove the branch, shift the bound, run the targeted suite, and require a RED kill; revert each and confirm a clean \`git status\`." \
+    '- GAPS: every gap (a surviving mutant, a branch with no test, a test that proves nothing, a modification that was not re-pinned) is its own `FAIL` row `test quality: <gap>`' \
+    'none → one `PASS` row `test quality: OK`.'
+needs "verify-coordinator step 0" "$(flat "$(section "$vc_md" '^0[.] [*][*]Plan the matrix' '^1[.] [*][*]Build the verify env')")" \
+    '**Spawn `test-planner` only when the task file says `critical: true`, or when the orchestrator asked for one**'
+needs "orch.md §4" "$s4" \
+    'The coordinator spawns `test-planner` only for a task with `critical: true`, or when you ask for one in its brief; every other task gets a matrix the coordinator derives itself. There is no separate test reviewer.'
+# no spawn line, role or roster entry of the removed agent anywhere (the name is split so this file does not hold it)
+gone='test-re''viewer'
+if rg -n -g '!node_modules' "$gone" "$plugin" "$plugin/../../README.md" "$plugin/../../tests" >/dev/null; then
+    fail "the removed test reviewer is still named: $(rg -n -g '!node_modules' "$gone" "$plugin" "$plugin/../../README.md" "$plugin/../../tests" | head -3)"
+fi
 
 # ---------------------------------------------------------------- bin scripts (AC4, AC5)
 for s in orch-state orch-sync orch-worktree; do bash -n "$plugin/bin/$s" || fail "bash -n $s"; done
@@ -456,7 +558,7 @@ if rg -q $'\r' .orch/tasks/CR.md; then fail "set on CRLF: CR bytes remain"; fi
 
 # list: header + one row per task file; `_`-files hidden; a file without frontmatter is `invalid`
 list=$("$bin/orch-state" list)
-[ "$(printf '%s\n' "$list" | head -1 | awk '{print $1, $2, $3}')" = "ID STATUS DEPS" ] || fail "list: no header"
+[ "$(printf '%s\n' "$list" | head -1 | awk '{print $1, $2, $3, $4}')" = "ID STATUS ! DEPS" ] || fail "list: no header: $(printf '%s\n' "$list" | head -1)"
 rg -q '^T-1[[:space:]]+in_progress[[:space:]]+\[\]' <<<"$list" || fail "list: T-1 row wrong: $list"
 rg -q '^x_y[[:space:]]+todo' <<<"$list" || fail "list: x_y (inner underscore) missing"
 rg -q '^CR[[:space:]]+done' <<<"$list" || fail "list: CR row missing"
@@ -472,6 +574,40 @@ printf -- '---\nid: D2\nstatus: "blocked"   # quoted\ndeps:\n  - T-1\n  - CR\n--
 list=$("$bin/orch-state" list)
 rg -q '^D1[[:space:]]+todo[[:space:]]+\[T-1, CR\]$' <<<"$list" || fail "list: flow deps wrong"
 rg -q '^D2[[:space:]]+blocked[[:space:]]+\[T-1, CR\]$' <<<"$list" || fail "list: block deps / quoted status wrong"
+
+# critical: `!` between status and deps only for critical: true (True, TRUE, double or single quotes, an unclosed quote, trailing
+# blanks, an unquoted value with a space or tab # comment, CRLF, the first of two critical lines); false, a missing key, other
+# spellings, an indented key, a longer key, a space before the colon, a block list, a line after the frontmatter and an invalid
+# file (no opening --- at all, or a key line before the first ---) get none
+printf -- '---\nid: K1\nstatus: todo\ncritical: true\ndeps: [T-1]\n---\n' > .orch/tasks/K1.md
+printf -- '---\nid: K2\nstatus: todo\ncritical: True\n---\n' > .orch/tasks/K2.md
+printf -- '---\nid: K3\nstatus: todo\ncritical: TRUE\n---\n' > .orch/tasks/K3.md
+printf -- '---\nid: K4\nstatus: todo\ncritical: "true"   # quoted\n---\n' > .orch/tasks/K4.md
+printf -- '---\nid: K5\nstatus: todo\ncritical: false\n---\n' > .orch/tasks/K5.md
+printf -- '---\nid: K6\nstatus: todo\ncritical: yes\n---\n' > .orch/tasks/K6.md
+printf -- '---\nid: K7\nstatus: todo\ncritical: truely\n---\n' > .orch/tasks/K7.md
+printf -- '---\r\nid: K8\r\nstatus: todo\r\ncritical: true\r\n---\r\n' > .orch/tasks/K8.md
+printf -- '---\nid: KA\nstatus: todo\ncritical: true  # note\n---\n' > .orch/tasks/KA.md
+printf -- '---\nid: KB\nstatus: todo\n  critical: true\n---\n' > .orch/tasks/KB.md
+printf -- "---\nid: KC\nstatus: todo\ncritical: 'true'\n---\n" > .orch/tasks/KC.md
+printf -- '---\nid: KD\nstatus: todo\ncritical:   true   \n---\n' > .orch/tasks/KD.md
+printf -- '---\nid: KE\nstatus: todo\ncritical: "true\n---\n' > .orch/tasks/KE.md
+printf -- '---\nid: KF\nstatus: todo\ncriticality: true\n---\n' > .orch/tasks/KF.md
+printf -- '---\nid: KG\nstatus: todo\ncritical:\n  - true\n---\n' > .orch/tasks/KG.md
+printf -- '---\nid: KH\nstatus: todo\ncritical: true\ncritical: false\n---\n' > .orch/tasks/KH.md
+printf -- '---\nid: KI\nstatus: todo\ncritical : true\n---\n' > .orch/tasks/KI.md
+printf -- '---\nid: KJ\nstatus: todo\ncritical: true\t# tab note\n---\n' > .orch/tasks/KJ.md
+printf -- 'critical: true\n' > .orch/tasks/K9.md
+printf -- 'id: KK\ncritical: true\n---\n' > .orch/tasks/KK.md
+printf -- '---\nid: K0\nstatus: todo\n---\ncritical: true\n' > .orch/tasks/K0.md
+list=$("$bin/orch-state" list)
+for k in K1 K2 K3 K4 K8 KA KC KD KE KH KJ; do rg -q "^$k[[:space:]]+todo[[:space:]]+![[:space:]]" <<<"$list" || fail "list: $k (critical) has no ! marker: $list"; done
+rg -q '^K1[[:space:]]+todo[[:space:]]+![[:space:]]+\[T-1\]$' <<<"$list" || fail "list: K1 deps not after the marker: $list"
+rg -q '^K9[[:space:]]+invalid[[:space:]]*$' <<<"$list" || fail "list: K9 (invalid) row wrong: $list"
+rg -q '^KK[[:space:]]+invalid[[:space:]]*$' <<<"$list" || fail "list: KK (no opening ---) row wrong: $list"
+[ "$(rg -c '!' <<<"$list")" = 12 ] || fail "list: expected the header + 11 critical rows with !, got: $list"
+for k in K5 K6 K7 K9 KK K0 KB KF KG KI T-1 D1 D2 CR; do if rg -q "^$k[[:space:]].*!" <<<"$list"; then fail "list: $k is not critical but has !"; fi; done
+rm -f .orch/tasks/K?.md
 
 # reset-stale: in_progress -> todo; blocked only with --blocked; `_` files untouched
 "$bin/orch-state" reset-stale >/dev/null
@@ -618,18 +754,18 @@ git init -q "$tmp/w/.worktreesX/p"
 
 # orch-state settings: the user settings /orch runs with, from settings.json pluginConfigs (no config needed)
 settings_json="$CLAUDE_CONFIG_DIR/settings.json"
-defaults=$'enabled=true\nrounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'
+defaults=$'enabled=true\nrounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true\nlessons=true'
 settings() { (cd "$tmp" && "$bin/orch-state" settings); }   # $tmp: no repo, no .orch/config.md
 mkdir -p "$CLAUDE_CONFIG_DIR"
 rm -f "$settings_json"
 [ "$(settings)" = "$defaults" ] || fail "settings, no settings.json: expected the defaults, got: $(settings)"
 # opts <json of junkd@junk-drawer's options> -> what settings prints
 opts() { printf '{"theme":"dark","pluginConfigs":{"tldr@junk-drawer":{"options":{"orch_rounds":9}},"junkd@junk-drawer":{"options":%s}}}\n' "$1" > "$settings_json"; settings; }
-[ "$(opts '{"orch_enabled":false,"orch_rounds":5,"orch_ui_review":false,"orch_implementer_ctx_k":600,"orch_inject_rules":false}')" = $'enabled=false\nrounds=5\nui_review=false\nimplementer_ctx_k=600\ninject_rules=false' ] ||
+[ "$(opts '{"orch_enabled":false,"orch_rounds":5,"orch_ui_review":false,"orch_implementer_ctx_k":600,"orch_inject_rules":false,"orch_lessons":false}')" = $'enabled=false\nrounds=5\nui_review=false\nimplementer_ctx_k=600\ninject_rules=false\nlessons=false' ] ||
     fail "settings: values not read: $(settings)"
-[ "$(opts '{"orch_enabled":true,"orch_ui_review":true,"orch_inject_rules":true}')" = "$defaults" ] || fail "settings: explicit true switches: $(settings)"
+[ "$(opts '{"orch_enabled":true,"orch_ui_review":true,"orch_inject_rules":true,"orch_lessons":true}')" = "$defaults" ] || fail "settings: explicit true switches: $(settings)"
 # the keys without their orch_ prefix (the old plugin's) are no setting of junkd's
-[ "$(opts '{"enabled":false,"rounds":5,"ui_review":false,"implementer_ctx_k":600,"inject_rules":false}')" = "$defaults" ] ||
+[ "$(opts '{"enabled":false,"rounds":5,"ui_review":false,"implementer_ctx_k":600,"inject_rules":false,"lessons":false}')" = "$defaults" ] ||
     fail "settings: unprefixed keys read: $(settings)"
 # the exact bounds, one assertion each: in range kept, one past clamped
 for pair in rounds:0:1 rounds:1:1 rounds:10:10 rounds:11:10 rounds:-4:1 implementer_ctx_k:49:50 implementer_ctx_k:50:50 \
@@ -648,8 +784,8 @@ got=$(opts '{"orch_implementer_ctx_k":"250"}' | rg '^implementer_ctx_k=')
 [ "$got" = implementer_ctx_k=250 ] || fail "settings: implementer_ctx_k \"250\": got $got"
 # a switch: missing = true, only a JSON true is true
 for in in false null 0 1 '"true"' '"on"'; do
-    got=$(opts "{\"orch_enabled\":$in,\"orch_ui_review\":$in,\"orch_inject_rules\":$in}" | rg '^(enabled|ui_review|inject_rules)=' | tr '\n' ' ')
-    [ "$got" = "enabled=false ui_review=false inject_rules=false " ] || fail "settings: switch $in: got $got"
+    got=$(opts "{\"orch_enabled\":$in,\"orch_ui_review\":$in,\"orch_inject_rules\":$in,\"orch_lessons\":$in}" | rg '^(enabled|ui_review|inject_rules|lessons)=' | tr '\n' ' ')
+    [ "$got" = "enabled=false ui_review=false inject_rules=false lessons=false " ] || fail "settings: switch $in: got $got"
 done
 # no junkd@ entry (another plugin, the old orch plugin, a name that only starts or ends with junkd), no options,
 # options not an object, the file not one JSON object: the defaults

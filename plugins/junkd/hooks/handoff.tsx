@@ -2,15 +2,19 @@
 // resume), the 🪃 segment and its pane. The `$`-free parts are handoff-lib.ts (state, options), handoff-ui.tsx and
 // handoff-views.tsx (the pane). index.tsx runs handoffStart at session start, handoffToolCall inside the one tool.call
 // hook and handoffSegment inside the one PromptHint render.
-import { atom, update } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 import type { Next, On, RenderInput, RenderSurface, ToolCallInput } from 'claude-code'
 
 import type { JunkdAhandoff as Ahandoff } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
+import { isSets, shutSet } from './set'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
-import { DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, S, coerce, current, idOf, isField, limit, loadOptions, status, type $, type Entry, type Field, type Route } from './handoff-lib'
+import { CLEAR_TIMEOUT_MS, DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, MAX_ASKS, MAX_CLEAR_RETRIES, PROMPT_DELAY_MS, S, coerce, current, idOf, isField, isLegacy, kTokens, limit, loadOptions, status, thresholdText, thresholdTokens, type $, type Entry, type Field, type Route } from './handoff-lib'
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
 import { VIEWS } from './handoff-views'
+import { toolsTurnEnd } from './tools-pane'
+import { dashboardTurnEnd } from './dashboard.tsx'
+import { lessonsTurnEnd } from './lessons.tsx'
 
 const PANE = 'ahandoff'
 const EDGE = 2 // empty columns at the pane's right edge (a docked pane's last column may not show)
@@ -25,8 +29,8 @@ function redraw($: $) {
 const STORE = 'ahandoff'
 
 const view = atom({ plugin: 'junkd', key: 'ahandoff' } as const, {
-  on: false, phase: 'idle', percent: 0, threshold: 85, checkEvery: 5,
-  prompt: '', lastId: '', count: 0, route: 'auto', paneOpen: false,
+  on: false, phase: 'idle', percent: 0, threshold: 300, checkEvery: 5,
+  prompt: '', lastId: '', count: 0, route: 'auto', paneOpen: false, base: 0, fresh: false,
 } satisfies Ahandoff)
 
 // ponytail: plugin commands are namespaced (`junkd:handon`) — junkd's own first, else any plugin's by suffix.
@@ -43,9 +47,39 @@ async function homeDir($: $): Promise<string> {
   return home
 }
 
-// Where bin/handoff-path writes: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs` (unset or empty: the home's .claude).
+// Paths follow CLAUDE_CONFIG_DIR like Claude Code itself (unset or empty: the home's .claude).
+async function configDir($: $): Promise<string> {
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`
+}
+
+// Where bin/handoff-path writes: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/handoffs`.
 async function handoffDir($: $): Promise<string> {
-  return `${(await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`}/handoffs`
+  return `${await configDir($)}/handoffs`
+}
+
+// ------------------------------------------------------------------ the measurement log
+// Every measurement the loop makes or skips writes one line to `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/handoff/<session>.log`:
+//   <iso> <hook> percent=<n> used=<tokens> limit=<tokens> armed=<bool> fresh=<bool> decision=<fire|skip:reason> base=<n> threshold=<n> phase=<p> window=<n>
+// (a trailing `note=<words>` where the hook did something besides decide; `legacy-percent` while the threshold is 100 or less). Appended with `>>`, never read back; a log
+// that cannot be written is dropped, the loop never waits on it for more than the one append. The last line (without
+// its time) is also kept in S.last, for `/junkd:ahandoff status`.
+const PLAIN_ID = /^[A-Za-z0-9_-]+$/
+type Hook = 'session.start' | 'tool.call' | 'turn.complete' | 'session.measure' | 'config.set' | 'cycle'
+async function logPath($: $): Promise<string | undefined> {
+  const sid = await $.session.id().catch(() => '')
+  return PLAIN_ID.test(sid) ? `${await configDir($)}/junkd/handoff/${sid}.log` : undefined
+}
+async function measured($: $, hook: Hook, percent: number, decision: string, note = '', used = S.tokens): Promise<void> {
+  if (isLegacy()) note = note ? `${note},legacy-percent` : 'legacy-percent'
+  const body = `${hook} percent=${percent} used=${used} limit=${limit()} armed=${S.armed} fresh=${S.fresh} decision=${decision} base=${S.base} threshold=${S.threshold} phase=${S.phase} window=${S.window}${note ? ` note=${note}` : ''}`
+  S.last = body
+  S.lastAt = Date.now()
+  try {
+    const path = await logPath($)
+    if (!path) return
+    const dir = path.slice(0, path.lastIndexOf('/'))
+    await $.process.run(['sh', '-c', 'mkdir -p -- "$1" && printf \'%s\\n\' "$3" >> "$2"', 'sh', dir, path, `${new Date(S.lastAt).toISOString()} ${body}`])
+  } catch {}
 }
 
 async function listHandoffs($: $, force?: boolean): Promise<Entry[]> {
@@ -76,6 +110,15 @@ async function listHandoffs($: $, force?: boolean): Promise<Entry[]> {
   return S.entries
 }
 
+// The live window's fill: the host's used tokens (what the limit compares with) and its percent (shown); 0 before the
+// first response of a window.
+async function readUsage($: $) {
+  const { context } = await $.session.usage()
+  S.tokens = context.tokens ?? S.tokens
+  S.window = context.window ?? S.window
+  return { percent: context.percent ?? 0, used: context.tokens ?? 0 }
+}
+
 // Mirror S into $.state and redraw the pane and the segment.
 function sync($: $, percent?: number) {
   if (percent !== undefined) S.percent = percent
@@ -83,6 +126,7 @@ function sync($: $, percent?: number) {
   return update($, view, v => ({
     ...v, on: S.armed, phase: S.phase, prompt: S.prompt, lastId: S.lastId ?? '', count: S.count,
     threshold: S.threshold, checkEvery: S.checkEvery, percent: S.percent, route: S.route, paneOpen: S.paneOpen,
+    base: S.base, fresh: S.fresh,
   }))
 }
 
@@ -136,6 +180,19 @@ function record(path: string) {
   return id
 }
 
+// The handoff file is there: its id is the last one, /clear and /junkd:handon <id> follow. The asks count belongs to the
+// loop's own requests for a file, so a file nobody asked for does not touch it beyond the reset.
+async function follow($: $, path: string) {
+  const id = record(path)
+  S.calls = 0
+  S.asks = 0
+  S.external = null
+  S.count++
+  S.phase = 'resume'
+  await persist($)
+  continueFrom($, id)
+}
+
 async function load($: $) {
   if (S.entries === null) {
     await listHandoffs($)
@@ -148,9 +205,35 @@ function queueHandoff($: $) {
   void $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') }))
 }
 
-// /clear → /junkd:handon <id> → the continuation prompt, detached like queueHandoff.
-// A slash prompt cannot ride along as text (the host refuses it and the model would only read it),
-// so it runs as the command itself right after /junkd:handon.
+// Why the /clear did not happen: `timeout` (no answer in CLEAR_TIMEOUT_MS), `error` (the call rejected or threw) or `denied`
+// (it resolved without a string `text`: a hook above answered `{ deny }` and the engine hands that back as `{}`; a clear that
+// ran resolves `{ text: "" }` and opens a fresh window); undefined when it ran.
+async function clearFailure($: $, cleared: Promise<unknown>): Promise<'timeout' | 'error' | 'denied' | undefined> {
+  let timer: { cancel(): void } | undefined
+  const timeout = new Promise<'timeout'>(done => { timer = $.clock.after(CLEAR_TIMEOUT_MS, () => done('timeout')) })
+  try {
+    const r = await Promise.race([cleared, timeout])
+    if (r === 'timeout') return 'timeout'
+    return clearRan(r) ? undefined : 'denied'
+  } catch {
+    return 'error'
+  } finally {
+    timer?.cancel()
+    cleared.catch(() => {}) // a clear that fails after the timeout is not an unhandled rejection
+  }
+}
+
+// The success shape of a resolved /clear: an object whose `text` is a string (empty is fine). A refused
+// one has a `text` key too, holding undefined (it prints as `{}`), so the value is what tells them apart.
+function clearRan(r: unknown): boolean {
+  return typeof r === 'object' && r !== null && typeof (r as { text?: unknown }).text === 'string'
+}
+
+// /clear → /junkd:handon <id> carrying the continuation prompt, detached like queueHandoff.
+// One turn does both: the continuation rides the handon submission as hidden context (handoffContinuation), so the
+// model loads the handoff and goes on in the same turn, however it loads it (under the orch guard an agent does,
+// and a turn that ends with that agent running would let a separate prompt start before the handoff is in). Only
+// when no handon submission took it (a handon that raised none) is it sent as a prompt of its own, as before.
 function continueFrom($: $, id: string) {
   const text = S.prompt || DEFAULT_PROMPT
   void $.clock.sleep(0).then(async () => {
@@ -159,26 +242,64 @@ function continueFrom($: $, id: string) {
     // ponytail: queue /clear before any other await — a headless session exits right after the turn.
     const cleared = $.command.run({ command: 'clear' })
     void sync($)
-    await cleared
+    void measured($, 'cycle', S.percent, 'cycle:clear-issued')
+    // The host may never answer, a hook may refuse it (denied) or it may throw (seen live: the clear was never queued and the phase stayed
+    // `clear` for good): any of the three leaves the phase at `clear` with fresh off, and the next turn end retries.
+    const failed = await clearFailure($, cleared)
+    if (failed) {
+      S.fresh = false // the window was not cleared: the next turn end is judged as a turn end, not as a fresh window
+      await measured($, 'cycle', S.percent, `cycle:clear-failed:${failed}`)
+      return void (await sync($))
+    }
+    S.clearTries = 0
     S.phase = 'resume'
     void sync($)
-    await $.command.run({ command: await findCommand($, 'handon'), args: id })
+    const pending = (S.pending = { id, text, delivered: false })
+    try {
+      await $.command.run({ command: await findCommand($, 'handon'), args: id })
+    } finally {
+      S.pending = null
+    }
     S.phase = 'idle'
     await persist($)
+    S.tokens = 0
     await sync($, 0)
-    await sendPrompt($, text)
+    if (!pending.delivered) await sendPrompt($, text)
   })
 }
 
+// What the handon submission of a continuing loop carries to the model: the person's continuation prompt, said as
+// theirs, to follow in the same turn. Called by the module's one prompt.submit hook (index.tsx) with each submission;
+// undefined for every other one. The first matching submission takes it.
+export function handoffContinuation(e: { command?: { name: string; args: string } }): string | undefined {
+  const p = S.pending
+  if (!p || p.delivered || !e.command || !/(^|:)handon$/.test(e.command.name) || e.command.args.trim() !== p.id) return undefined
+  p.delivered = true
+  const how = p.text.startsWith('/')
+    ? `run this slash command (the Skill tool, the command name as the skill and the rest as its arguments): ${p.text}`
+    : p.text
+  return `ahandoff: the person has already told you what to do once the handoff is loaded, so do not stop after loading it or wait for them. In this same turn, after loading it, continue as they asked: ${how}`
+}
+
 // Runs the armed prompt as the next turn, detached like queueHandoff ($.prompt.submit is refused
-// inside a hook the turn waits on). The host refuses a submitted text starting with /, so a slash
-// command goes through $.command.run instead.
+// inside a hook the turn waits on), PROMPT_DELAY_MS after the command that armed it ended. The host refuses a
+// submitted text starting with /, so a slash command goes through $.command.run instead.
 function runPrompt($: $, text: string) {
-  void $.clock.sleep(0).then(() => sendPrompt($, text))
+  void $.clock.sleep(PROMPT_DELAY_MS).then(() => sendPrompt($, text))
 }
 async function sendPrompt($: $, text: string) {
   const [, command, args = ''] = /^\/(\S+)\s*([\s\S]*)$/.exec(text) ?? []
-  await (command ? $.command.run({ command, args }) : $.prompt.submit({ text }))
+  if (command) return void (await $.command.run({ command, args }))
+  const r = await $.prompt.submit({ text })
+  // a hook or a settings hook that refuses the prompt leaves no turn: say so instead of leaving the loop silent
+  if (r.drop !== undefined) $.ui.toast(`ahandoff: the prompt was refused — ${r.drop}`)
+}
+
+// `/junkd:ahandoff status`: armed or off, the limit as it stands, the last measurement, and the log's path.
+async function statusText($: $): Promise<string> {
+  const path = await logPath($)
+  const last = S.last ? `${new Date(S.lastAt).toISOString()} ${S.last}` : 'none yet'
+  return `handoff auto ${S.armed ? 'on' : 'off'} — threshold ${thresholdText()} — limit ${kTokens(limit())} — last measurement: ${last} — log: ${path ?? 'none (no session id)'}`
 }
 
 async function panel($: $) {
@@ -191,9 +312,9 @@ async function auto($: $, prompt: string, pane = true) {
   const opened = pane ? openPane($, 'auto') : undefined
   await arm($)
   await opened
-  if (!prompt) return { text: `handoff auto on — threshold ${S.threshold}%` }
+  if (!prompt) return { text: `handoff auto on — threshold ${thresholdText()}` }
   runPrompt($, prompt)
-  return { text: `handoff auto on — threshold ${S.threshold}% — running: ${prompt}` }
+  return { text: `handoff auto on — threshold ${thresholdText()} — running: ${prompt}` }
 }
 async function off($: $) {
   await disarm($)
@@ -226,6 +347,15 @@ function toggle($: $, route?: Route) {
   return S.paneOpen ? closePane($) : openPane($, route)
 }
 
+// A threshold the host's window can't hold would never fire; say so in the pane and a toast. ponytail: a warning, not a
+// clamp — the window is not known before the first measurement, and what to lower it to is the person's call.
+function warnUnreachable($: $) {
+  if (S.window <= 0 || thresholdTokens() < S.window) return
+  const text = `ahandoff: threshold ${thresholdText()} is not below the ${kTokens(S.window)} window — it will never fire, lower it`
+  S.note = `✗ ${text}`
+  $.ui.toast(text)
+}
+
 async function arm($: $) {
   if (!S.enabled) {
     S.note = `✗ ${OFF}`
@@ -234,7 +364,10 @@ async function arm($: $) {
   S.armed = true
   S.phase = 'idle'
   S.calls = 0
+  S.asks = 0
+  S.external = null
   S.armedAt = Date.now()
+  warnUnreachable($)
   await persist($)
   await sync($)
 }
@@ -245,8 +378,12 @@ async function disarm($: $) {
   cancelResume()
   S.phase = 'idle'
   S.written = null
+  S.clearTries = 0
   S.fresh = false
+  S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
   S.armedAt = null
+  S.asks = 0
+  S.external = null
   await persist($)
   await sync($)
 }
@@ -282,9 +419,20 @@ async function setOption($: $, field: Field, raw: string | number | boolean) {
   return { value: current(field) } as const
 }
 
+// A threshold changed while the loop is armed: limit() reads S.threshold on every measurement, so the next one compares with
+// the new limit; the baseline (S.base) is the window's, not the threshold's, and stays. Say so in the log and a toast.
+async function rearmed($: $, hook: Hook) {
+  await measured($, hook, S.percent, 'skip:threshold-changed', 'rearmed')
+  $.ui.toast(`ahandoff: threshold now ${thresholdText()}`)
+}
+
 // One field as its row took it, into S — the one place a write lands, from setOption or the /config menu's hook.
 async function apply($: $, field: Field, value: number | boolean) {
-  if (field === 'threshold') S.threshold = value as number
+  if (field === 'threshold') {
+    const changed = S.threshold !== value // a write can reach apply twice (the hook and setOption): the second changes nothing
+    S.threshold = value as number
+    if (changed && S.armed) await rearmed($, 'config.set')
+  }
   else if (field === 'checkEvery') S.checkEvery = value as number
   else if (field === 'staleDays') { S.staleDays = value as number; S.entries = null; void load($) }
   else if (field === 'segment') S.segment = value as boolean
@@ -315,7 +463,10 @@ function api($: $): Api {
     arm: () => arm($),
     disarm: () => void disarm($),
     handoffNow: async () => {
-      if (S.armed) S.phase = 'handoff'
+      if (S.armed) {
+        S.phase = 'handoff'
+        S.asks = 1 // the queued /junkd:handoff is the first ask, as the turn-end fire counts it
+      }
       S.note = '✓ handoff queued'
       queueHandoff($)
       await sync($)
@@ -353,7 +504,8 @@ function api($: $): Api {
 
 // ------------------------------------------------------------------ what index.tsx and dispatch.ts call
 
-const checkRoute = (route: unknown) => {
+// $.junkd.open's route is any pane's tab: past this check it is one of handoff's own.
+function checkRoute(route: unknown): asserts route is Route | undefined {
   if (route !== undefined && !TABS.some(t => t[2] === route)) throw new Error(`handoff: no tab ${String(route)}`)
 }
 
@@ -392,6 +544,25 @@ export function handoffStatus() {
   return status()
 }
 
+// A reload of the module (a change in the /config menu, /reload-plugins, a save in a watched plugin folder) runs
+// register again with S back at its defaults and the loop disarmed, while $.state still holds what the session's loop
+// was doing. Carry the loop on from there; a new process finds nothing and stays as its settings say.
+async function restore($: $) {
+  if (S.armed || !S.enabled) return
+  const kept = await read($, view).catch(() => undefined)
+  if (!kept?.on) return
+  S.armed = true
+  S.armedAt ??= Date.now()
+  S.prompt = kept.prompt || S.prompt
+  S.count = kept.count
+  S.lastId = kept.lastId || null
+  S.base = kept.base ?? 0
+  S.fresh = kept.fresh ?? false
+  await measured($, 'session.start', S.percent, 'skip:restored', 'reload')
+  $.ui.toast(`handoff: the plugin reloaded — auto handoff still on, threshold ${thresholdText()}`)
+  if (kept.threshold !== undefined && kept.threshold !== S.threshold) await rearmed($, 'session.start') // the reload carried a new threshold
+}
+
 export async function handoffStart($: $): Promise<void> {
   const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string }; resumeAt?: number } | undefined
   if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /junkd:handon ${saved.pending.id}`)
@@ -400,6 +571,7 @@ export async function handoffStart($: $): Promise<void> {
     $.ui.toast(`handoff: a 5h-limit resume was due at ${hhmm(saved.resumeAt)} — ${how}`)
   }
   if (saved?.resumeAt) await $.store.set(STORE, { ...saved, resumeAt: undefined })
+  await restore($)
   await sync($)
 }
 
@@ -413,14 +585,26 @@ export async function handoffToolCall($: $, e: ToolCallInput, next: Next<'tool.c
     await sync($)
     return r
   }
-  if (S.phase === 'idle' && !S.fresh && ++S.calls % S.checkEvery === 0) {
-    const { context } = await $.session.usage()
-    S.tokens = context.tokens ?? S.tokens
-    const percent = context.percent ?? 0
-    if (percent >= limit()) S.phase = 'handoff'
+  if (S.fresh || S.phase !== 'idle') {
+    await measured($, 'tool.call', S.percent, S.fresh ? 'skip:fresh' : `skip:phase-${S.phase}`)
+  } else if (++S.calls % S.checkEvery === 0) {
+    const { percent, used } = await readUsage($)
+    const fire = used >= limit()
+    await measured($, 'tool.call', percent, fire ? 'fire' : 'skip:below-limit', '', used)
+    if (fire) {
+      S.phase = 'handoff'
+      S.asks = 1 // the deny text is the first ask, as the turn-end fire counts it
+    }
     await sync($, percent)
   }
-  if (S.phase !== 'handoff') return next(e)
+  if (S.phase !== 'handoff') {
+    if (!isHandoffWrite || S.phase !== 'idle') return next(e)
+    // A handoff this session's main loop writes while the loop is idle (the person's /junkd:handoff by hand) continues the
+    // chain at the turn end like its own. The handoffs folder is global: other sessions' files are not this loop's.
+    const r = await next(e)
+    if (r.deny === undefined) S.external = String(e.file_path)
+    return r
+  }
   const isHandoffPath = e.tool === 'Bash' && /handoff-path/.test(String(e.command))
   const isHandoffSkill = e.tool === 'Skill' && /handoff/.test(String((e as { skill?: unknown }).skill))
   if (isHandoffWrite) S.written = String(e.file_path)
@@ -430,7 +614,7 @@ export async function handoffToolCall($: $, e: ToolCallInput, next: Next<'tool.c
   }
 }
 
-// The status-line segment: 🪃 NN% (green, yellow within 10 points of the threshold, red past it). undefined while
+// The status-line segment: 🪃 <used>k/<limit>k (green, yellow within 10% of the limit, red past it). undefined while
 // handoff is off or the segment setting is.
 export function handoffSegment($: $, e: RenderInput<'PromptHint'>) {
   if (!S.enabled || !S.segment) return undefined
@@ -438,11 +622,11 @@ export function handoffSegment($: $, e: RenderInput<'PromptHint'>) {
   const label = !S.armed
     ? '🪃 off'
     : S.blocked && S.resumeAt ? `🪃 limit → ${hhmm(S.resumeAt)}`
-    : S.phase === 'handoff' ? '🪃 handoff…' : S.phase === 'idle' ? `🪃 ${S.percent}%` : '🪃 resume…'
+    : S.phase === 'handoff' ? '🪃 handoff…' : S.phase === 'idle' ? `🪃 ${kTokens(S.tokens)}/${kTokens(limit())}` : '🪃 resume…'
   const color = !S.armed || S.phase !== 'idle'
     ? P.secondary
     : S.blocked ? P.warn
-    : S.percent >= limit() ? P.bad : S.percent >= limit() - 10 ? P.warn : P.ok
+    : S.tokens >= limit() ? P.bad : S.tokens >= limit() * 0.9 ? P.warn : P.ok
   return (
     <Button key="handoff-segment" plain label={label} onPress={() => void toggle($)}>
       <Text color={color}>{label}</Text>
@@ -468,6 +652,7 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     const args = e.args.trim()
     if (args === 'panel') return panel($)
     if (args === 'off') return off($)
+    if (args === 'status') return { text: await statusText($) }
     return auto($, args, false) // ponytail: the short form arms and runs the prompt; the pane is /junkd:ahandoff panel
   })
 
@@ -483,31 +668,64 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     return r
   })
 
+  // The module's one turn.complete hook: the tools pane reads its tree again at every turn's end, first.
   on('turn.complete', async ($, e, next) => {
-    if (!S.armed || e.agentId) return next(e)
+    toolsTurnEnd($)
+    void dashboardTurnEnd($) // the orch dashboard's status.js, while it is open; never throws
+    await lessonsTurnEnd($, e) // the lessons stores again, and the dialog when the answer prints BACKLOG:; never throws
+    if (e.agentId) return next(e)
+    if (!S.armed) {
+      await measured($, 'turn.complete', S.percent, 'skip:disarmed')
+      return next(e)
+    }
     // ponytail: the host names no error kind here — an error with the 5h window at 99%+ is the limit.
     if (e.reason === 'error' && S.resumeAfterLimit && S.fiveHour >= 99) {
+      await measured($, 'turn.complete', S.percent, 'skip:five-hour-limit')
       await scheduleResume($)
       return next(e)
     }
-    const { context } = await $.session.usage()
-    S.tokens = context.tokens ?? S.tokens
-    const percent = context.percent ?? 0
+    const { percent, used } = await readUsage($)
+    const m = (decision: string) => measured($, 'turn.complete', percent, decision, '', used)
+    // A handoff this session's main loop wrote while armed that the loop did not ask for (handoffToolCall noted it).
+    const external = S.phase === 'idle' ? S.external : null
     if (S.fresh) {
       // nothing: the first measurement of the new window decides (session.measure)
+      await m('skip:fresh')
+    } else if (S.phase === 'handoff' && !S.written && S.asks >= MAX_ASKS) {
+      // asked MAX_ASKS times, no file: stop here instead of asking every turn for ever
+      await m(`give-up:${MAX_ASKS}-tries`)
+      await disarm($)
+      $.ui.toast(`ahandoff: handoff not written after ${MAX_ASKS} tries — disarmed`)
+    } else if (S.phase === 'clear') {
+      // the cycle's /clear was lost (a clear in flight has fresh on, and the branch above skips): ask again, MAX_CLEAR_RETRIES times
+      if (S.clearTries >= MAX_CLEAR_RETRIES) {
+        await m('give-up:clear')
+        await disarm($)
+        $.ui.toast(`ahandoff: /clear failed ${MAX_CLEAR_RETRIES + 1} times — disarmed`)
+      } else {
+        S.clearTries++
+        await m('cycle:retry-clear')
+        continueFrom($, S.lastId!)
+      }
     } else if (S.phase === 'handoff' && !S.written) {
+      await m('cycle:ask-handoff')
+      S.asks++
       queueHandoff($) // model never wrote it mid-turn: ask /junkd:handoff as the next turn
-    } else if (S.phase === 'idle' && percent >= limit()) {
+    } else if (external) {
+      await m('fire:external-handoff')
+      await follow($, external)
+    } else if (S.phase === 'idle' && used >= limit()) {
+      await m('fire')
       S.phase = 'handoff'
+      S.asks = 1
       queueHandoff($)
     } else if (S.phase === 'handoff' && S.written) {
-      const id = record(S.written)
+      await m('cycle:continue')
+      const path = S.written
       S.written = null
-      S.calls = 0
-      S.count++
-      S.phase = 'resume'
-      await persist($)
-      continueFrom($, id)
+      await follow($, path)
+    } else {
+      await m(S.phase === 'idle' ? 'skip:below-limit' : `skip:phase-${S.phase}`)
     }
     await sync($, percent)
     return next(e)
@@ -521,22 +739,34 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     }
     if (e.changed.includes('context')) {
       S.tokens = e.context.tokens ?? S.tokens
+      const was = S.window
+      S.window = e.context.window ?? S.window
+      if (S.armed && !S.fresh && S.window !== was) warnUnreachable($) // the window is known only now
       const percent = e.context.percent ?? S.percent
-      if (e.context.percent !== undefined && (S.fresh || !S.base)) {
-        S.base = percent
+      const used = e.context.tokens ?? S.tokens
+      let note = e.context.percent === undefined ? 'no-percent' : ''
+      // The baseline is the fill of a window THIS loop's handoff started (system prompt + handon): a limit that
+      // sits at or under it counts growth from it. Any other window (a fresh session, the one the loop was armed
+      // in) has none: its limit is the threshold itself, whatever the first turns already filled.
+      if (e.context.tokens !== undefined && S.fresh) {
+        S.base = used
+        note = 'base-set'
         if (S.armed && S.fresh) {
+          note = 'base-set,fresh-cleared'
           S.fresh = false
-          if (limit() >= 100) {
+          if (S.window > 0 && limit() >= S.window) {
             // ponytail: a limit no window can reach would never hand off — disarm instead.
             S.armed = false
             S.phase = 'idle'
+            note = 'base-set,fresh-cleared,auto-disarmed'
             await persist($)
-            $.ui.toast(`handoff: fresh window at ${percent}%, ${S.threshold} more points can't fit — auto disarmed`)
-          } else if (S.threshold <= S.base) {
-            $.ui.toast(`handoff: fresh window at ${percent}%, next handoff at ${limit()}%`)
+            $.ui.toast(`handoff: fresh window at ${kTokens(used)}, ${thresholdText()} more can't fit — auto disarmed`)
+          } else if (thresholdTokens() <= S.base) {
+            $.ui.toast(`handoff: fresh window at ${kTokens(used)}, next handoff at ${kTokens(limit())}`)
           }
         }
       }
+      await measured($, 'session.measure', percent, 'skip:measure-only', note, used)
       await sync($, percent)
     }
     return next(e)
@@ -550,9 +780,12 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
 
   // The person's closes (q, ✕) pass here; ours go through closePane.
   on('ui.close', { id: PANE }, async ($, e, next) => {
+    const isSet = isSets(owner)
     S.paneOpen = false
     owner = undefined
-    return next(e)
+    const r = await next(e)
+    if (isSet) await shutSet($)
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e, next) => {
@@ -566,7 +799,7 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     const rows = e.props.placement === 'dock' ? e.props.scroll?.bodyRows : undefined
     return (
       <ui.Box flexDirection="column" paddingRight={EDGE} minHeight={rows}>
-        <Tabs c={c} close={() => void closePane($)} />
+        <Tabs c={c} close={() => void (isSets(owner) ? shutSet($) : closePane($))} />
         <Rule c={c} />
         <ui.Box flexDirection="column" flexGrow={1} marginTop={1}>
           {screen.body}

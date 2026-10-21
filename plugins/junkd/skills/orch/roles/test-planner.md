@@ -20,6 +20,8 @@ cases from the **code that actually changed**, not from the feature description.
 - task id, the `branch`, and the **diff** (changed files + hunks) — `git diff <base>...<branch>`.
 - the task file `<tasks_dir>/<id>.md` (acceptance criteria + intended behaviour) — for expected
   outcomes only, never as the source of the case list.
+- the task file's `critical:` frontmatter key (`true` or `false`; a missing key is `false`) — it
+  decides how many Break rows you emit (see **Break section**).
 
 ## Repo test policy override
 
@@ -79,6 +81,56 @@ diff review, never executed). End with:
 MATRIX <id>: <n> rows (<h> happy / <e> edge); E2E <k>; can't-induce <m>
 ```
 
+Then, after the matrix, the **Break section** (below) with its own count line. The final message is
+the matrix, the `MATRIX` line, the Break table and the `BREAK` line, in that order.
+
+## Break section (mandatory, after the matrix)
+
+The matrix asks "does each path work". The Break section asks what the matrix never does: **what if
+two of these happen at once, in the wrong order, twice, or half way.** Derive it from the same diff.
+The six break kinds, each with the outcome a correct change gives:
+
+- **concurrency** — two of the same request at once against one resource (fire both in parallel,
+  e.g. two backgrounded `curl`s joined by `wait`); expected: one wins, no double effect, no 500.
+- **ordering** — the steps of a multi-step flow out of order, or one step repeated; expected: a
+  clean 4xx/409, state unchanged.
+- **replay** — the identical request a second time after it succeeded; expected: idempotent, or a
+  named conflict.
+- **interrupted flow** — kill the client or the server between two writes of one operation;
+  expected: no half-written state on restart.
+- **resource exhaustion** — the bounded thing full (queue, slot, quota, disk); expected: a named
+  error, never a hang.
+- **privilege edge** — the other principal who owns something (not an empty account) tries the
+  operation; expected: denied.
+
+How many rows:
+
+- **Standard task** (`critical: false` or no key): exactly ONE row — the cheapest way to break this
+  change. Pick the kind most likely to break it and give a real induction recipe.
+- **Critical task** (`critical: true`): one row per kind, all six, each with a real induction recipe
+  and its expected outcome. A kind that does not apply is still a row, written `n/a: <why>` in the
+  recipe column — never dropped.
+
+Every recipe is real, as in the matrix: concrete requests, the parallel launch, the repeated step,
+the kill point between the two writes, the fill that exhausts the bound. Reading the code is never a
+recipe. A kind that applies but cannot be induced this run is still a row, marked `can't-induce` +
+the reason.
+
+```
+## Break — <id> (<critical|standard>)
+| # | Kind | Target (file:line / endpoint / flow) | How to induce (real) | Expected | Layer |
+|---|---|---|---|---|---|
+```
+
+`Kind` ∈ concurrency | ordering | replay | interrupted flow | resource exhaustion | privilege edge.
+End with:
+
+```
+BREAK <id>: <n> rows (<critical|standard>)
+```
+
+`<n>` counts every row, the `n/a` rows too: a critical task always has 6, a standard task 1.
+
 Every row is binding: `verify-coordinator` distributes them (UI rows → `ui-reviewer`, api/E2E rows
-→ inline + browser) and must return PASS / FAIL / PM-REVIEW for each. You never run them yourself —
-planning the cases is the whole job.
+→ inline + browser) and must return PASS / FAIL / PM-REVIEW for each, the Break rows too. You never
+run them yourself — planning the cases is the whole job.

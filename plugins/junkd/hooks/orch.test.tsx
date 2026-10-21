@@ -14,12 +14,13 @@ const CFG = '/fake/claude'
 const FABLE = 'claude-fable-5-1'
 const OPUS = 'claude-opus-5-5'
 const BIN = '/p/bin/'
-const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false }
+const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, lessons: true, dashboard_refresh: 30, dashboard_window_h: 24 }
 const main = (tool: string, args: Record<string, unknown> = {}) => ({ tool, ...args })
 const REPO = '/repo'
 const st = (s: Partial<OrchState> = {}): OrchState => ({ model: FABLE, binDir: BIN, configDir: CFG, repo: REPO, ...s })
 const SCRATCH = '/private/tmp/claude-501/-Users-u-repo/0b1c-session/scratchpad'
 const PREFIX = 'Orchestrator mode (orch):'
+const UNKNOWN = 'a000000000000000' // spelled as a subagent id nobody knows (16 hex after `a`: the shortest the rule reads as one)
 
 // ------------------------------------------------------------------ orchGuard, pure
 
@@ -33,10 +34,12 @@ test('AC2: Edit, Grep, Glob, WebFetch and an MCP tool are each denied on a Fable
 })
 
 test('AC3: the coordination tools always pass', () => {
-  for (const tool of ['ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill', 'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger']) {
+  for (const tool of ['ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill', 'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger', 'ReadNotifications']) {
     expect(orchGuard(main(tool), st(), on_), tool).toBeUndefined()
     expect(orchGuard(main(tool), st({ model: OPUS }), { ...on_, guard: 'always' }), tool).toBeUndefined()
   }
+  // ReadNotifications reads the session's own queue; the guard still holds the main loop to its other tools
+  expect(orchGuard({ tool: 'Bash', command: 'ls' }, st(), on_)).toMatch(/the main loop may not run Bash/)
 })
 
 test('a subagent call always passes', () => {
@@ -312,10 +315,10 @@ test('SendMessage: reviewers are always fresh, an implementer over the cap is re
   }
   expect(orchGuard(send, st({ agent: { type: 'junkd:implementer-x' } }), on_)).toBeUndefined() // no reviewer by its name
   expect(orchGuard(send, st({ agent: { type: 'junkd:ui-reviewer-x' } }), on_)).toBeUndefined()
-  // test-planner and test-reviewer are reviewers too, bare and junkd:-prefixed; their names inside another type are not
-  for (const type of ['test-planner', 'junkd:test-planner', 'test-reviewer', 'junkd:test-reviewer'])
+  // test-planner is a reviewer too, bare and junkd:-prefixed; its name inside another type are not
+  for (const type of ['test-planner', 'junkd:test-planner'])
     expect(orchGuard(send, st({ agent: { type } }), on_), type).toMatch(new RegExp(`^${PREFIX.replace(/[()]/g, '\\$&')} ${type.replace(/^junkd:/, '')} is a reviewer, and reviewers are always fresh`))
-  for (const type of ['junkd:implementer', 'implementer', 'junkd:test-reviewer-x', 'test-plannerx', 'xtest-planner', 'junkd:test-runner', 'other:test-reviewer', 'orch:test-reviewer'])
+  for (const type of ['junkd:implementer', 'implementer', 'junkd:test-planner-x', 'test-plannerx', 'xtest-planner', 'junkd:test-runner', 'other:test-planner', 'orch:test-planner'])
     expect(orchGuard(send, st({ agent: { type } }), on_), type).toBeUndefined()
   expect(orchGuard(send, st({ agent: { type: 'junkd:implementer', tokens: 450_000 } }), on_)).toMatch(
     /implementer context 450k exceeds cap 400k: spawn a fresh implementer, hand it `git diff <base>...<branch>` and why previous rounds failed/,
@@ -326,16 +329,72 @@ test('SendMessage: reviewers are always fresh, an implementer over the cap is re
   expect(orchGuard(send, st({ agent: { type: 'junkd:implementer', tokens: 300_000 } }), on_)).toBeUndefined()
   expect(orchGuard(send, st({ agent: { tokens: 300_000 } }), { ...on_, implementer_ctx_k: 250 })).toMatch(/exceeds cap 250k/)
   expect(orchGuard(send, st({ agent: { type: 'general-purpose' } }), on_)).toBeUndefined()
-  expect(orchGuard(send, st({ agent: null }), on_)).toMatch(/no agent "a1" is known/)
+  expect(orchGuard(main('SendMessage', { to: UNKNOWN }), st({ agent: null }), on_)).toBe(`${PREFIX} no agent "${UNKNOWN}" is known (not in the agent list, no SubagentStop record). Spawn a fresh agent.`)
+})
+
+test('T35: SendMessage to a peer session, main or a protocol reply passes in every active mode; only an unknown subagent id is refused', () => {
+  const send = (to: string) => main('SendMessage', { to, message: 'hello' })
+  for (const [guard, model] of [['fable', FABLE], ['always', FABLE], ['always', OPUS]] as const) {
+    const o = { ...on_, guard }
+    for (const to of ['HANDON', 'HANDON [69f752]', 'main', 'shutdown_response', 'claude-5-peer [x] [y]', 'peer@team', 'a000000000000000x', 'xa000000000000000', 'a000000000000000 [x] y', 'b000000000000000', 'a00000000000000g', 'a00000000000000'])
+      expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toBeUndefined()
+    for (const to of [UNKNOWN, `${UNKNOWN} [69f752]`, ` ${UNKNOWN}\n`, `${UNKNOWN.toUpperCase()}`, ` ${UNKNOWN} [69f752] `, 'a0123456789abcdef', 'a0123456789abcdef0123'])
+      expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toMatch(/^Orchestrator mode \(orch\): no agent "[^]*" is known \(not in the agent list, no SubagentStop record\)\. Spawn a fresh agent\.$/)
+    // the tools of the inbox
+    for (const tool of ['ReadNotifications', 'ListAgents']) expect(orchGuard(main(tool), st({ model, agent: null }), o), `${guard} ${tool}`).toBeUndefined()
+  }
+  // a known subagent keeps its rules, whatever its id looks like
+  expect(orchGuard(send(UNKNOWN), st({ agent: { type: 'junkd:ui-reviewer' } }), on_)).toMatch(/ui-reviewer is a reviewer/)
+})
+
+test('T35: a peer session absent from the agent list passes SendMessage by name, with or without " [ref]"; an unknown subagent id is still refused', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'ping' })
+  rec.agents = [{ id: 'imp1', type: 'junkd:implementer', name: 'impl' }]
+  expect(denial(await send('HANDON'))).toBeUndefined()
+  expect(denial(await send('HANDON [69f752]'))).toBeUndefined()
+  expect(denial(await send('main'))).toBeUndefined()
+  expect(denial(await send(UNKNOWN))).toMatch(/no agent "a000000000000000" is known \(not in the agent list, no SubagentStop record\)\. Spawn a fresh agent\./)
+  expect(denial(await send(`${UNKNOWN} [69f752]`))).toMatch(/no agent/)
+  expect(denial(await $.tool.call({ tool: 'ReadNotifications' }))).toBeUndefined()
+  expect(denial(await $.tool.call({ tool: 'ListAgents' }))).toBeUndefined()
+})
+
+test('T35: a work tool carrying a peer-looking `to` is still denied in every active mode', () => {
+  for (const [guard, model] of [['fable', FABLE], ['always', FABLE], ['always', OPUS]] as const) {
+    const o = { ...on_, guard }
+    for (const [tool, args] of [['Bash', { command: 'git push' }], ['Monitor', { command: 'git push' }], ['Edit', {}], ['WebFetch', {}], ['Grep', {}], ['mcp__atlassian__getJiraIssue', {}]] as const)
+      for (const to of ['HANDON', 'HANDON [69f752]', 'main'])
+        expect(orchGuard(main(tool, { ...args, to }), st({ model, agent: null }), o), `${guard} ${tool} ${to}`).toMatch(new RegExp(`^${PREFIX.replace(/[()]/g, '\\$&')} .*${tool === 'Monitor' ? 'Monitor' : tool}`))
+  }
+})
+
+test('T35: a recipient is trimmed and its id read in lower case, so a known subagent cannot pass as a peer', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'ping' })
+  const ID = 'a1b2c3d4e5f60718'
+  rec.agents = [{ id: ID, type: 'junkd:ui-reviewer', name: 'rev' }, { id: 'imp1', type: 'junkd:implementer', name: 'impl' }]
+  for (const to of [' rev', 'rev\n', '\trev [x1] ', 'rev   [x1]', ` ${ID}`, `${ID}\n`, ID.toUpperCase(), ` ${ID.toUpperCase()} [x1]`])
+    expect(denial(await send(to)), JSON.stringify(to)).toMatch(/ui-reviewer is a reviewer/)
+  // a stopped agent's record answers by the same normalised id
+  rec.files[`${RECORDS}/${SID}/a0f0e0d0c0b0a090.json`] = record('junkd:implementer', 450_000)
+  for (const to of ['a0f0e0d0c0b0a090', ' a0F0E0D0C0B0A090\n', 'a0f0e0d0c0b0a090 [x1] '])
+    expect(denial(await send(to)), JSON.stringify(to)).toMatch(/exceeds cap 400k/)
+  // still unknown, still refused, whatever the spelling; a peer name stays a peer
+  for (const to of [` ${UNKNOWN}\n`, UNKNOWN.toUpperCase(), ` ${UNKNOWN} [x1] `])
+    expect(denial(await send(to)), JSON.stringify(to)).toMatch(/no agent/)
+  expect(denial(await send(' HANDON \n'))).toBeUndefined()
 })
 
 test('settings: defaults for missing or wrong types, the number rows clamped to their bounds at load', () => {
   applyOrchSettings({})
-  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false })
-  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99, claude_md: true })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10, claude_md: true })
-  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0, claude_md: 'true' })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1, claude_md: false })
+  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, lessons: true, dashboard_refresh: 30, dashboard_window_h: 24 })
+  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 121, stall_minutes: 500, lessons: false })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 120, stall_minutes: 120, lessons: false, dashboard_refresh: 30, dashboard_window_h: 24 })
+  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0, claude_md: 'true', watchdog: 'on', idle_stop: 1, idle_stop_minutes: 0, stall_minutes: 'x', lessons: 'on' })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1, claude_md: false, watchdog: false, idle_stop: false, idle_stop_minutes: 1, stall_minutes: 15, lessons: false, dashboard_refresh: 30, dashboard_window_h: 24 })
   // claude_md at load, one assertion per value: only a JSON true is on (the default is off)
   for (const [v, want] of [[true, true], [undefined, false], [false, false], ['true', false], ['on', false], [1, false], [null, false]] as const) {
     applyOrchSettings(v === undefined ? {} : { claude_md: v })
@@ -369,7 +428,7 @@ test('coerce: one check for every write path; the exact bounds of the number row
 })
 
 test("SCHEMA is settings.ts's orch rows, by field and in manifest order: enabled first, the guard the one choice row", () => {
-  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds', 'claude_md'])
+  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds', 'claude_md', 'dashboard_refresh', 'dashboard_window_h', 'watchdog', 'idle_stop', 'idle_stop_minutes', 'stall_minutes', 'lessons'])
   expect(SCHEMA.map(f => ({ ...f, key: `orch_${f.key}` }))).toEqual(rowsOf('orch').map(({ group: _g, field: _f, ...f }) => f))
   expect(SCHEMA.filter(f => f.options).map(f => [f.key, f.options])).toEqual([['guard', ['fable', 'always', 'off']]])
 })
@@ -427,7 +486,7 @@ test('every denial family starts with the prefix', () => {
     orchGuard(main('Monitor', { command: 'git push' }), s, on_),
     orchGuard(main('Agent', { subagent_type: 'fork' }), s, on_),
     orchGuard(main('Agent', { model: 'fable' }), s, on_),
-    orchGuard(main('SendMessage', { to: 'x' }), s, on_),
+    orchGuard(main('SendMessage', { to: UNKNOWN }), s, on_),
     orchGuard(main('SendMessage', { to: 'x' }), st({ agent: { type: 'ui-reviewer' } }), on_),
     orchGuard(main('SendMessage', { to: 'x' }), st({ agent: { type: 'junkd:implementer', tokens: 900_000 } }), on_),
     orchSpawn({ fork: true, subagentType: 'fork', parentModel: FABLE }, on_),
@@ -549,6 +608,16 @@ function world(on: On) {
 }
 
 const start = ($: Engine) => $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+// What session start itself ran, asserted and then cleared, so a test that counts the guard's calls starts at 0: the
+// flag files removed (the lessons switch's `orch-lessons-off` among them), the statusline set up, and the lessons loop
+// asking for the repo of the session's cwd.
+function startedRuns(rec: ReturnType<typeof world>) {
+  const rm = rec.runs.filter(r => r[0] === 'rm').map(r => r[3])
+  expect(rm).toContain('/fake/claude/junkd/orch-lessons-off')
+  expect(rec.runs.filter(r => r[0] === 'git')).toEqual([['git', '-C', '/tmp', 'rev-parse', '--show-toplevel']])
+  expect(rec.runs.length).toBe(rm.length + 2) // the removals, the statusline setup, that one repo lookup: nothing else
+  rec.runs.splice(0)
+}
 const run = ($: Engine, command: string, args: string) =>
   $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
 const orchCmd = ($: Engine, args: string) => run($, 'junkd:orch', args)
@@ -646,6 +715,7 @@ test('AC8: the live model decides, so a /model switch counts at once; a subagent
 test("the task store: the session cwd's git toplevel is the repo whose .orch/ the main loop reads and writes; cached per cwd", async ($, on) => {
   const rec = world(on)
   await start($)
+  startedRuns(rec)
   const read = (file_path: string) => $.tool.call({ tool: 'Read', file_path })
   const write = (file_path: string) => $.tool.call({ tool: 'Write', file_path, content: 'x' })
   const gitRuns = () => rec.runs.filter(r => r[0] === 'git')
@@ -684,6 +754,7 @@ test("the task store: the session cwd's git toplevel is the repo whose .orch/ th
 test('the task store: no cwd (empty, or session.cwd failing) is no repo, and git is never asked about it', async ($, on) => {
   const rec = world(on)
   await start($)
+  startedRuns(rec)
   rec.files['/work/app/.orch/config.md'] = '---\n---\n'
   rec.git[''] = '/work/app' // what a `git -C ''` (git's own cwd) would answer
   const read = () => $.tool.call({ tool: 'Read', file_path: '/work/app/.orch/config.md' })
@@ -799,8 +870,9 @@ test('SendMessage target from the agent list or the SubagentStop record (type an
   await $.classic.SubagentStop({ agent_id: 'late', agent_type: 'junkd:implementer', agent_transcript_path: '/t/late.jsonl', stop_hook_active: false })
   rec.agents.push({ id: 'late', type: 'junkd:implementer', name: 'latename' })
   expect(denial(await send('latename'))).toMatch(/exceeds cap 300k/)
-  expect(denial(await send('nobody'))).toMatch(/no agent "nobody" is known/)
-  expect(denial(await send('../../x'))).toMatch(/no agent/) // never read as a path
+  expect(denial(await send(UNKNOWN))).toMatch(/no agent "a000000000000000" is known/)
+  expect(denial(await send('nobody'))).toBeUndefined() // a name nobody carries: a peer session, the engine's to resolve
+  expect(denial(await send('../../x'))).toBeUndefined() // never read as a path
   await frame($, 'set', { key: 'orch_implementer_ctx_k', value: 400 })
   expect(denial(await send('fixer'))).toBeUndefined() // the cap is read live
 })
@@ -818,8 +890,8 @@ test('T12 AC2: a record on disk alone caps, as after a module reload: by id and 
   // at the cap passes; a reviewer's record answers its type
   rec.files[`${RECORDS}/${SID}/at.json`] = record('junkd:implementer', 400_000)
   expect(denial(await send('at'))).toBeUndefined()
-  rec.files[`${RECORDS}/${SID}/rev.json`] = record('junkd:test-reviewer', 10)
-  expect(denial(await send('rev'))).toMatch(/test-reviewer is a reviewer/)
+  rec.files[`${RECORDS}/${SID}/rev.json`] = record('junkd:test-planner', 10)
+  expect(denial(await send('rev'))).toMatch(/test-planner is a reviewer/)
   // a listed agent's record is read by its id, whatever name the call used
   rec.agents = [{ id: 'lid', type: 'junkd:implementer', name: 'listed' }]
   rec.files[`${RECORDS}/${SID}/lid.json`] = record('junkd:implementer', 500_000)
@@ -828,8 +900,8 @@ test('T12 AC2: a record on disk alone caps, as after a module reload: by id and 
   rec.agents.push({ id: 'imp9', type: 'junkd:ui-reviewer' })
   expect(denial(await send('imp9'))).toMatch(/ui-reviewer is a reviewer/)
   // a record of another session is not this one's
-  rec.files[`${RECORDS}/other-sess/elsewhere.json`] = record('junkd:implementer', 900_000)
-  expect(denial(await send('elsewhere'))).toMatch(/no agent "elsewhere" is known/)
+  rec.files[`${RECORDS}/other-sess/a1b2c3d4e5f60718.json`] = record('junkd:implementer', 900_000)
+  expect(denial(await send('a1b2c3d4e5f60718'))).toMatch(/no agent "a1b2c3d4e5f60718" is known/)
 })
 
 test('T12 AC2: the record file comes first, the in-memory record is the fallback; a file that does not hold a record is none', async ($, on) => {
@@ -859,12 +931,12 @@ test('T12 AC2: the record file comes first, the in-memory record is the fallback
     rec.files[`${RECORDS}/${SID}/bad${i}.json`] = text
     expect(denial(await send(`bad${i}`)), text).toMatch(/verify-coordinator is a reviewer/)
     // and with no memory either, nobody
-    rec.files[`${RECORDS}/${SID}/none${i}.json`] = text
-    expect(denial(await send(`none${i}`)), text).toMatch(/no agent "none\d" is known/)
+    rec.files[`${RECORDS}/${SID}/a00000000000000${i}.json`] = text
+    expect(denial(await send(`a00000000000000${i}`)), text).toMatch(/no agent "a00000000000000\d" is known/)
   }
   // a field of the wrong kind is dropped, the other kept: a type that is no string (an array reads as its text) or
   // tokens that are no number (a string compares as a number)
-  rec.files[`${RECORDS}/${SID}/oddtype.json`] = record(['junkd:test-reviewer'], 450_000)
+  rec.files[`${RECORDS}/${SID}/oddtype.json`] = record(['junkd:test-planner'], 450_000)
   expect(denial(await send('oddtype'))).toMatch(/implementer context 450k exceeds cap/)
   rec.files[`${RECORDS}/${SID}/oddtok.json`] = record('junkd:implementer', '450000')
   expect(denial(await send('oddtok'))).toBeUndefined()
@@ -876,20 +948,20 @@ test('T12 AC2: a session id or a target that is no plain id never leads to a fil
   const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'fix it' })
   // a target spelled as a path, or with a dot: never read
   rec.files[`${RECORDS}/${SID}/a.b.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send('a.b'))).toMatch(/no agent "a.b" is known/)
+  expect(denial(await send('a.b'))).toBeUndefined() // not capped: the file was not read
   rec.files[`${RECORDS}/x.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send(`../x`))).toMatch(/no agent/)
+  expect(denial(await send(`../x`))).toBeUndefined()
   // a session id that is no plain id
   rec.sid = 'a/b'
   rec.files[`${RECORDS}/a/b/imp.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  expect(denial(await send('imp'))).toBeUndefined() // not capped: the file was not read
   rec.sid = '..'
   rec.files[`${RECORDS}/../imp.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  expect(denial(await send('imp'))).toBeUndefined() // not capped: the file was not read
   // no session id (it throws): the folder of '' is not read
   rec.sid = undefined
   rec.files[`${RECORDS}//imp.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  expect(denial(await send('imp'))).toBeUndefined() // not capped: the file was not read
   // the same file under a plain session id is read
   rec.sid = 'sess-2'
   rec.files[`${RECORDS}/sess-2/imp.json`] = record('junkd:implementer', 450_000)
@@ -1225,7 +1297,7 @@ test("the script's answer: an updated line is a toast, up to date or skipped is 
 
 // ------------------------------------------------------------------ $.junkd's orch rows and the pane
 
-const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md']
+const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md', 'orch_dashboard_refresh', 'orch_dashboard_window_h', 'orch_watchdog', 'orch_idle_stop', 'orch_idle_stop_minutes', 'orch_stall_minutes', 'orch_lessons']
 
 test("$.junkd: the orch calls answer; schema's orch rows mirror the manifest; get answers the defaults; guard is the choice row", WITH_FRAME, async ($, on) => {
   world(on)
@@ -1240,7 +1312,7 @@ test("$.junkd: the orch calls answer; schema's orch rows mirror the manifest; ge
     expect(await frame($, 'get', { key: f.key }), `get(${f.key}) is the manifest default`).toBe(f.default)
   }
   expect(schema.find(f => f.key === 'orch_guard')?.options).toEqual(['fable', 'always', 'off'])
-  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_claude_md'])
+  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_claude_md', 'orch_lessons'])
   await expect(frame($, 'get', { key: 'nope' })).rejects.toThrow(/no setting nope/)
   await expect(frame($, 'get', { key: 'orch_nope' })).rejects.toThrow(/no setting orch_nope/)
   await expect(frame($, 'get', { key: 'guard' })).rejects.toThrow(/no setting guard/) // the field alone is no key
@@ -1414,29 +1486,32 @@ test('closing the /junkd set closes the orch pane only while it is still the set
   await junkdCmd($)
   expect(orchCloses(rec)).toBe(2)
 
-  // The person's close clears the mark too.
+  // The person's close of the set's orch pane takes the whole set down (junkd.test.tsx): orch closes once, the set
+  // is down, and the next /junkd opens it again (orch closed first, then shown as the set's).
   await junkdCmd($) // the set again: its feature pane closes first, then opens as the set's
   expect(orchCloses(rec)).toBe(3)
   await shut($)
-  expect(orchCloses(rec)).toBe(4)
+  expect(orchCloses(rec)).toBe(4) // the person's close, once: the set's own close of orch finds the mark cleared
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(4)
+  expect(orchCloses(rec)).toBe(5)
+  await junkdCmd($)
+  expect(orchCloses(rec)).toBe(6)
 
   // Shown but not placed (a narrow terminal), then opened by /junkd:orch panel: the person's now.
   rec.notPlaced = true
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(5)
+  expect(orchCloses(rec)).toBe(7)
   await orchCmd($, 'panel')
   expect(rec.opened.at(-1)).toBe('orch')
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(5)
+  expect(orchCloses(rec)).toBe(7)
 
   // Shown and left as the set's: closing the set closes it.
   rec.notPlaced = false
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(6)
+  expect(orchCloses(rec)).toBe(8)
   await junkdCmd($)
-  expect(orchCloses(rec)).toBe(7)
+  expect(orchCloses(rec)).toBe(9)
 })
 
 // Every word drawn: the Texts and the Buttons' labels (a field's title is its hotkey Button).

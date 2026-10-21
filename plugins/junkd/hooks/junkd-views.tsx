@@ -1,6 +1,6 @@
 // The /junkd pane's drawing, `$`-free: panel.tsx hands it the surface's elements, the pane's data and its actions
 // as closures. Three sections: the marketplace's plugins (on/off at user scope), the main settings of every group of
-// junkd (core, handoff, orch, tldr), the enabled plugins' commands.
+// junkd (core, handoff, orch, tldr, ctx, statusline), the enabled plugins' commands.
 import type { ElementTable, RenderChildren, RenderInput } from 'claude-code'
 
 export type PluginRow = { name: string; description: string; isSelf: boolean; isUserOn: boolean; isActive: boolean }

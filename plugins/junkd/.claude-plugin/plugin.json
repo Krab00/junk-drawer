@@ -1,7 +1,7 @@
 {
   "name": "junkd",
-  "description": "One plugin for handoff, orch and tldr, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff and orch tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr) and the commands. The hooks module exports $.junkd for other mods.",
-  "version": "0.4.0",
+  "description": "One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens, the status line and the tools pane, plus the /junkd frame. /junkd:handoff saves a session handoff and /junkd:handon <id> resumes it; /junkd:ahandoff hands off automatically at a context threshold and resumes after the 5h rate limit. /junkd:orch runs the orchestration loop (/junkd:orch-init writes its .orch/config.md); the hooks module guards the main loop on Fable. /junkd:direction scores the code against the spec files the config names and lists the drift for a human decision. /junkd:lessons shows the pending orch lessons (local, repo and global stores) to promote, drop or move up; an orch run does not end while one is pending. /junkd:tldr N summarizes, /junkd:tldr on|off keeps every reply terse. /junkd:ctx-limit sets a context-size limit a prompt hook enforces (block, warn or a command); /junkd:ctx-tokens reads the live context usage. /junkd:statusline wires a colored status line (context, branch, worktree, model, effort, rate limits; each segment a setting) into settings.json. /junkd:tools opens the tools pane: this session's agents over the repo's git worktrees, and the tools, MCP servers and skills the session used. /junkd (and the ✚ junkd segment under the prompt) opens the junkd, handoff, orch, statusline, tools and lessons tabs together: the marketplace's plugins, every setting group (core, handoff, orch, tldr, ctx, statusline, tools) and the commands. The hooks module exports $.junkd for other mods.",
+  "version": "0.11.9",
   "author": {
     "name": "Krab00"
   },
@@ -31,9 +31,9 @@
     },
     "handoff_threshold": {
       "type": "number",
-      "title": "Auto handoff: context threshold (%)",
-      "description": "Past this context usage the auto handoff kicks in (handoff → /clear → /junkd:handon → continue).",
-      "default": 85
+      "title": "Auto handoff: context threshold (thousand tokens)",
+      "description": "Past this many thousand tokens of context (300 = 300k) the auto handoff kicks in (handoff → /clear → /junkd:handon → continue). 100 or less is read as a percent of the window (old configs).",
+      "default": 300
     },
     "handoff_checkEvery": {
       "type": "number",
@@ -118,6 +118,48 @@
       "description": "On: the \"## Orchestrator mode\" section of ~/.claude/CLAUDE.md (with its ### children) becomes a short block pointing at /junkd:orch, between <!-- junkd:orch start --> and <!-- junkd:orch end -->. Off: the block is removed. CLAUDE.md is backed up before each change; off never puts the old section back (the backup holds it). Applied at once and at every session start while orch is enabled.",
       "default": false
     },
+    "orch_dashboard_refresh": {
+      "type": "number",
+      "title": "Dashboard: write every N seconds",
+      "description": "While the orch dashboard is open (/junkd:dashboard), status.js beside the page is written again every N seconds (5-600, clamped), as well as at each spawn, agent end and turn end.",
+      "default": 30
+    },
+    "orch_dashboard_window_h": {
+      "type": "number",
+      "title": "Dashboard: timeline window (hours)",
+      "description": "The hours the dashboard's timeline shows, ending now (1-168, clamped).",
+      "default": 24
+    },
+    "orch_watchdog": {
+      "type": "boolean",
+      "title": "Agent watchdog",
+      "description": "Watch this session's agents (no tokens: engine hooks and a 30 s timer): a stall, a death and an idle leftover each raise a toast once; a death or a stall also shows ⚠ under the prompt and one line for the orchestrator at the next turn. Off while orch is disabled.",
+      "default": true
+    },
+    "orch_idle_stop": {
+      "type": "boolean",
+      "title": "Watchdog: stop idle leftovers",
+      "description": "Stop an agent that reported and is still alive when it will not be needed again (a reviewer at once, an implementer once its task is done or blocked, anything else after the idle minutes). Off: they are reported only.",
+      "default": true
+    },
+    "orch_idle_stop_minutes": {
+      "type": "number",
+      "title": "Watchdog: idle minutes before a stop",
+      "description": "Minutes a finished agent with no task in progress may stay idle before it is stopped. A value under 1 is read as 1, one over 120 as 120.",
+      "default": 10
+    },
+    "orch_stall_minutes": {
+      "type": "number",
+      "title": "Watchdog: stall after N minutes",
+      "description": "Minutes a running agent may go without a tool call (none in flight) before it counts as stalled; a reviewer gets 5 more. A value under 1 is read as 1, one over 120 as 120.",
+      "default": 15
+    },
+    "orch_lessons": {
+      "type": "boolean",
+      "title": "Lessons loop",
+      "description": "On: the lessons of the three stores (.orch/tasks/_lessons.md, the repo's lessons.md, ~/.claude/junkd/lessons.md) whose stack meets the repo's are injected at an orch session's start, pending ones show the 📒 segment and the lessons tab, and an orch run does not end while any is pending. Off: none of that, and the files are left as they are.",
+      "default": true
+    },
     "tldr_enabled": {
       "type": "boolean",
       "title": "TL;DR: enabled",
@@ -135,6 +177,95 @@
       "title": "Sentences in a summary",
       "description": "How many sentences a /junkd:tldr without a number may use.",
       "default": 3
+    },
+    "ctx_enabled": {
+      "type": "boolean",
+      "title": "Context limit: enabled",
+      "description": "On: the per-prompt hook (bin/ctx-limit-hook) acts once the session's context passes the threshold. The file ~/.claude/junkd/ctx-limit-threshold, there while on, is what the hook reads; /junkd:ctx-limit on|off|<tokens> is the same switch.",
+      "default": false
+    },
+    "ctx_threshold": {
+      "type": "number",
+      "title": "Context limit: threshold (tokens)",
+      "description": "The context size, in tokens, past which the action applies. A whole number, 1000 or more; 300k and 1m are read too.",
+      "default": 300000
+    },
+    "ctx_action": {
+      "type": "string",
+      "title": "Context limit: action past it",
+      "description": "block: the prompt is refused until /clear, /junkd:handoff or /junkd:ctx-limit off; warn: a warning goes into the context and the prompt runs; cmd: the command below runs (CTX_TOKENS and CTX_LIMIT set) and the prompt runs.",
+      "options": [
+        "block",
+        "warn",
+        "cmd"
+      ],
+      "default": "block"
+    },
+    "ctx_cmd": {
+      "type": "string",
+      "title": "Context limit: command of action cmd",
+      "description": "The shell command action cmd runs past the threshold, e.g. a desktop notification.",
+      "default": ""
+    },
+    "statusline_enabled": {
+      "type": "boolean",
+      "title": "Status line: wired into settings.json",
+      "description": "On: ~/.claude/settings.json's statusLine points at ~/.claude/junkd/statusline.sh (a copy of bin/statusline.sh, refreshed when the plugin updates). A statusLine of your own is never replaced: turning this on refuses with the reason. Off removes the statusLine key only while it is junkd's.",
+      "default": true
+    },
+    "statusline_ctx": {
+      "type": "boolean",
+      "title": "Segment: context free/used",
+      "description": "Draw context free and used, in tokens and percent in the status line.",
+      "default": true
+    },
+    "statusline_branch": {
+      "type": "boolean",
+      "title": "Segment: git branch",
+      "description": "Draw the git branch (or the detached commit) in the status line.",
+      "default": true
+    },
+    "statusline_worktree": {
+      "type": "boolean",
+      "title": "Segment: linked worktree",
+      "description": "Draw the linked worktree's folder, only inside one in the status line.",
+      "default": true
+    },
+    "statusline_model": {
+      "type": "boolean",
+      "title": "Segment: model",
+      "description": "Draw the model's name in the status line.",
+      "default": true
+    },
+    "statusline_effort": {
+      "type": "boolean",
+      "title": "Segment: effort",
+      "description": "Draw the effort level in the status line.",
+      "default": true
+    },
+    "statusline_limits": {
+      "type": "boolean",
+      "title": "Segment: 5h/week rate limits",
+      "description": "Draw the 5-hour and weekly rate-limit use, colored by how full in the status line.",
+      "default": true
+    },
+    "tools_enabled": {
+      "type": "boolean",
+      "title": "Tools pane: enabled",
+      "description": "Off: the tools pane closes, its tab leaves the /junkd set, /junkd:tools says it is off and no tool, MCP or skill use is counted.",
+      "default": true
+    },
+    "tools_refresh": {
+      "type": "number",
+      "title": "Tools pane: refresh every N seconds",
+      "description": "Seconds between two reads of the agents, the worktrees and the MCP schemas while the tools pane is open. A value under 10 is read as 10, one over 600 as 600.",
+      "default": 60
+    },
+    "tools_agents_only": {
+      "type": "boolean",
+      "title": "Tools pane: only worktrees with an agent",
+      "description": "The Agents tab hides the worktrees that hold no agent of this session (the main checkout stays).",
+      "default": false
     }
   }
 }

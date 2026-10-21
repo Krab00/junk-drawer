@@ -193,7 +193,9 @@ path_id() { "${noh[@]}" "$@" "$repo/handoff/bin/handoff-path" | tail -1; }
 is_hex8() { [[ "$1" =~ ^[0-9a-f]{8}$ ]]; }
 # no session id (OpenCode, Kimi, Codex without one): two calls in the same second differ
 for host in opencode kimi codex; do
-    for _ in 1 2 3 4 5; do
+    # up to 60 tries, each begun at the start of a second: on a loaded machine two calls rarely fit in one
+    for _ in $(seq 60); do
+        s0=$(date +%s); while [ "$(date +%s)" = "$s0" ]; do sleep 0.01; done
         s1=$(date +%s)
         a=$(path_id JUNK_DRAWER_RUNTIME=$host)
         b=$(path_id JUNK_DRAWER_RUNTIME=$host)

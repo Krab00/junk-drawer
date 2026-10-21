@@ -6,13 +6,13 @@
 import type { JunkdGroup, JunkdKey, JunkdSchemaEntry, JunkdValue } from '../types'
 
 export const PLUGIN = 'junkd'
-export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr']
+export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools']
 
 export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'core_output_style', group: 'core', field: 'output_style', type: 'string', title: 'Output style', default: 'ste', main: true, options: ['ste', 'off'] },
   { key: 'core_cache_check_sessions', group: 'core', field: 'cache_check_sessions', type: 'number', title: 'Cache check: sessions read', default: 10, main: true },
   { key: 'handoff_enabled', group: 'handoff', field: 'enabled', type: 'boolean', title: 'Auto handoff: enabled', default: true, main: true },
-  { key: 'handoff_threshold', group: 'handoff', field: 'threshold', type: 'number', title: 'Auto handoff: context threshold (%)', default: 85, main: true },
+  { key: 'handoff_threshold', group: 'handoff', field: 'threshold', type: 'number', title: 'Auto handoff: context threshold (thousand tokens)', default: 300, main: true },
   { key: 'handoff_checkEvery', group: 'handoff', field: 'checkEvery', type: 'number', title: 'Auto handoff: check every N tool calls', default: 5, main: false },
   { key: 'handoff_autoOn', group: 'handoff', field: 'autoOn', type: 'boolean', title: 'Auto handoff: armed at session start', default: false, main: true },
   { key: 'handoff_resumeAfterLimit', group: 'handoff', field: 'resumeAfterLimit', type: 'boolean', title: 'Auto handoff: resume after the 5h rate limit', default: true, main: true },
@@ -26,9 +26,30 @@ export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'orch_inject_rules', group: 'orch', field: 'inject_rules', type: 'boolean', title: 'Inject orchestrator rules', default: true, main: false },
   { key: 'orch_rounds', group: 'orch', field: 'rounds', type: 'number', title: 'Fix rounds', default: 3, main: false },
   { key: 'orch_claude_md', group: 'orch', field: 'claude_md', type: 'boolean', title: 'CLAUDE.md pointer block', default: false, main: true },
+  { key: 'orch_dashboard_refresh', group: 'orch', field: 'dashboard_refresh', type: 'number', title: 'Dashboard: write every N seconds', default: 30, main: false },
+  { key: 'orch_dashboard_window_h', group: 'orch', field: 'dashboard_window_h', type: 'number', title: 'Dashboard: timeline window (hours)', default: 24, main: false },
+  { key: 'orch_watchdog', group: 'orch', field: 'watchdog', type: 'boolean', title: 'Agent watchdog', default: true, main: false },
+  { key: 'orch_idle_stop', group: 'orch', field: 'idle_stop', type: 'boolean', title: 'Watchdog: stop idle leftovers', default: true, main: false },
+  { key: 'orch_idle_stop_minutes', group: 'orch', field: 'idle_stop_minutes', type: 'number', title: 'Watchdog: idle minutes before a stop', default: 10, main: false },
+  { key: 'orch_stall_minutes', group: 'orch', field: 'stall_minutes', type: 'number', title: 'Watchdog: stall after N minutes', default: 15, main: false },
+  { key: 'orch_lessons', group: 'orch', field: 'lessons', type: 'boolean', title: 'Lessons loop', default: true, main: true },
   { key: 'tldr_enabled', group: 'tldr', field: 'enabled', type: 'boolean', title: 'TL;DR: enabled', default: true, main: true },
   { key: 'tldr_terse', group: 'tldr', field: 'terse', type: 'boolean', title: 'Terse mode', default: false, main: true },
   { key: 'tldr_sentences', group: 'tldr', field: 'sentences', type: 'number', title: 'Sentences in a summary', default: 3, main: true },
+  { key: 'ctx_enabled', group: 'ctx', field: 'enabled', type: 'boolean', title: 'Context limit: enabled', default: false, main: true },
+  { key: 'ctx_threshold', group: 'ctx', field: 'threshold', type: 'number', title: 'Context limit: threshold (tokens)', default: 300000, main: true },
+  { key: 'ctx_action', group: 'ctx', field: 'action', type: 'string', title: 'Context limit: action past it', default: 'block', main: true, options: ['block', 'warn', 'cmd'] },
+  { key: 'ctx_cmd', group: 'ctx', field: 'cmd', type: 'string', title: 'Context limit: command of action cmd', default: '', main: false },
+  { key: 'statusline_enabled', group: 'statusline', field: 'enabled', type: 'boolean', title: 'Status line: wired into settings.json', default: true, main: true },
+  { key: 'statusline_ctx', group: 'statusline', field: 'ctx', type: 'boolean', title: 'Segment: context free/used', default: true, main: false },
+  { key: 'statusline_branch', group: 'statusline', field: 'branch', type: 'boolean', title: 'Segment: git branch', default: true, main: false },
+  { key: 'statusline_worktree', group: 'statusline', field: 'worktree', type: 'boolean', title: 'Segment: linked worktree', default: true, main: false },
+  { key: 'statusline_model', group: 'statusline', field: 'model', type: 'boolean', title: 'Segment: model', default: true, main: false },
+  { key: 'statusline_effort', group: 'statusline', field: 'effort', type: 'boolean', title: 'Segment: effort', default: true, main: false },
+  { key: 'statusline_limits', group: 'statusline', field: 'limits', type: 'boolean', title: 'Segment: 5h/week rate limits', default: true, main: false },
+  { key: 'tools_enabled', group: 'tools', field: 'enabled', type: 'boolean', title: 'Tools pane: enabled', default: true, main: true },
+  { key: 'tools_refresh', group: 'tools', field: 'refresh', type: 'number', title: 'Tools pane: refresh every N seconds', default: 60, main: false },
+  { key: 'tools_agents_only', group: 'tools', field: 'agents_only', type: 'boolean', title: 'Tools pane: only worktrees with an agent', default: false, main: false },
 ]
 
 export const isKey = (key: unknown): key is JunkdKey => SCHEMA.some(f => f.key === key)

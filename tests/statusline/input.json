@@ -1,0 +1,1 @@
+{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__CWD__"},"effort_level":"high","context_window":{"context_window_size":200000,"total_input_tokens":50000,"total_output_tokens":11000,"used_percentage":30.5,"remaining_percentage":69.5},"rate_limits":{"five_hour":{"used_percentage":42.4},"seven_day":{"used_percentage":87.6}}}

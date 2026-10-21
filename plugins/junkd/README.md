@@ -1,25 +1,35 @@
 # junkd
 
-One plugin for three tools and the frame over them. Every command is a skill of junkd, so on Claude Code each is
+One plugin for six tools and the frame over them. Every command is a skill of junkd, so on Claude Code each is
 `/junkd:<name>`:
 
 | Command | Does |
 |---|---|
 | `/junkd:handoff` | Save a handoff of the session to disk and print its short id (`panel`, `auto [prompt]`, `off` drive the auto loop on Claude Code) |
 | `/junkd:handon [id]` | Resume a handoff in a fresh session (the newest without an id) |
-| `/junkd:ahandoff [prompt] \| off \| panel` | Arm the auto handoff loop: at a context threshold handoff, `/clear`, `/junkd:handon`, continue; resume after the 5h rate limit (Claude Code only) |
+| `/junkd:ahandoff [prompt] \| off \| panel \| status` | Arm the auto handoff loop: at a context threshold handoff, `/clear`, `/junkd:handon`, continue; resume after the 5h rate limit (Claude Code only) |
 | `/junkd:orch …` | The orchestration loop: tasks, implementer and verifier subagents, evidence gates, draft PRs (`panel` opens its settings pane) |
+| `/junkd:dashboard [close]` | Open the orch dashboard, a local HTML page with the task board, the agents' timeline, the recent events and the lessons; `close` stops its writes (`/junkd:orch dashboard` too) |
 | `/junkd:orch-init` | Write the project's `.orch/config.md` once, before the first `/junkd:orch` |
+| `/junkd:direction [<spec>…] [--since <ref>] [--head <ref>]` | Score the code against the spec files `.orch/config.md` names; one decision per gap: change code or update spec |
 | `/junkd:tldr [N \| on \| off \| status]` | Summarize the last substantive reply in at most N sentences, or keep every reply terse |
-| `/junkd`, `/junkd:junkd` | Open or close the junkd set of panes (Claude Code only) |
+| `/junkd:ctx-limit [<tokens> \| on \| off \| status \| action <m> \| cmd <shell>]` | A context-size limit a per-prompt hook enforces: block, warn, or run a command |
+| `/junkd:ctx-tokens` | How full the context is, from the session transcript |
+| `/junkd:statusline [on \| off \| status]` | The colored status line in settings.json, a switch per segment; no argument toggles its pane (Claude Code only) |
+| `/junkd:tools [agents \| tools \| mcp \| skills]` | Open or close the tools pane: this session's agents over the repo's worktrees, and the tools, MCP servers and skills it used (Claude Code only) |
+| `/junkd:lessons [list \| promote <id> \| drop <id> \| up <id>]` | Show the pending orch lessons of the three stores (local, repo, global) to promote, drop or move up a store; an orch run does not end while one is pending (Claude Code tab) |
+| `/junkd:explain <topic>` | Explain a topic from the repo in the format that fits: a slider page for parameters, a Mermaid diagram for structure or flow, STE text otherwise |
+| `/junkd:junkd` (`/junkd` where the host resolves it) | Open or close the junkd set of panes (Claude Code only) |
 
-On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`… (the model sees them as `junkd:<name>`), on Kimi
+On Codex the same skills answer as `$handoff`, `$orch`, `$tldr`, `$ctx-limit`… (the model sees them as `junkd:<name>`), on Kimi
 Code as `/skill:<name>`, on OpenCode through the `skill` tool or the `/<name>` wrappers `bin/opencode-commands.sh`
 generates. The hooks module (Claude Code only) adds the auto handoff loop, the orch main-loop guard,
-the panes and `$.junkd` for other mods; the skills, the `bin/` helpers and the shell hooks work on every host.
+the panes, the status line's wiring and `$.junkd` for other mods; the skills, the `bin/` helpers and the shell hooks
+work on every host.
 
-handoff, orch and tldr were three plugins before; see [Moving from the handoff, orch and tldr
-plugins](#moving-from-the-handoff-orch-and-tldr-plugins).
+handoff, orch, tldr, ctx-limit, ctx-tokens and statusline were six plugins before; see [Moving from the handoff,
+orch, tldr, ctx-limit, ctx-tokens and statusline
+plugins](#moving-from-the-handoff-orch-tldr-ctx-limit-ctx-tokens-and-statusline-plugins).
 
 ## Install
 
@@ -35,10 +45,49 @@ install" (a GitHub URL and a bare `/plugins install junkd` do not work). OpenCod
 -a opencode` (or a local path), then `bin/opencode-commands.sh` for the `/<name>` commands. The root
 [README](../../README.md) has the details per host.
 
+### Develop from a checkout
+
+Install junkd from a local clone, as a directory marketplace, so the hooks module, the shell hooks and the
+`junkd:<role>` agent types run from your working tree:
+
+```text
+/plugin marketplace add /abs/path/to/junk-drawer
+/plugin install junkd@junk-drawer
+/reload-plugins
+```
+
+A directory-source plugin loads in place from `/abs/path/to/junk-drawer/plugins/junkd`: an edit there takes effect at
+the next session start or `/reload-plugins`, and switching the checkout's branch changes what runs. Where
+`junk-drawer` was added from GitHub before, the `marketplace add` re-points it at the folder (the plugins already
+installed from it follow), and `claude plugin update junkd@junk-drawer` records the checkout's version. The
+`--plugin-dir` flag is not needed. A `--plugin-dir` session next to an installed copy keeps its rows under
+`junkd@inline`, the installed one under `junkd@junk-drawer`: the status line reads the entry its command names (see
+[statusline](#which-pluginconfigs-entry-the-key)); the pane warns when both exist. Both are named `junkd`, and a
+session runs one mod of that name: with `--plugin-dir` it is the folder you pass (on 2.1.305, `/plugin` lists
+`1 mod active · junkd` with the marketplace copy installed and enabled), so an old marketplace copy such as 0.4.0
+does not draw a status line or write the line's rows next to it. Update or disable the installed copy
+(`/plugin disable junkd@junk-drawer`) all the same when you work from `--plugin-dir`: its `pluginConfigs` entry stays in
+settings.json and is the first one a script without `--config` would read.
+
+The install is live when:
+
+- the `✚ junkd` segment shows under the prompt;
+- `junkd:implementer` (and the other `junkd:<role>` types) is in the agent list;
+- `~/.claude/junkd/orch/_agents/<session>/` fills after a subagent of the session stops (the SubagentStop record
+  the main-loop guard reads).
+
+`bin/junkd-doctor` checks the same from a shell (Claude Code only; on Codex, Kimi Code and OpenCode it
+prints "Claude Code only" and exits 0). One PASS/FAIL line each: junkd enabled in `settings.json`, its
+`installed_plugins.json` entry, the `junk-drawer` marketplace a directory source at an existing checkout, the
+checkout's plugin-root `bin`, `agents` and `scripts` links resolving, and this session's `_agents` folder (INFO, not a
+FAIL, when no subagent stopped yet). It reads `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, writes nothing and exits 1 on
+any FAIL. Run it through the Bash tool of a session, so it sees `CLAUDE_CODE_SESSION_ID`.
+
 ### Hosts and data roots
 
-The helpers (`handoff-path`, `handoff-load`, `tldr-flag`, `tldr-hook`) detect the host they run on through
-`skills/handoff/bin/host-lib`, and each host keeps its own data:
+The helpers (`handoff-path`, `handoff-load`, `tldr-flag`, `tldr-hook`, `ctx-limit`, `ctx-limit-hook`, `ctx-tokens`)
+detect the host they run on through `skills/handoff/bin/host-lib`, and each host keeps its own data (ctx-limit's
+files in a `junkd/` folder beside the terse flag: [ctx-limit and ctx-tokens](#ctx-limit-and-ctx-tokens)):
 
 | Host | Detected by | Handoffs | Terse flag |
 |---|---|---|---|
@@ -50,10 +99,11 @@ The helpers (`handoff-path`, `handoff-load`, `tldr-flag`, `tldr-hook`) detect th
 `JUNK_DRAWER_RUNTIME=claude|codex|kimi|opencode` overrides the detection. The config-dir variables
 (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIMI_CODE_HOME`) count only after every host's own signal, so one a shell
 profile exports never pulls another host's helper into it. With no signal at all a helper exits 2 with one line
-naming `JUNK_DRAWER_RUNTIME` and writes nothing: it never falls back to `~/.claude`.
+naming `JUNK_DRAWER_RUNTIME` and writes nothing: it never falls back to `~/.claude` (ctx-limit's hook exits 0
+instead, so the guard never blocks a prompt on a guess).
 
 Install quirks: Codex drops every symlink (the plugin-root `bin/`, `agents/`, `scripts/` and orch-init's sibling
-links), so the skills run their own `./bin`; its terse-mode hook is `.codex-plugin/hooks.json` (Codex refuses the
+links), so the skills run their own `./bin`; its hooks (terse mode, ctx-limit) are `.codex-plugin/hooks.json` (Codex refuses the
 `modules` key of `hooks/hooks.json`) and runs only after you trust it when a session asks you to review the
 plugin's hooks. Kimi Code keeps the symlinks of a local-path install rewritten to absolute paths into your checkout
 (the plugin-root `bin/` and `scripts/`, orch-init's `bin/` and `commands/`): moving the checkout breaks them, and
@@ -63,18 +113,26 @@ copy wins).
 
 ## The /junkd frame (Claude Code only)
 
-`/junkd`, `/junkd:junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs and
+`/junkd:junkd` (`/junkd` where the host resolves a bare name to the skill), or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs and
 closes them together:
 
 1. **junkd** — focused, the frame below.
 2. **handoff** — handoff's pane ([below](#handoff)).
 3. **orch** — orch's settings pane ([below](#orch)).
+4. **statusline** — the status line's pane ([below](#statusline)).
+5. **tools** — the tools pane ([below](#tools)), only while `tools_enabled` is on.
+6. **lessons** — the pending orch lessons ([below](#lessons)), only while `orch_enabled` and `orch_lessons` are on.
 
-All three are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
+All six are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
 already open on its own closes first and opens again behind junkd's tab, so its tab never comes first, and from
-then on it is the set's. `q`, a second `/junkd`, or closing junkd's tab by hand (`×`) closes all three, but only a
-feature pane that is still the set's: one you closed and opened again on your own (`/junkd:handoff panel`,
-`/junkd:orch panel`, `/junkd:ahandoff panel`, the 🪃 click) stays.
+then on it is the set's. The set closes as one: `q` or `×` in any of its panes (the engine draws one on each pane and
+gives the module no single control for the set, so the module answers a close of any member by closing every member),
+a second `/junkd:junkd`, or closing a tab by hand closes junkd and every feature pane that is still the set's, in one
+action, with no leftover and no second press. A feature pane that is not the set's closes alone, and the set stays:
+one you closed and opened again on your own (`/junkd:handoff panel`, `/junkd:orch panel`, `/junkd:ahandoff panel`,
+`/junkd:statusline`, `/junkd:tools`, `/junkd:lessons`, the 🪃 or 📒 click), or one a `settings ▸` press left open
+(that press closes junkd and the other panes, so the pane left is the only one up). Its own `×` closes just that pane.
+The same command that opened a member (`/junkd:orch panel`, say) still toggles that pane alone.
 
 Where the set sits depends on the layout. Only in the fullscreen layout (`"tui": "fullscreen"` in
 `settings.json`), from 110 terminal columns, it docks beside the transcript; narrower, and always on the main
@@ -85,19 +143,19 @@ its tab may wait undrawn below 144 columns. After that, 110 columns are enough.
 The header reads `✚ junkd  junk-drawer <sha>`: the short sha of the marketplace checkout (none where it is not
 a git checkout). The junkd pane has three sections, their titles in junk-drawer's orange (the theme's accent):
 
-- **Plugins** — every plugin of the marketplace (`.claude-plugin/marketplace.json`: statusline, ctx-tokens,
-  ctx-limit, junk-drawer, junkd), on or off at user scope as `enabledPlugins` in `~/.claude/settings.json`
+- **Plugins** — every plugin of the marketplace (`.claude-plugin/marketplace.json`: junk-drawer, junkd), on or off at user scope as `enabledPlugins` in `~/.claude/settings.json`
   (`$CLAUDE_CONFIG_DIR/settings.json`) says; the title names the file it writes. A plugin on in this project only
-  is marked. Keys `1`–`9` flip one; the pane then says to run `/reload-plugins`. handoff, orch and tldr are no
-  plugins of their own anymore: each group's `enabled` row in Settings is their on/off.
-- **Settings** — the groups core, handoff, orch and tldr, in that order, each with its `main` rows and `enabled`
+  is marked. Keys `1`–`9` flip one; the pane then says to run `/reload-plugins`. handoff, orch, tldr, ctx-limit and
+  statusline are no plugins of their own anymore: each group's `enabled` row in Settings is their on/off.
+- **Settings** — the groups core, handoff, orch, tldr, ctx, statusline and tools, in that order, each with its `main` rows and `enabled`
   first, with their current values. A letter flips a boolean; a number is typed and saved with `enter`, a choice
-  (`orch_guard`, `core_output_style`) is picked with `tab` and `enter`. The group's own rules validate what it
+  (`orch_guard`, `core_output_style`, `ctx_action`) is picked with `tab` and `enter`. The group's own rules validate what it
   gets, and a refusal shows in the note line. Each row: the field, its title, the control on the right (a switch
   as an `on`/`off` pill and its letter, a choice as its options with the current one inverse, a number as a
-  field). `settings ▸` on handoff and orch opens that pane (handoff on its Settings tab), closes junkd and the
-  set's other feature pane (while it is still the set's), then asks again for the keys, so the feature pane ends
-  alone with them; it is yours from then on. core and tldr have no pane and no button.
+  field). `settings ▸` on handoff, orch, statusline and tools opens that pane (handoff on its Settings tab, tools on
+  its Agents tab), closes junkd and the set's other feature panes (while they are still the set's), then asks again
+  for the keys, so the feature pane ends alone with them; it is yours from then on. core, tldr and ctx have no pane
+  and no button.
 - **Commands** — the enabled plugins' slash commands with their one-line descriptions, as the engine lists them
   (`$.command.list()`, filtered to the plugins on in this session), junkd's `/junkd:*` among them.
 
@@ -116,31 +174,38 @@ a git checkout). The junkd pane has three sections, their titles in junk-drawer'
 
 Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/config` row `junkd.<group>_<field>`
 (Claude Code takes only identifier keys in a manifest's `userConfig`, so the group and the field are joined by
-`_`). Four groups, each feature group with its `enabled` row first:
+`_`). Seven groups, each feature group with its `enabled` row first:
 
 | Group | Rows | Details |
 |---|---|---|
 | core | `core_output_style`, `core_cache_check_sessions` | [Output style](#output-style-ste), [prompt-cache check](#prompt-cache-check-claude-code-only) |
 | handoff | `handoff_enabled`, `handoff_threshold`, `handoff_checkEvery`, `handoff_autoOn`, `handoff_resumeAfterLimit`, `handoff_staleDays`, `handoff_segment` | [handoff settings](#settings-1) |
-| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md` | [orch settings](#settings-2) |
+| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md`, `orch_dashboard_refresh`, `orch_dashboard_window_h`, `orch_watchdog`, `orch_idle_stop`, `orch_idle_stop_minutes`, `orch_stall_minutes`, `orch_lessons` | [orch settings](#settings-2), [dashboard](#dashboard), [watchdog settings](#settings-7), [lessons settings](#settings-8) |
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
+| ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
+| statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
+| tools | `tools_enabled`, `tools_refresh`, `tools_agents_only` | [tools settings](#settings-6) |
 
 The `enabled` rows: `handoff_enabled` off is no auto handoff loop and no 🪃 segment (`/junkd:handoff`,
 `/junkd:handon` and the pane still work); `orch_enabled` off is no main-loop guard and no rule sheet at session
 start (`/junkd:orch` and its pane still work); `tldr_enabled` off keeps the per-turn terse hook silent
-(`/junkd:tldr N` still summarizes). Scope: user-global; project/session overrides: planned.
+(`/junkd:tldr N` still summarizes); `ctx_enabled` off (the default) is no context limit; `statusline_enabled` off
+takes junkd's line out of settings.json; `tools_enabled` off closes the tools pane, takes its tab out of the set and
+counts nothing. Scope: user-global; project/session overrides: planned.
 
 A shell hook runs before the hooks module at a session start and reads no plugin setting, so each shell hook reads
 its row from `settings.json` itself (`pluginConfigs`, the first entry whose key starts with `junkd@`, its
 `.options.<row>`), and only where that names no value a flag file the module mirrors the row into decides. The
 flag files live under `~/.claude/junkd/` (`$CLAUDE_CONFIG_DIR/junkd/`): `output-style-off`, `tldr-on`,
-`tldr-off`, `orch-off`, `orch-rules-off`, and the setup stamps `setup-<version>.stamp`.
+`tldr-off`, `orch-off`, `orch-rules-off`, ctx-limit's `ctx-limit-threshold`, `ctx-limit-action` and
+`ctx-limit-cmd`, the status line's copy `statusline.sh`, and the setup stamps `setup-<version>.stamp`.
 
-## Moving from the handoff, orch and tldr plugins
+## Moving from the handoff, orch, tldr, ctx-limit, ctx-tokens and statusline plugins
 
-handoff, orch and tldr were separate plugins of this marketplace; they are now part of junkd, which no longer
-depends on them. Uninstall the old ones (`/plugin uninstall handoff@junk-drawer`, `orch@junk-drawer`,
-`tldr@junk-drawer`) and install junkd. Nothing is copied over: set the values you had changed again (`/config`,
+handoff, orch, tldr, ctx-limit, ctx-tokens and statusline were separate plugins of this marketplace; they are now
+part of junkd, which no longer depends on them. Uninstall the old ones (`/plugin uninstall handoff@junk-drawer`,
+`orch@junk-drawer`, `tldr@junk-drawer`, `ctx-limit@junk-drawer`, `ctx-tokens@junk-drawer`,
+`statusline@junk-drawer`, and the same plugins on Codex and Kimi Code) and install junkd. Nothing is copied over: set the values you had changed again (`/config`,
 the junkd pane, a feature pane), or rename the keys in `~/.claude/settings.json` by hand.
 
 | Before | Now |
@@ -161,6 +226,13 @@ the junkd pane, a feature pane), or rename the keys in `~/.claude/settings.json`
 | `~/.claude/tldr-on` | `~/.claude/junkd/tldr-on` (run `/junkd:tldr on` again; the old file is not read) |
 | `~/.claude/orch/rules-off` | `~/.claude/junkd/orch-rules-off` (written by the module at the next session start) |
 | `$.handoff`, `$.orch`, `$.tldr` | `$.junkd` ([below](#junkd-for-other-mods)) |
+| `/ctx-limit`, `/ctx-limit:ctx-limit` | `/junkd:ctx-limit` |
+| `ctx-tokens` (the bare command) | `/junkd:ctx-tokens`; `ctx-tokens` stays on the Bash tool's PATH while junkd is on |
+| `/statusline:init` | `/junkd:statusline on` (on by default: the first session start wires it) |
+| `~/.claude/ctx-limit-threshold`, `-action`, `-cmd` | `~/.claude/junkd/ctx-limit-*`: the module moves them once at session start where the new ones are missing |
+| `<home>/junk-drawer/ctx-limit-*` (Codex, Kimi Code) | `<home>/junk-drawer/junkd/ctx-limit-*`: not moved, set the limit again with the skill |
+| `~/.claude/junk-drawer-statusline.sh` | `~/.claude/junkd/statusline.sh`: `statusline-setup on` (the first session start, or `/junkd:statusline on`) moves the statusLine and removes the old copy |
+| — | new rows `ctx_*` (the guard off by default) and `statusline_*` (all on by default) |
 
 Saved handoffs stay where they were (`~/.claude/handoffs`) and need nothing. Codex and Kimi Code keep their flags
 and handoffs under `<home>/junk-drawer/`.
@@ -179,7 +251,9 @@ asynchronously and takes one object:
 - `get({ key })`, `set({ key, value, scope? })` — one row; `set` validates by the group's rules, writes
   `junkd.<key>` through `$.config`, applies it (flag files included) and resolves to the stored value.
 - `open({ pane, route? })` — toggle a pane: `junkd` (the whole set), `handoff` (`route` `auto`, `handoffs` or
-  `settings` opens on that tab, or switches to it while the pane is up), `orch`.
+  `settings` opens on that tab, or switches to it while the pane is up), `orch`, `tools` (`route` `agents`,
+  `tools`, `mcp` or `skills`, the same way). Each pane takes its own routes only: `open({ pane: 'handoff', route:
+  'mcp' })` is `junkd: no tab mcp`. While `tools_enabled` is off, `open({ pane: 'tools' })` rejects with the reason.
 - `handoffStatus()` — `{ armed, percent, phase }` of the auto handoff loop.
 - `orchGuardState()` — `{ active, model }`: whether the main-loop guard holds right now, and the model it judged.
 
@@ -302,18 +376,96 @@ Bare `/junkd:handoff` with no argument still saves a handoff as above.
   is the task to run right now (`/junkd:orch all` runs as a command); without one the loop is only armed.
 - **`/junkd:handoff off`**: disarm the loop.
 - **`/junkd:handoff panel`**: open the pane, or close it when it is open.
-- **`/junkd:ahandoff [prompt] | off | panel`**: the short form of the three above, without the pane
-  (`/junkd:ahandoff /junkd:orch all` arms the loop and runs the command). It is a skill
+- **`/junkd:ahandoff [prompt] | off | panel | status`**: the short form of the three above, without the pane
+  (`/junkd:ahandoff /junkd:orch all` arms the loop and runs the command); `status` prints whether the loop is
+  on, the threshold and the limit as they stand, the last measurement and the path of the log (below). It is a skill
   (`skills/ahandoff`) whose text only runs when the hooks module is not loaded: it then tells you to run
   `/reload-plugins` after enabling `junkd@junk-drawer` (on other hosts, that the loop is a Claude Code
   mod feature).
 
 Loop: every `checkEvery` tool calls the hook reads context usage. Past `threshold` it denies every tool
 except the handoff itself and tells the model to call the `junkd:handoff` skill and write one. When that
-turn ends it runs `/clear`, then `/junkd:handon <id>`, then sends the continuation prompt — `Continue
-after the handoff` unless you change it with `p` on the Auto tab (a `/command` runs as a command). It
-repeats until `/junkd:handoff off`. A fresh window that already starts at or over the threshold hands off
-again after that many more points of growth.
+turn ends it runs `/clear`, then `/junkd:handon <id>`, with the continuation prompt — `Continue
+after the handoff` unless you change it with `p` on the Auto tab — handed to the model inside that same
+`/junkd:handon` turn (as the person's instruction, a `/command` as a command to run through the Skill tool), so it
+cannot start before the handoff is loaded; only a handon that raises no submission of its own sends it as a prompt
+afterwards. It repeats until `/junkd:handoff off`.
+
+The prompt you arm with starts a turn by itself: it is submitted (`$.prompt.submit`) one second after the arming
+command ended, because a prompt submitted while the command is still running is parked by the host until you type
+something. A prompt the host or a hook refuses is said in a toast, not dropped silently. A fresh window that already starts at or over the threshold hands off
+again after that many more tokens of growth.
+
+#### The threshold is a token count
+
+`handoff_threshold` is the used context in thousands of tokens: `300` is 300k, the default. The module compares it with
+the host's own used-token figure (`context.tokens` of `$.session.usage()`: the last response's input tokens, uncached,
+cache-written and cache-read together, the number the status line shows as `total_input_tokens`), so the same number
+means the same size on every model and window. The statusline segment (`🪃 120k/300k`) and the pane show the limit in
+tokens too.
+
+**Migration, one release:** a value of 100 or less is what an older config holds (a percent of the window), so it is
+still read as a percent: `85` is 85% of the window the host reported (`context.window`), and every log line says
+`note=legacy-percent` while it is. Before the first measurement of a session the window is not known and `/junkd:ahandoff
+status` shows the limit as `?`. A token count of 100k or less cannot be set meanwhile (`100` is 100%, `101` is 101k); set
+`300` or any number above 100 to leave the legacy rule. A value of 0 or less is refused.
+
+The limit is the threshold itself. Only a window the loop's own handoff started (system prompt and `/junkd:handon`
+already fill it) has a baseline: when the threshold sits at or under that fill, the limit is the threshold in tokens
+of growth above it. A loop armed in any other window, a fresh session or one that already ran turns, has no
+baseline, so threshold 300 at 350k used hands off at the end of that turn. `/junkd:ahandoff off` drops the baseline.
+
+**A threshold change re-arms.** Changing `handoff_threshold` while the loop is armed (`/config`, the Settings tab,
+`$.junkd.set`) takes effect at once: the next measurement compares with the new limit, the log gets a line with
+`note=rearmed`, and a toast says `ahandoff: threshold now 150k`. The baseline of the window is not reset by the change.
+
+**A handoff this session writes while the loop is armed continues the chain**, whoever asked for it: the loop's own ask,
+you telling the model to write one, or `/junkd:handoff` by hand. When the main loop of this session Writes a handoff file
+while the loop is idle, the turn end logs `decision=fire:external-handoff` and runs the same `/clear`, `/junkd:handon <id>`
+and continuation as after its own ask. The handoffs folder is shared by every session, so a file another session wrote, or
+a subagent of this one, is never taken: only the Write the main loop made counts. The 3-tries cap below counts only the
+loop's own asks. A handoff written while the loop is off does nothing.
+
+**A `/clear` that does not happen is retried.** The cycle's `/clear` is issued and logged (`decision=cycle:clear-issued`).
+If the host does not answer within 10 seconds, the call is rejected (it threw), or it answers with no text (a hook above
+refused it and the answer is `{}`; a `/clear` that ran answers `{ text: "" }`), the log says `cycle:clear-failed:timeout`,
+`:error` or `:denied`, the loop stays in the clear phase and does not run `/junkd:handon` in the uncleared session. At the
+next turn end it logs `cycle:retry-clear` and issues the `/clear` again; after 3 retries that all failed, the next turn end
+logs `give-up:clear`, toasts `ahandoff: /clear failed 4 times — disarmed` and disarms the loop. A `/clear` that works resets
+the count.
+
+A handoff the model does not write is asked for at most 3 times in all (the firing turn's ask is the first, whether the
+firing is a turn end, a tool call's deny or the pane's `n`); after the
+third miss the loop disarms, logs `decision=give-up:3-tries` and toasts `ahandoff: handoff not written after 3 tries —
+disarmed`. A written handoff gives the next cycle its 3 tries again, and so does arming or disarming the loop.
+
+A threshold the window cannot hold (300 on a 200k window) never fires: arming the loop, or the first measurement of a
+window, says so in a toast (`ahandoff: threshold 300k is not below the 200k window — it will never fire, lower it`) and
+in the pane's footer.
+
+A reload of the plugin (a change in the `/config` menu, `/reload-plugins`, a save in a watched `--plugin-dir`
+folder) starts the module over; the armed loop, its prompt and its baseline come back from `$.state` (a toast says
+so), a new process starts with the loop off.
+
+#### The measurement log
+
+Every measurement the loop makes or skips adds one line to
+`${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/handoff/<session>.log` (appended, never read back; a new session, such as
+the one after a `/clear`, has its own file):
+
+```
+<iso time> <hook> percent=<n> used=<tokens> limit=<tokens> armed=<bool> fresh=<bool> decision=<fire|skip:reason|cycle:step> base=<n> threshold=<n> phase=<p> window=<n> [note=<words>]
+```
+
+`hook` is `tool.call` (every `checkEvery` calls, and each call while a handoff is due or the window is fresh),
+`turn.complete` (every main turn), `session.measure` (after each turn, once the host reports the fill) or
+`session.start` (a loop taken back after a reload) or `config.set` (a threshold change on an armed loop, `note=rearmed`). `decision` is `fire` (the limit is reached; a handoff is
+asked for), `skip:below-limit`, `skip:fresh` (the first measurement of the window after a handoff is still
+pending), `skip:phase-<phase>` (a handoff is already under way), `skip:disarmed`, `skip:five-hour-limit`,
+`skip:measure-only`, `skip:restored`, `skip:threshold-changed`, `cycle:clear-issued`, `cycle:clear-failed:<reason>`, `cycle:retry-clear`, `give-up:clear`, `fire:external-handoff` (a handoff the loop did not ask for was written; the chain follows), or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
+that turn, or one was written and the clear starts) or `give-up:3-tries` (the handoff was asked for 3 times and never written;
+the loop disarms). `used`, `limit` and `base` are tokens; `window` is the context window the host reported, in tokens; `note=legacy-percent` marks a threshold of 100 or less. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
+on the line of the turn that should have fired it.
 
 #### Resume after the 5h rate limit
 
@@ -328,8 +480,8 @@ pending (re-arm with `/junkd:ahandoff`).
 
 #### Status line segment
 
-The prompt line shows `🪃 72%` beside `✚ junkd`: context usage, green below the threshold, yellow within
-10 points of it, red past it. It shows `🪃 off` while the loop is disarmed and `🪃 handoff…` /
+The prompt line shows `🪃 120k/300k` beside `✚ junkd`: used tokens over the limit, green below it, yellow within
+10% of it, red past it. It shows `🪃 off` while the loop is disarmed and `🪃 handoff…` /
 `🪃 resume…` while a handoff is in flight. Clicking the segment opens or closes the pane. Turn it off
 with the `handoff_segment` setting.
 
@@ -353,7 +505,7 @@ Set them in the Settings tab, in the junkd pane (`/junkd`, the main rows), or in
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `handoff_enabled` | boolean | `true` | The auto handoff at all. Off: the loop cannot be armed (`/junkd:ahandoff` and `/junkd:handoff auto` say so, `handoff_autoOn` is ignored, an armed loop disarms at once and a pending 5h-limit resume is dropped) and the `🪃` segment is hidden. `/junkd:handoff`, `/junkd:handon` and the pane keep working |
-| `handoff_threshold` | number | `85` | Context usage in percent that triggers the handoff; above 0, up to 100 |
+| `handoff_threshold` | number | `300` | Context in thousands of tokens that triggers the handoff (`300` = 300k); above 0. 100 or less is read as a percent of the window for one release (above) |
 | `handoff_checkEvery` | number | `5` | How often, in tool calls, usage is read mid-turn; a whole number, 1 or more (`2.6` is refused, not rounded) |
 | `handoff_autoOn` | boolean | `false` | Arm the loop at every session start |
 | `handoff_resumeAfterLimit` | boolean | `true` | Send the continuation prompt 2 minutes after the 5h window resets when a turn died on the limit |
@@ -465,12 +617,33 @@ capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }        # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if none
   tests: { api: "npm test" }  # use `root` for a repo-level suite; omit absent runners
+  security: { severity: high } # omit unless there is a web app, an api, or a security-named file
 standing_checks_extra: []     # project lessons promoted to standing checks
+specs: [PRD.md, specs/*.md]   # spec files /junkd:direction checks; omit when none
 github: { label: "orch" }     # github-issues backend only
 ---
 Free-form project notes the orchestrator should know (conventions, gotchas, the visual spec path,
 calibration values that must never be guessed).
 ```
+
+`capabilities.security` turns on the security standing check. `/junkd:orch-init` proposes it with
+`severity: high` when the repo has a web app, an api, or a file whose name matches
+`auth|login|session|token|secret|upload|exec|spawn|sql|query`. Declared, every verify round (fix rounds
+too) has the `verify-coordinator` spawn one fresh reviewer (Sonnet; Opus when the diff touches such a
+file) that runs Claude Code's built-in `security-review` skill over `git diff <base>...<branch>`. Each
+finding at or above `severity` is a `FAIL` row with `file:line` and the class; a lower finding is a note
+under the table; no finding is one `PASS` row; a reviewer that cannot run is a `PM-REVIEW` row. Absent,
+no security check runs.
+
+### Recommended env for the orchestrator session
+
+Start the session that runs `/junkd:orch` with `ENABLE_STOP_REVIEW=0` in its environment (for example
+`ENABLE_STOP_REVIEW=0 claude`). junkd does not set it from a hook. The variable belongs to the `security-guidance` plugin and turns off only its
+Stop-time diff review. In an orch run that review fires in whichever agent stops, reads a diff that
+other agents change between its turns, and its findings stay in that agent: the orchestrator never sees
+them and they block nothing. The commit/push review stays on: it runs in the implementer at the moment
+it commits, on that commit alone, so it is still a useful first warning. The `security` standing check
+above is what gates `done`.
 
 ### Modes
 
@@ -486,6 +659,10 @@ Flags (any mode): `--rounds R` (fix-loop cap, default the `rounds` setting) · `
 big task via `lead-implementer`) · `--single-pr[=<branch>]` (one integration branch + one draft PR
 for the whole run).
 
+An `all` or `--single-pr` run whose config declares `specs:` ends with the direction check (see
+[direction](#direction)) before the PR step and the push, and its summary quotes the `DIRECTION:` line. `batch`,
+`chain` and single-task runs skip it unless you ask.
+
 ### How a task is driven
 
 1. **Freeze the criteria** before any code: copy a structured DoD / checklist verbatim, else derive
@@ -493,15 +670,17 @@ for the whole run).
    descriptions go `blocked` with a question — never implemented on vibes).
 2. **Implement** on an isolated task branch (`implementer`, or `lead-implementer` for a big task
    that cuts into file-disjoint slices behind a frozen contract).
-3. **Verify** the whole task via `verify-coordinator` — it builds the env, spawns `test-planner`
-   (diff → mandatory matrix), `ui-reviewer` (browser criteria) and `test-reviewer` (test quality),
+3. **Verify** the whole task via `verify-coordinator` — it builds the env, derives the mandatory test matrix from the diff (a `test-planner` only for a `critical: true` task
+   or on request), spawns `ui-reviewer` (browser criteria), audits the shipped tests itself (test quality),
    runs the standing checks, and returns one merged verdict. **No PASS without tool evidence.**
 4. **Resolve:** all-PASS → `done` + draft PR; any FAIL → fix loop, capped at `--rounds`. Round 1
    builds, middle rounds re-run the same implementer on only the failing criteria, the **final
    round hands a FRESH implementer the diff + a why-it-keeps-failing analysis**; still failing →
    `blocked` and escalated.
-5. **Retro:** every resolve appends a lesson to `_lessons.md`; a pattern recurring across ≥2 tasks
-   is proposed for promotion into `standing_checks_extra` (asks you — never edits config silently).
+5. **Retro:** a resolve with a signal (a fix round, a surviving mutant, a PM-REVIEW that found a bug,
+   a dead or stalled agent, a verify FAIL) adds a lesson to `_lessons.md`; a clean round-0 PASS adds
+   none. A lesson is promoted toward a test, a standing check, a role file or a wider store, and
+   `standing_checks_extra` is never edited without your yes (see `## lessons`).
 
 The base branch is untouchable throughout: all work lands on task branches in worktrees, only draft
 PRs are opened, and **humans merge**.
@@ -538,10 +717,9 @@ a different model only when the user asked for it.
 | `orch-ops` | haiku | runs the bin scripts, git, gh and jq reads for the orchestrator; one line back, output in a report file |
 | `implementer` | opus | builds one task (or one file-disjoint slice of it) on its own branch in its own worktree, with tests and a mutant sweep |
 | `lead-implementer` | opus | one big task: freezes the shared contract, fans out to parallel `implementer` slices, merges them back, runs the final gate |
-| `verify-coordinator` | opus | the whole verification of one task: builds the verify env, runs the inline checks, spawns the three reviewers, writes the verdict table |
-| `test-planner` | sonnet | derives the mandatory test matrix from the diff (happy + edge rows with real induction recipes) |
+| `verify-coordinator` | opus | the whole verification of one task: builds the verify env, runs the inline checks, audits the shipped tests itself, spawns `ui-reviewer` (and `test-planner` for a `critical: true` task), writes the verdict table |
+| `test-planner` | sonnet | derives the mandatory test matrix from the diff (happy + edge rows with real induction recipes); spawned only for a `critical: true` task or on request |
 | `ui-reviewer` | sonnet | drives the browser (chrome-devtools MCP, agent-browser, playwright MCP, agent-device: first found), a screenshot per UI criterion |
-| `test-reviewer` | sonnet | audits the tests a change ships: real assertions, coverage of the change, no over-mocking; `OK` or `GAPS` |
 
 On Claude Code each is the agent type `junkd:<role>` (`junkd:implementer`, …). The real files live in
 `skills/orch/roles/`; `agents/` at the plugin root is a symlink to them (see the layout note in the repo
@@ -622,9 +800,11 @@ Every denial starts with `Orchestrator mode (orch):` and says what to do instead
 
 | Tool | The main loop may use it… |
 |---|---|
-| `ListAgents`, `TaskStop`, `AskUserQuestion`, `ToolSearch`, `Skill`, `CronList`, `CronDelete`, `EnterPlanMode`, `ExitPlanMode`, `PushNotification`, `RemoteTrigger` | always |
+| `TaskStop`, `AskUserQuestion`, `ToolSearch`, `Skill`, `CronList`, `CronDelete`, `EnterPlanMode`, `ExitPlanMode`, `PushNotification`, `RemoteTrigger` | always |
+| `ReadNotifications` | always: the main loop reads its own inbox (what a peer session or the handoff chain sent it); nothing to delegate |
+| `ListAgents` | always: lists the subagents and the peer sessions it can message |
 | `Agent` | with `model: opus\|sonnet\|haiku`, or as a `junkd:` agent type with no `model` (theirs is pinned). Never as a fork or with `inherit`. With a Fable model only when `allow_fable_agents` is on. An `agent.spawn` hook checks the resolved model again (a fork, `inherit`, or no model on a non-`junkd:` type would run on the main loop's model). |
-| `SendMessage` | except to a reviewer (`verify-coordinator`, `ui-reviewer`, `test-planner`, `test-reviewer`, bare or `junkd:`: spawn a new one), to an agent past `implementer_ctx_k` k tokens of context, or to an agent nobody knows. A stopped agent is known by its `SubagentStop` record (see [Agent records](#agent-records)): its type and the context tokens of its transcript's last usage record, by id and by name. |
+| `SendMessage` | to a peer session (a name from `ListAgents`, with or without its ` [ref]`), to `main` or as a protocol reply: always, the engine resolves the name. To a subagent of this session: except to a reviewer (`verify-coordinator`, `ui-reviewer`, `test-planner`, bare or `junkd:`: spawn a new one), to an agent past `implementer_ctx_k` k tokens of context, or to a subagent id nobody knows (`a` and 15 or more hex digits, the shape of a subagent id; any other unknown name is a peer). A stopped agent is known by its `SubagentStop` record (see [Agent records](#agent-records)): its type and the context tokens of its transcript's last usage record, by id and by name. |
 | `Read` | in the session scratchpad, the repo's task store `<repo>/.orch/` (`<repo>` = git's toplevel of the session's cwd; none outside a repo) and, in the config dir (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), `orch/`, `handoffs/` and `projects/*/memory/`. The path must be a plain absolute ASCII path (no `~`, no relative path, no surrounding spaces, no non-ASCII letters) with no `..` segment; symlinks and case aliases are resolved first and where it lands must pass too, and a path that cannot be placed is denied. |
 | `Write` | in the same places as `Read`, except that in the task store only a `.md` file (task files, `_lessons.md`) and never an existing `.orch/config.md` (its `tasks_dir` steers the bin scripts; a new one passes as any new `.md` does), or to a new `.md` file. Never a path with a `..` segment, never to settings, Claude Code config (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, anything in a `.claude/` dir, any plugin's `agents`, `commands`, `skills`, `hooks`, `rules`, `output-styles`, a `.claude-plugin/` dir), the module's own control files `junkd/orch-off` and `junkd/orch-rules-off` (or any path under those names), the agent records `junkd/orch/_agents/` (any case, any path under it) or this plugin. The path must be a plain absolute ASCII path; symlinks and case aliases are resolved first, and a path that cannot be placed (a link to nothing, a folder that does not resolve) is denied. |
 | `Bash`, `Monitor` | only to run one of this plugin's own `bin/` scripts, by its path under the plugin root, with plain arguments (no quotes, `$`, backticks, `;`, `&`, `\|`, `<`, `>`) |
@@ -661,7 +841,7 @@ session folders can be removed by hand.
   tool call, so nothing changes in practice.
 - **`ScheduleWakeup`:** not on the always-allowed list. The `CronCreate` row holds for it: only
   `/junkd:orch`, `/loop` of an allowed prompt, a plain prompt, or a stop.
-- **`SendMessage`:** `test-planner` and `test-reviewer` count as reviewers, so they are spawned fresh
+- **`SendMessage`:** `test-planner` counts as a reviewer, so it is spawned fresh
   every time and never messaged. The record file on disk is read first, and the module's own
   `SubagentStop` record is the fallback.
 - **`Read`, `Write`:** the task store `<repo>/.orch/` is a root of its own. Writes there take a `.md`
@@ -673,10 +853,11 @@ session folders can be removed by hand.
 
 #### Settings
 
-`/junkd:orch panel` toggles the pane: one Settings tab with the eight rows (`tab` moves, `enter` saves a
-field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes).
-The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and the first four and
-`orch_claude_md` in the /junkd pane.
+`/junkd:orch panel` toggles the pane: one Settings tab with the fifteen rows (`tab` moves, `enter` saves a
+field, a letter flips a switch or focuses a field, the guard's options are buttons, `q` closes) and the
+`dashboard: open ▸` line, which opens [the dashboard](#dashboard) as `/junkd:dashboard` does.
+The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and the first four,
+`orch_claude_md` and `orch_lessons` in the /junkd pane.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
@@ -688,6 +869,13 @@ The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and 
 | `orch_inject_rules` | boolean | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file `junkd/orch-rules-off` while off) |
 | `orch_rounds` | number | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
 | `orch_claude_md` | boolean | `false` | On: the `## Orchestrator mode` section of `~/.claude/CLAUDE.md` becomes the `junkd:orch` pointer block; off: the block is removed (the original section only from the backup). Runs at once and at every session start while `orch_enabled` is on; see [the CLAUDE.md pointer block](#the-claudemd-pointer-block-orch_claude_md) |
+| `orch_dashboard_refresh` | number | `30` | While [the dashboard](#dashboard) is open, write its `status.js` again every N seconds (5–600, clamped and rounded) |
+| `orch_dashboard_window_h` | number | `24` | The hours the dashboard's timeline shows, ending now (1–168, clamped and rounded) |
+| `orch_watchdog` | boolean | `true` | The [agent watchdog](#watchdog) as a whole; off (or `orch_enabled` off): no timer, no alarms |
+| `orch_idle_stop` | boolean | `true` | The watchdog stops idle leftovers; off: it reports them only |
+| `orch_idle_stop_minutes` | number | `10` | Idle minutes before a finished agent with no task in progress is stopped (1–120) |
+| `orch_stall_minutes` | number | `15` | Minutes without a tool call before a running agent counts as stalled; a reviewer gets 5 more (1–120) |
+| `orch_lessons` | boolean | `true` | The [lessons loop](#lessons): injection by stack, the lessons tab, 📒 and the blocking dialog; off: none of them (the flag file `junkd/orch-lessons-off` while off) |
 
 Scope: user-global; project/session overrides: planned.
 
@@ -835,10 +1023,589 @@ are three of its settings:
 There is no tldr pane; `/junkd:tldr` stays the command on Claude Code. The module is Claude-only: Codex and Kimi
 run the shell hook and `tldr-flag` as before (OpenCode only `tldr-flag`), and `tldr_enabled` does not apply there.
 
+## ctx-limit and ctx-tokens
+
+Two context tools that work on every host. `ctx-tokens` reads how full the context is from the session transcript;
+`ctx-limit` sets a context-size limit that a per-prompt hook enforces.
+
+### Usage
+
+```text
+/junkd:ctx-limit 300k          # set the limit and turn the guard on (also 400000, 1m)
+/junkd:ctx-limit on            # on at the last threshold (300k by default)
+/junkd:ctx-limit               # status (also `status`)
+/junkd:ctx-limit off           # off
+/junkd:ctx-limit action warn   # block | warn | cmd
+/junkd:ctx-limit cmd terminal-notifier -message "ctx limit hit"   # the command, and action cmd
+/junkd:ctx-tokens              # how full the context is: ctx 61k (61951) | out 562
+```
+
+Past the threshold the hook does one of three things:
+
+- **block** (the default): the prompt is refused until you `/clear`, `/junkd:handoff`, or `/junkd:ctx-limit off`.
+- **warn**: a warning goes into the context and the prompt runs.
+- **cmd**: your command runs with `CTX_TOKENS` and `CTX_LIMIT` in its environment, and the prompt runs.
+
+The guard never blocks its own way out: `/junkd:ctx-limit`, `/junkd:handoff`, `/junkd:handon`, `/junkd:ahandoff`,
+`/clear`, `$ctx-limit`, `$handoff`, `/skill:ctx-limit`, `/skill:handoff`, `/skill:handon` and the OpenCode
+wrappers `/ctx-limit`, `/handoff`, `/handon` always pass. Whole names only: `/ctx-limiter` or `$handoffs` is
+blocked like any prompt.
+
+`ctx-tokens` keeps its CLI: `ctx-tokens` prints the context tokens as a bare number, `-h` the human form,
+`<file.jsonl>` reads that transcript, `--codex`, `--kimi`, `--claude` pick the host, `--cwd <dir>` the project.
+Without a flag it finds the session of the host `host-lib` detects; the flags override that. "Context" is the last
+turn's input side (input + cache creation + cache read): what fills the window.
+
+### Settings
+
+Four rows (`/config` key `junkd.<row>`); the junkd pane shows the first three in its ctx group:
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `ctx_enabled` | boolean | `false` | The guard on or off, the same switch as `/junkd:ctx-limit on|off` |
+| `ctx_threshold` | number | `300000` | The limit in tokens: a whole number, 1000 or more; `300k` and `1m` are read too |
+| `ctx_action` | choice | `block` | `block`, `warn` or `cmd` |
+| `ctx_cmd` | string | `''` | The shell command of action `cmd` |
+
+**The files are the shell-side truth.** The hook is a shell script and reads no `$.config`, so three files under
+`~/.claude/junkd/` (`$CLAUDE_CONFIG_DIR/junkd/`) stand in for the rows: `ctx-limit-threshold` (there while the
+guard is on, holding the limit), `ctx-limit-action`, `ctx-limit-cmd` (none while it is empty). A write to a row,
+through `/config`, the pane, `$.junkd.set` or `/junkd:ctx-limit`, writes its file first and then the row; a row
+that is refused puts the file back. `ctx_threshold` changes the file only while the guard is on (the row keeps the
+number `ctx_enabled` writes). `$.junkd.get` answers from the files, so a change made with the skill's CLI
+(`./bin/ctx-limit`) shows there too.
+
+### Hosts
+
+| Host | Command | State files | Hook |
+|---|---|---|---|
+| Claude Code | `/junkd:ctx-limit`, `/junkd:ctx-tokens` | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/ctx-limit-*` | `hooks/hooks.json`, UserPromptSubmit; block is exit 2 |
+| Codex | `$ctx-limit`, `$ctx-tokens` | `${CODEX_HOME:-$HOME/.codex}/junk-drawer/junkd/ctx-limit-*` | `.codex-plugin/hooks.json`, once you trust it; block is `{"continue": false}` |
+| Kimi Code | `/skill:ctx-limit`, `/skill:ctx-tokens` | `${KIMI_CODE_HOME:-$HOME/.kimi-code}/junk-drawer/junkd/ctx-limit-*` | the manifest's `hooks`; block is exit 2 |
+| OpenCode | `/ctx-limit`, `/ctx-tokens` (the wrappers) | `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/junk-drawer/junkd/ctx-limit-*` | none: the limit is recorded, not enforced |
+
+On every host but Claude Code the skill runs `./bin/ctx-limit` and `./bin/ctx-tokens` from its own folder, and
+`host-lib` tells the host (`JUNK_DRAWER_RUNTIME` overrides). The CLI exits 2 on a host it cannot tell and writes
+nothing; the hook exits 0 there, so the guard never blocks on a guess. `on` with no threshold set uses 300000 on
+Claude Code and 200000 elsewhere. The hook reads `token_count` events on Codex, `step.end` usage records on Kimi
+Code (found from the hook's `session_id`), and the usage blocks of `transcript_path` on Claude Code; no usage
+record it knows, and it lets the prompt through. Neither the Codex nor the Kimi transcript layout is a stable API:
+the host's own context footer is the stable reference.
+
+## statusline
+
+A colored status line for Claude Code. Segments, separated by a dim `│`:
+
+`ctx` (cyan: context free and used) · `branch` (green) · `⑂worktree` (magenta, only in a linked worktree) · `model`
+(bold blue) · `effort` (yellow) · `limits` (the 5h and weekly rate-limit use, green, orange past 50%, red past 80%)
+
+### Usage
+
+```text
+/junkd:statusline              # toggle the statusline pane
+/junkd:statusline on           # wire it into settings.json (the statusline_enabled row)
+/junkd:statusline off          # take it out again
+/junkd:statusline status       # on, off, or off (<your own command>), and the segments that are off
+```
+
+The status line is on by default: the first session start with junkd copies `bin/statusline.sh` to
+`~/.claude/junkd/statusline.sh` and points `statusLine` in `~/.claude/settings.json` at that absolute path (a
+plugin path is a versioned cache, and `${CLAUDE_PLUGIN_ROOT}` does not resolve in settings.json). It does so only
+where settings.json has no `statusLine` (or `null`) or one that is junkd's. A `statusLine` of your own is never replaced:
+turning the row on refuses with the reason (`bin/statusline-setup on --force` from the skill folder replaces it),
+and `off` leaves it alone. At every session start, while the row is on, a copy that differs from the plugin's (a
+plugin update) is copied again. Every write backs settings.json up to `settings.json.bak`, goes through a symlink
+to the real file (temp + `mv`), and never touches a settings.json that does not parse.
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `statusline_enabled` | boolean | `true` | `statusLine` points at junkd's line: true runs `bin/statusline-setup on`, false `off`; a refusal is the deny and the row stays |
+| `statusline_ctx` | boolean | `true` | Draw the context segment |
+| `statusline_branch` | boolean | `true` | Draw the git branch |
+| `statusline_worktree` | boolean | `true` | Draw the linked worktree's folder |
+| `statusline_model` | boolean | `true` | Draw the model's name |
+| `statusline_effort` | boolean | `true` | Draw the effort level |
+| `statusline_limits` | boolean | `true` | Draw the 5h and weekly rate limits |
+
+The renderer reads the segment rows from settings.json itself at every draw (`pluginConfigs`, one entry's
+`options.statusline_<segment>`): a missing key or entry, a settings.json that does not parse, or no `jq` draws the
+segment. A segment off takes out exactly it and its separator.
+
+#### Which `pluginConfigs` entry (the key)
+
+Claude Code stores a plugin's rows under `pluginConfigs["<plugin>@<source>"]`: `junkd@inline` for a session started
+with `--plugin-dir`, `junkd@<marketplace>` (for example `junkd@junk-drawer`) for an installed copy. Both can sit in
+one settings.json, and each session writes its toggles to its own entry. The wired command therefore names the entry:
+
+```
+statusLine.command = ~/.claude/junkd/statusline.sh --config junkd@inline
+```
+
+The renderer reads exactly that entry (no `--config`, the old behaviour: the first `junkd@` entry in the file, which
+is the installed copy's whenever both exist, so a `--plugin-dir` session's toggles never reached the line). The
+module derives its key from the plugin's folder (`<config>/plugins/cache/<marketplace>/junkd/<version>` is
+`junkd@<marketplace>`, any other folder is `junkd@inline`; the engine does not hand a module its own key), and
+`statusline-setup on --config <key>` (every `on`, and at session start whenever the command differs, the script is
+stale, or `statusLine` is missing or `null`) rewrites the script and the command. Two sessions with different keys
+re-point the line at each session start: the one started last wins. The statusline pane shows the key
+(`config: pluginConfigs junkd@inline`) and warns `two junkd configs: <key> wins` when another `junkd@` entry exists
+in the file or the wired command reads a different one.
+
+#### The line follows the switch
+
+Turning the row off (`/junkd:statusline off`, the `a` key of the pane, `/config` → junkd → `statusline_enabled`, or
+`$.junkd.set`) removes `statusLine` from settings.json and the copy `~/.claude/junkd/statusline.sh`; on writes both
+again. Claude Code reads `statusLine` from settings.json live: measured on 2.1.306, the line goes or comes back about
+a second and a half after the flip, with no prompt sent and no restart. One case waits for the next turn: a line written
+for the first time by the session start (a fresh install, or an update that changes the command) is not drawn until
+Claude Code has read the file again, which it does at its next turn. junkd calls nothing to make it redraw sooner: the
+engine's typings have no call for the status line, and a poll is not added. One trap lived here: Claude Code keeps its own copy of settings.json and writes it back whole when a `/config`
+row changes, so a line the script had just removed came back with the row's write (and a line it had just written was
+lost), leaving the row off and the line drawn by a script that was gone. The row's write now waits until Claude Code
+has read the file the script changed (`$.settings.read` shows its copy; the wait gives up after 5 s), and after the
+write the file is checked once more and the script runs again if it does not say what the row says. The same holds at
+session start: another writer of settings.json (the output-style step of `setup.sh`, the host's first writes) can drop
+the freshly written line, so the start looks again 3 s later and wires it once more if it is gone while the row is on.
+
+The `wired` switch in the pane shows the real `statusLine` in the user's settings.json (junkd's command, with or
+without `--config`), not the `statusline_enabled` row: the row can be on while the line is gone, and a press then
+wires it, a press while it is wired takes it out. `"statusLine": null` counts as none.
+
+The junkd pane shows `statusline_enabled`; its `settings ▸` opens the statusline pane: the enabled switch (`a`), one
+switch per segment (`b`–`g`), and a preview of the line for your choice (the renderer run on a sample session:
+model "preview", the project folder, 61k of a 200k context used, the rate limits at 12% and 33%; drawn without its
+colors). `q` closes it; `$.junkd.open({ pane: 'statusline' })` toggles it.
+
+#### The pane after a flip
+
+Every write of a row (a click, `a`–`g`, `/config`) makes Claude Code read `pluginConfigs` again and load junkd's module anew
+while the pane is still on the screen. The new copy starts with nothing in memory and takes the pane back at once: it finds
+`statusline` among the panes Claude Code has up, draws the switches, the key row and the preview from the files, and shows
+the note of the flip (kept in the plugin's `$.store` for 10 s, since the copy that wrote the row is cancelled before it can
+say how it went). Before 0.11.9 none of this happened: after the first flip the `wired` switch read off while the line was
+on, the preview read `(nothing to draw)`, `/junkd:statusline` opened a pane that was already up, and the `config:` row was
+gone, so every row below it moved up by one and a click aimed where a row had been hit its neighbour (the last one, nothing).
+The `config:` row is now drawn from the first frame, whatever has been read.
+
+A press on a switch is served by the module's `ui.press` hook, not by the closure of the drawing (that closure is gone for
+a moment after a reload), and flips the row as it stands when the press is served, not as the drawing held it. It waits for
+a script of the session start that is still rewriting settings.json, or its row is lost in the rewrite. While the wired
+switch is being applied (it waits up to 5 s for Claude Code to read the file, and the write that ends the wait cancels what
+the old copy still waits for) a press on any switch is refused with a note, `press again in a moment`. The limit that is
+left is Claude Code's: after a write it takes about a tenth of a second to load the module, and a press that lands in that
+moment can be dropped, so two presses less than about 0.3 s apart can lose one. A second click within half a second of
+the one before is a double click to the terminal (it selects text), not a press.
+
+### Hosts
+
+The line is Claude Code only. Codex: the skill (`$statusline`) proposes the native `[tui].status_line` list in
+`config.toml`. Kimi Code: a fixed footer, themes only. OpenCode: no status line to configure (no `/statusline`
+wrapper either: `bin/opencode-commands.sh` skips the skill).
+
+## tools
+
+Claude Code only: a pane of the hooks module. `/junkd:tools` opens or closes it; `/junkd:tools agents`, `tools`,
+`mcp` or `skills` opens it on that tab, or switches to it while it is up. It is also the fifth tab of the
+`/junkd` set, `settings ▸` on the tools group opens it on its Agents tab, and another mod calls
+`$.junkd.open({ pane: 'tools', route })`. On Codex, Kimi Code and OpenCode the `tools` skill says in one line that
+the pane is a Claude Code mod and the host has none.
+
+The four tabs:
+
+1. **Agents** — a tree of this project's live agents over the repo's worktrees (`git worktree list
+   --porcelain`). The root is the main checkout with its branch and is always there. Another worktree is a node,
+   by its folder name and branch, only while a live agent sits in it; the rest (finished agents' leftovers,
+   detached, `orch/run`, `T<n>` and `agent-*` worktrees) are one dim footer line, `30 worktrees without a live
+   agent`. Each agent sits under the worktree its directory is in (the `cwd` its spawn gave it, else the session's
+   directory at the spawn); an agent in no worktree, or one spawned before the module loaded, sits under the
+   root. A row shows the status glyph (`●` running, `◐` waiting, `○` done, in the theme's success, warning and
+   inactive colours), the name, the agent type and the model it got. **Live** is running, or waiting: a prompt,
+   or an implementer that reported and waits for its next review or fix round. The agent list calls that one
+   completed, so the watchdog's records decide: a stop record, no stop sent and its task still open is `kept`
+   (shown as waiting, `◐ ... · idle 4m`); a stopped agent, a reviewer that reported, a task that is done or
+   blocked, and a completed, failed, killed or dropped agent are out. With no verdict (the watchdog off, a nested
+   agent) the list's status decides. Only this project's agents are listed: the ones whose directory (the
+   spawn's `cwd`) is in a worktree of the session's repo, the main checkout included; the records hold no project
+   of their own, so the spawn's directory is the match, and an agent with no spawn record counts as this
+   project's. The agents of other projects are left out and counted in the footer (`30 worktrees without a live
+   agent · 2 other projects`), in both views. `a` shows everything of this project: every worktree and the finished
+   agents too (finished rows end in `done`); `a` again goes back to the live view. The choice holds for the
+   session, through refreshes, tab switches and `/clear`, and starts as the live view. Outside a repo the root is
+   the session's folder.
+2. **Tools** — one row per tool the model called: on the main loop (`main`), in subagents (`sub`), and `≈tokens`
+   of the results it read (characters ÷ 4). Most calls first. Every MCP tool folds into one `mcp (N servers)` row;
+   the MCP tab has them per server.
+3. **MCP** — one row per MCP server: calls, tools loaded/total and the schema `≈tokens` from the session's usage
+   summary (`$.session.usage({ breakdown: 'summary' })`, estimated locally), and the result `≈tokens`. `no MCP
+   server` when the session has none.
+4. **Skills** — one row per skill run: `via slash` (you typed `/<skill>`: a plugin's or your own skill or command)
+   or `via tool` (the model's `Skill` call), the count, and when it last ran (`3 m ago`). A typed run the model
+   also answers with a `Skill` call within 2 seconds counts once. Built-in commands, MCP prompts, another plugin's
+   `$.command.run` and the pane toggles are not counted.
+
+What is counted is the model's own calls (another plugin's `$.tool.call` is not); a refused call is not. The
+counters start with the session and start over at `/clear` and `/resume`; the folded nodes, the selection and the
+tab stay. The tree is read again every `tools_refresh` seconds while the pane is open, at every agent spawn, at
+every turn's end, and on `r`. The reading stops when the pane closes (`q`, its `✕`) or when its drawing fails.
+
+### Keys
+
+| Key | Does |
+|---|---|
+| `1`–`4` | Agents, Tools, MCP, Skills |
+| `↑` `↓`, `j` `k` | Move the selection along the tree's rows (the arrows move the focus ring, which is the selection) |
+| `enter` | Fold or unfold the selected node (a worktree, the root); the fold is kept per node across refreshes |
+| `a` | Agents tab: show everything of this project (every worktree, finished agents), or the live view again (the default); the footer counts the worktrees without a live agent and the other projects' agents |
+| `r` | Read the agents, the worktrees and the MCP schemas again now |
+| `t` | Show this session's transcript: in Finder on macOS (`open -R`), its folder elsewhere (`xdg-open`); the outcome is a toast |
+| `q` | Close the pane |
+
+`space` does not fold: Claude Code presses a focused button with `enter` only, and a button's hotkey is one digit
+or one letter. The transcript is the `<session id>.jsonl` (else the newest `.jsonl`) in the project folder Claude
+Code keeps for the session's directory, `~/.claude/projects/<the directory, each character not a letter or digit
+a dash>/`; `$.session` names no transcript path.
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `tools_enabled` | boolean | `true` | Off: the pane closes, its tab leaves the `/junkd` set, `/junkd:tools` and `$.junkd.open({ pane: 'tools' })` say it is off, and nothing is counted (what was counted is dropped) |
+| `tools_refresh` | number | `60` | Seconds between two reads while the pane is open. Clamped to 10–600 (a value under 10 is 10, over 600 is 600); a value that is no number is refused |
+| `tools_agents_only` | boolean | `false` | The Agents tab leaves out the worktrees with no agent of this session (the root stays) |
+
+`tools_enabled` is the group's one row in the junkd pane. `tools_refresh` and `tools_agents_only` are `/config`
+rows only (`junkd.tools_refresh`, `junkd.tools_agents_only`), also read and written by `$.junkd.get/set`: the
+group has no settings tab of its own, so its `settings ▸` opens the tools pane on its Agents tab. A switch takes
+`true`, `'true'` or `'on'` as on, anything else as off, by `$.junkd.set` and by the `/config` menu alike. The
+manifest keeps `tools_refresh` to its type and default: Claude Code refuses a whole module whose stored value is
+out of a manifest range, so the bounds live in the module.
+
+Hosts: Claude Code only (a hooks-module mod). Codex, Kimi Code and OpenCode have the `tools` skill, which answers
+in one line that the pane is a Claude Code mod.
+
+## explain
+
+`/junkd:explain <topic>` explains a topic from the current repo or conversation in one of three formats, picked by
+the topic. It is Markdown only: no hook, no setting, no pane, and it never writes into the repo.
+
+| Topic | Route | Result |
+|---|---|---|
+| Numbers that can change (a config value, a formula with knobs, a rate limit, a threshold) | slider page | One self-contained HTML file with a slider per parameter and a live readout; the reply is its absolute path plus two sentences |
+| Structure or flow (modules, call graph, state machine, pipeline, request path) | Mermaid | One inline `mermaid` block of at most 25 nodes plus two sentences |
+| Anything else | STE text | At most 12 short sentences, no headers |
+
+The model looks for numbers that can change first, then for "how does X flow / what calls what / which states", else
+it writes text. When it cannot tell, it asks one question and never answers in two formats.
+
+The page has no `http(s)` load, no `fetch` and no module script. It lands in the session scratchpad
+(`$CLAUDE_SCRATCHPAD`, or the path the host names), elsewhere in `${TMPDIR:-/tmp}/junkd-explain/`. On Claude Code,
+when the Artifact tool exists, the page is also published as an Artifact; the other hosts have no such tool and stop
+at the path. Hosts: Claude Code (`/junkd:explain`), Codex (`$explain`), Kimi Code (`/skill:explain`) and OpenCode
+(`/explain`).
+
+## dashboard
+
+The orch run as a local web page: the task board (todo, in progress, verify, done; blocked under todo) with each
+task's round, AC and ACX counts and its last verdict note; a timeline of the phases each agent worked on a task
+(implement, verify, fix, done; a killed one hatched), with an overview strip and 1h, 3h, 12h and all zooms; the
+agents with their status, model, context, last step and age of their last call; the recent events; the lessons
+from `_lessons.md`; the rate-limit usage. No server and no fetch: the page is a file (`index.html`) that loads
+`status.js` (`window.ORCH = {…}`) beside it with a plain `<script>` and reads it again every 5 seconds, so it works
+from `file://`. Without a `status.js` it draws an empty board and says `status.js unreachable`.
+
+Both live in `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/orch/dashboard/<hash>/`: `index.html` and `scale.js` (copied
+from `skills/orch/dashboard/` at every open, so a plugin update reaches them), `status.js`, and the `open` flag.
+`<hash>` is the handoff ids' rule (`host-lib`'s `jd_hash8`) applied to the session's git toplevel; a session in no
+repo uses `_none`. The task store is the orch root's (`.orch/config.md`'s `tasks_dir`), found from inside a task
+worktree too.
+
+**Two writers of `status.js`:**
+
+- **The hooks module** (Claude Code). `/junkd:dashboard` (or `/junkd:orch dashboard`, or `dashboard: open ▸` in
+  the orch pane) writes the `open` flag, copies the page, writes `status.js`, opens the page (`open` on macOS,
+  `xdg-open` elsewhere) and toasts the path. While the flag is there it writes again at every agent spawn, every
+  agent's end, every turn's end and every `orch_dashboard_refresh` seconds. `/junkd:dashboard close` removes the
+  flag; the page keeps its last data. A flag left by an earlier session starts the writes again at session start.
+  Nothing is written while `orch_enabled` is off. Each spawn opens a phase on the task it names (its `.worktrees/<id>`
+  folder, else the first task id in its name, description or prompt): `implement` for an implementer, `fix` for one
+  on a task that was verified, `verify` for a reviewer. It closes at the agent's SubagentStop (with its context),
+  when the agent list says done, or killed when it failed, was killed or left the list with no SubagentStop record.
+  The phases live in `status.js` itself: the first write after a `/reload-plugins` reads the file back and merges,
+  so the history stays. The write is atomic (`status.js.tmp`, then `mv`).
+- **`bin/orch-status`** (any host, bash and jq): `orch-status [--out <dir>] [--sample] [--open]` builds the same
+  file from the task store, the SubagentStop records under `junkd/orch/_agents/<session>/` (each agent done, with
+  its context), `_lessons.md`, the OAuth usage endpoint when the macOS keychain holds the credentials (else no
+  usage) and `git` for the repo and branch. It has no phases: a shell sees no spawns. `--sample` writes the demo
+  data as `status.js`, `--open` copies the page beside it, writes the flag and opens it. It exits 0 with a partial
+  file rather than nothing (no jq: an empty status and a note). The `dashboard` skill runs it on the other hosts.
+
+**The data contract** (every field optional; the page draws an empty state per section): `generatedAt` epoch ms;
+`repo`, `branch`, `mock`; `window {start, end}` epoch ms; `tasks[{id, title, column: todo|in_progress|verify|done|blocked,
+round, deps, ac:[pass,total], acx:[pass,total], note, implementer, verifier, worktree, lastActivity, commits,
+phases[{agent, model, kind: implement|verify|fix|done, start, end, ctx, killed, note}]}]`; `agents[{name, role,
+model, status: running|waiting|done|dead|queued, lastCallSec, ctx, task, round, branch, worktree, lastStep,
+deadNote, events[{t, text, kind}]}]`; `events[{t, text, kind: info|pass|fail}]`; `lessons[{task, text}]`;
+`usage {fiveHour, week}` (percent); `watchdog {on, minutes}`. The comment at the top of
+`skills/orch/dashboard/status.sample.js` holds the same, with the time formats the page also takes.
+
+**Hosts:** Claude Code has the live writer. Codex, Kimi Code and OpenCode have the `dashboard` skill (`$dashboard`,
+`/skill:dashboard`, `/dashboard`), which runs `orch-status --open`: a snapshot, run it again to refresh.
+
+**Settings:** `orch_dashboard_refresh` (seconds between writes while open, default 30, 5–600) and
+`orch_dashboard_window_h` (hours the timeline shows, default 24, 1–168), both clamped in the module (the manifest
+holds no bounds: Claude Code would refuse the module over a stored value out of range), in `/config`
+(`junkd.orch_dashboard_*`) and the orch pane; see [orch settings](#settings-2). `orch-status` reads the window from
+`settings.json` (or `ORCH_DASHBOARD_WINDOW_H`).
+
+## watchdog
+
+A watchdog over the agents of this session, part of orch. It costs no tokens: on Claude Code it is engine hooks and
+a 30 s timer in the hooks module; on the other hosts it is the bash script `bin/orch-watch`. No model is in the
+loop, and it never respawns anything.
+
+### The rules
+
+The watchdog looks at each agent the main loop spawned. An agent spawned by another agent is its parent's
+business and is skipped, and the main loop itself is never watched or stopped.
+
+- **Stall**: the agent is `running`, no tool call of its own is in flight, and its last call ended longer ago than
+  its role's limit. A permission prompt (`waiting`, `◐` in the tools pane) is never a stall, and neither is a long
+  call such as `sleep 90` in Bash.
+- **Dead**: the agent was in the agent list at the last tick, it is gone now, and it left no SubagentStop record.
+  An agent that is gone with a record finished, even if its report was lost.
+- **Idle leftover**: the agent finished (it is done, or it has a stop record newer than its last move) and it is
+  still listed. Whether it is stopped depends on its role.
+
+| Role | Stall limit | Idle leftover |
+|---|---|---|
+| `implementer`, `lead-implementer` | `orch_stall_minutes` | Kept while its task is `in_progress` (a verify or fix round reuses it); stopped once the task is `done` or `blocked`, or after `orch_idle_stop_minutes` when the task is in no other state |
+| `verify-coordinator`, `test-planner`, `ui-reviewer` | `orch_stall_minutes` + 5 | Stopped as soon as it reported: a reviewer is never messaged again |
+| `orch-ops`, any agent named `pr-…` or `gh-…` | `orch_stall_minutes` | Stopped as soon as it reported |
+| Any other agent | `orch_stall_minutes` | Stopped after `orch_idle_stop_minutes` |
+
+The task of an agent is the `T<n>` in its name, else the `T<n>` of its worktree path (`.worktrees/T<n>`). Its
+status is the `status:` line of the frontmatter of `.orch/tasks/T<n>.md`, read once per tick. An agent with no
+task has the idle rule alone. A task file that cannot be read keeps the last status, and an agent list that cannot
+be read keeps the last verdict: neither raises an alarm.
+
+Each alarm is raised once per agent and kind (stall, dead, stopped), and cleared when the agent moves again.
+`/clear` and `/resume` start the watchdog over. With `orch_enabled` or `orch_watchdog` off there is no timer and no
+alarm.
+
+### What it does (Claude Code)
+
+- **A stop** goes through the engine's `TaskStop` tool with the agent's id (the hooks API has no agent stop
+  operation). It shows a toast such as `⚠ stopped verify-T17: reported 12 min ago`. A stop that fails or is
+  refused is said once and not tried again. With `orch_idle_stop` off, the leftover is reported once instead.
+- **A death** shows a toast and the `⚠ 1 dead` segment under the prompt. It writes a `deadNote` into the agent's
+  record (`no SubagentStop record · last: <tool> <argument head>`), so SendMessage still reaches it by id or name.
+  At the orchestrator's next turn, one line rides along as context, once:
+  `watchdog: impl-T17 died (no stop record, last call Bash tests/smoke.sh 18 min ago); resume it with SendMessage or spawn a fresh agent on task/T17-…`.
+- **A stall** shows a toast, the `⚠ 1 stalled` segment and one line at the next turn:
+  `watchdog: impl-T19 idle 16 min, last call Edit …; ping it or stop it`. Nothing else happens.
+- The segment is red and hidden while nothing is wrong. A press opens the tools pane on its Agents tab, where each
+  agent row carries the watchdog's verdict: `⚠ stalled 16m`, `✝ dead`, `· idle 4m` or `· stopped` (a stopped agent is out of the live view, `a` shows it).
+- `/junkd:orch watchdog` runs a tick now, prints the verdict table (agent, role, status, idle, verdict) to the
+  transcript and shows the counts as a toast. `/junkd:orch watchdog off` and `on` flip `orch_watchdog`.
+
+Every stop, death, stall and reported leftover is also one JSON line `{t, agent, kind, note}` in the watchdog log:
+
+```
+${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/orch/watchdog/<session id>.log
+```
+
+### The other hosts: `bin/orch-watch`
+
+```
+orch-watch [--once] [--all] [--interval S] [--idle-minutes N] [--no-stop] [--session ID]
+```
+
+It reads the stop records of a session (`junkd/orch/_agents/<session>/*.json` as `scripts/orch-agent-stop.sh`
+writes them; the newest session folder of this project unless `--session` names one). It finds the live agents in
+the process list: `claude`, `codex` and `kimi` processes whose working directory (`lsof`, else `pwdx`, else `/proc`)
+is a task worktree of this project (below the project root: `orch-state root` without its `/.worktrees/...` tail). A
+process whose directory cannot be read is listed by name only. It prints one table, agent, role, status, idle and
+verdict, by the rules above.
+
+The records hold no project, so a session belongs to the project whose folder in `projects/` holds its transcript
+(`<session>.jsonl`): this project's folder or one of its worktrees'; a session with no transcript found counts as this
+project's. By default the table has the live agents of this project only (status `idle`, `running`, `alive`), the
+ones marked `stop, report only` included: on these hosts the table is the only place that shows which live agents
+need a manual stop. A last line counts the finished ones (`done`, `gone` rows) and the live agents of other
+projects (`5 finished · 2 other projects`). A process in a task worktree belongs to the task's implementer record
+when it has one, not to a newer reviewer record of the same task (a fix round). `--all` lists everything: the
+finished agents, the live agents of other projects
+and the newest session of any project (no footer count). `--active`, the old name of the default, is still
+accepted. `--once` prints it and exits 0; otherwise it prints one every
+`--interval` seconds (1–3600, default 60) until Ctrl-C. `--idle-minutes` defaults to the `orch_idle_stop_minutes`
+row of `settings.json`, else 10. Without `jq` it says so and exits 0.
+
+| Host | Watches with | Stops idle leftovers |
+|---|---|---|
+| Claude Code | the hooks module (and `bin/orch-watch` in a headless run) | Yes, through `TaskStop`, while `orch_idle_stop` is on |
+| Codex, Kimi Code, OpenCode | `bin/orch-watch` (the `orch` skill's `./bin/orch-watch`) | No: the host has no agent stop command, so the table only reports (`stop, report only`) |
+
+`--no-stop` says the same on any host. On Claude Code the plugin root's `bin/orch-watch` is the same script.
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `orch_watchdog` | boolean | `true` | The whole watchdog. Off: no timer, no alarms, no segment; `/junkd:orch watchdog` says it is off |
+| `orch_idle_stop` | boolean | `true` | Stop the idle leftovers the rules above name. Off: report them only (a toast and a log line, once) |
+| `orch_idle_stop_minutes` | number | `10` | Idle minutes before a finished agent with no task in progress is stopped. Clamped to 1–120 |
+| `orch_stall_minutes` | number | `15` | Minutes without a tool call before a running agent is stalled; a reviewer gets 5 more. Clamped to 1–120 |
+
+The four rows are in the orch pane (`/junkd:orch panel`) and in `/config` (`junkd.orch_watchdog`, …). A switch
+takes `true`, `'true'` or `'on'` as on. A minutes value is rounded and clamped in the module, and a value that is
+no number is refused; the manifest keeps the rows to their type and default.
+
+## direction
+
+`/junkd:direction [<spec>…] [--since <ref>] [--head <ref>]` scores the code against the project's requirement
+documents: the files of the `specs:` key in `.orch/config.md` (`/junkd:orch-init` proposes it from `PRD*`, `SPEC*`,
+`specs/`, `docs/ARCHITECTURE*` and `docs/PLAN*`). With no `specs:` key it says so in one line and stops.
+
+One read-only agent per spec file (on Claude Code an `Explore` agent on `model: sonnet`, never `junkd:implementer`)
+gets the file, the repo root, `git log --oneline <since>..<head>` and the `done` tasks of the range. It returns one
+row per requirement (heading or numbered item) with the sentence verbatim, a verdict, the evidence (`path:line`, a
+test name or a task id) and one line of reasoning:
+
+| Verdict | Means |
+|---|---|
+| `MET` | The code does what the sentence says, with evidence |
+| `PARTIAL` | Part of it holds; the reasoning names the rest |
+| `MISSING` | Nothing in the code does it |
+| `CONTRADICTED` | The code does the opposite |
+| `UNVERIFIABLE` | Prose with no checkable claim, never "did not look" |
+
+One more agent reads `git diff --stat <since>..<head>` and the done tasks for **undocumented work**: changes no spec
+row claims. The report lands in `.orch/direction/<YYYY-MM-DD>-<short-sha>.md`: a scorecard per spec (counts per
+verdict, MET over the rows that are not `UNVERIFIABLE`), the merged table, the undocumented-work table, and a
+Decisions list with one checkbox per `MISSING`, `CONTRADICTED` or undocumented row: change code or update spec.
+Nothing else is written. A confirmed "change code" becomes an `orch-state new` task (`DIR-<n>`) whose criterion
+quotes the spec sentence verbatim; "update spec" is left to you; nothing happens without your confirmation. The last
+line of the reply is `DIRECTION: <met>/<total> MET — <n> decisions in <path>`.
+
+`--head` is the code under review (default `HEAD`), read through `git show`/`git grep` when it is not checked out.
+`--since` defaults to the head of the newest report when it is an ancestor of `--head`, else to the run's base
+commit (outside a run, the merge-base with `default_base`); the report names both ends. Hosts: Claude Code
+(`/junkd:direction`), Codex (`$direction`), Kimi Code (`/skill:direction`) and OpenCode (`/direction`).
+
+## lessons
+
+orch's lessons are a queue that empties itself: every lesson has a promotion target, a run cannot end (or start)
+while one is pending, and a promotion turns it into something executable and deletes it.
+
+### The three stores
+
+| Store | File | Lives |
+|---|---|---|
+| local | `<tasks_dir>/_lessons.md` (`.orch/tasks/_lessons.md`) | This checkout's orch store; every lesson is born here. `.orch/` never enters git |
+| repo | `<project root>/lessons.md` | Committed and pushed with the project (the team, other machines); made on the first promotion to it, committed on the task branch of the task that produced it |
+| global | `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/lessons.md` | One per machine, read by every repo |
+
+Promotion goes one way, local → repo → global. One block per lesson, in all three files:
+
+```
+## L<n> (<YYYY-MM-DD>) scope: local|repo|global · stack: <tags> · to: test|smoke|check|role|repo|global|drop · from: T<id>
+<2–3 sentences: what failed, why, what check would have caught it>
+```
+
+`L<n>` is unique per file (the next free number). `stack` is one or more of `node`, `python`, `shell`, `tsx-mods`,
+`go`, `rust`, `any`, comma separated. A repo's own stack is read from its files: `package.json` → node,
+`pyproject.toml` or `requirements*.txt` → python, a `bin/*` file with a bash shebang → shell, `*.tsx` under a
+`hooks/` folder → tsx-mods, `go.mod` → go, `Cargo.toml` → rust; nothing → `any`. A `## ` heading of another shape (the
+old diary's `## T8 (…)`) is no lesson. There is no entry limit: relevance comes from the stack tag.
+
+A lesson is **pending** unless its `to` is a store it has reached (`to: repo` in the repo or global store, `to:
+global` in the global store). A lesson with no `to`, a handed test, and every other target are pending.
+
+### The signal rule and blocking
+
+A lesson is written only on a signal: a fix round, a surviving mutant, a PM-REVIEW that found a bug, a dead or stalled
+agent (the [watchdog](#watchdog)), a verify FAIL. A clean round-0 PASS writes nothing. At a task's resolve the
+orchestrator adds it with a `to`, and promotes what needs no consent at once: a `test` or `smoke` lesson goes to the
+implementer of the same task as a fix round and is closed once the test is on the branch. Everything else stays
+pending.
+
+The run does not print its `BACKLOG:` line while `orch-state lesson pending` exits 1: the orchestrator resolves each
+pending lesson with you (promote, drop or move up), and a new `/junkd:orch` with lessons pending starts with the same
+dialog before it selects a task. There is no "later". The hooks module cannot stop the model from printing text, so
+the enforcement is the spec (`commands/orch.md` §7 and §8), the context line below, and `pending`'s exit code.
+
+### `bin/orch-state lesson` (every host)
+
+| Command | Does |
+|---|---|
+| `lesson add [--scope local\|repo\|global] [--stack <tags>] --to <target> --from T<id> "<text>"` | Appends the block (scope `local`, stack the repo's by default) and prints its id, `local:L4` |
+| `lesson list [--pending] [--scope <s>] [--json]` | The table id · scope · stack · to · from · first sentence; `--json` for scripts |
+| `lesson promote <id> [--to <target>] [--yes]` | To its `to` (or `--to`): `repo`/`global` moves it one store up (renumbered, `scope` rewritten) and deletes it below; `check` appends the text to `standing_checks_extra` in `.orch/config.md` only with `--yes` (without it: the proposed line, exit 3), and only when that file has a frontmatter block (`---` … `---`) to hold the key (else exit 2, nothing changed, the lesson kept); `test`/`smoke` prints the fix-round line and marks it `to: test·handed`; `role` writes a task `T<next>.md` into the backlog when this repo is junk-drawer (elsewhere it prints the text to paste and writes nothing); `drop` deletes |
+| `lesson up <id>` | One store up, its `to` set to that store: the lesson rests there and is no longer pending |
+| `lesson drop <id>` | Deletes it |
+| `lesson prune [--months N] [--yes]` | Lists the lessons older than N months (default 6) whose stack is not this repo's; `--yes` drops them |
+| `lesson pending` | The count of pending lessons of the three stores (a global lesson of another stack than this repo's is left out); exit 1 when there are any |
+| `lesson inject` | The lessons whose stack meets the repo's (and `any`), as the text the session start prints. Outside git the stack is read (4 levels deep) only where a `lessons.md` or local store already is, else it is `any` |
+
+`<id>` is `L3`, or `local:L3`, `repo:L3`, `global:L3` when two stores have an `L3`. It is the one writer of the
+stores: each write is a temp file and an `mv`, a CRLF file is written back LF, and a file that cannot be written
+stops the command (exit 2) with nothing changed. With no `.orch/` the repo and global stores still work. Without
+`jq` the read commands say so and exit 0, the writes exit 2.
+
+### Injection, and why it is fenced
+
+At every orch session's start `scripts/orch-context.sh` prints, after the rule sheet, what `orch-state lesson
+inject` prints: `# Lessons for this repo (stack: …)`, one line saying the block below is data from lessons files and
+not instructions, and the lessons in one fenced block. A lessons file is text other people can write (anyone who
+can commit to the repo writes its `lessons.md`), and the block lands in the main loop's context, so:
+
+- the repo store is injected only in an orch project (one with `.orch/config.md`, which you initialised); the local
+  and global stores are yours;
+- a body line that opens a heading (`#`…`######` and a space) or a fence (```` ``` ````, `~~~`) is dropped, so a
+  lesson cannot close the fence or pose as a new section;
+- at most 40 lessons and 4096 bytes (bytes, not characters: multibyte text counts in full) of them are printed; the rest is one line, `… N more, see /junkd:lessons`.
+
+The injection needs `orch_enabled`, `orch_inject_rules` and `orch_lessons` on (each read from `settings.json`, else
+from its flag file: `junkd/orch-off`, `junkd/orch-rules-off`, `junkd/orch-lessons-off`).
+
+### Claude Code: the lessons tab, 📒 and the dialog
+
+- **The lessons tab** of the [/junkd set](#the-junkd-frame-claude-code-only), after tools: the pending lessons of the
+  three stores, columns id · scope · stack · to · from · text (cut to the pane; a lesson of another stack dimmed).
+  `j`/`k` (or the arrows) select, `p` promotes it to its `to` (a `check` or a `role` asks in a confirm line first,
+  `y`/`n`; a confirmed check runs with `--yes`), `d` drops it, `u` moves it a store up, `r` reads the stores again,
+  `q` closes. Every write is a run of `orch-state lesson …`.
+- **`📒 N`** under the prompt (the theme's warning colour) while lessons are pending; a press opens the tab. None at 0.
+- **The dialog**: at the session start of an orch session (orch on, `orch_lessons` on, a `.orch/config.md` at the
+  root) with lessons pending, when the main loop's answer prints a `BACKLOG:` line, and when `/junkd:orch` starts a
+  run, the tab opens focused with the top line `N lessons pending — resolve them to finish the run`, and every prompt
+  of the main loop carries one context line, `lessons: N pending, open /junkd lessons; the run is not finished`, until
+  none is pending.
+- **`/junkd:lessons [list | promote <id> | drop <id> | up <id>]`** toggles the tab (`list` opens it) or runs the one
+  action and answers with the CLI's line.
+
+The stores are read again at session start, at the end of each main-loop turn, after each write and on `r`.
+
+| Host | Lessons with |
+|---|---|
+| Claude Code | The hooks module (tab, 📒, dialog, context line) and `orch-state lesson` |
+| Codex, Kimi Code, OpenCode | The `lessons` skill (`$lessons`, `/skill:lessons`, `/lessons`), which runs `./bin/orch-state lesson …`; the orchestrator asks with plain questions |
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `orch_lessons` | boolean | `true` | The lessons loop. Off: no injection, no tab, no 📒, no dialog, no context line, no blocking and no `lesson add` by the spec; the files are left as they are (the flag file `junkd/orch-lessons-off` while off) |
+
+The row is in the /junkd pane (orch's main rows), the orch pane and `/config` (`junkd.orch_lessons`); `true`,
+`'true'` and `'on'` are on.
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
-  `tool.call`, the prompt hint line); it composes the feature files below.
+  `tool.call`, `command.run`, the prompt hint line); it composes the feature files below.
 - `hooks/settings.ts` — the mirror of the manifest's `userConfig` rows (checked against it by `tests/smoke.sh`);
   `hooks/dispatch.ts` from a row or a pane to its feature; `hooks/feature.ts` the shapes they share.
 - `hooks/core.ts` — the core rows: `core_output_style` and its flag file, `core_cache_check_sessions`.
@@ -847,15 +1614,33 @@ run the shell hook and `tldr-flag` as before (OpenCode only `tldr-flag`), and `t
 - `hooks/handoff.tsx`, `handoff-lib.ts`, `handoff-ui.tsx`, `handoff-views.tsx` — handoff: the auto loop, the 🪃
   segment, its pane.
 - `hooks/orch.tsx`, `orch-lib.ts`, `orch-views.tsx` — orch: the main-loop guard, its pane.
+- `hooks/watchdog.ts`, `watchdog.tsx` — the agent watchdog: the rules and the tick, `$`-free; the timer, the stops,
+  the ⚠ segment, the log and the line at the next turn.
 - `hooks/tldr.tsx` — tldr: the sentences default and the flag files `tldr-on`, `tldr-off`.
+- `hooks/ctx.ts` — ctx: the rows, their files `ctx-limit-*`, `/junkd:ctx-limit`, the move of the old files.
+- `hooks/statusline.tsx`, `statusline-views.tsx` — statusline: the rows, `statusline-setup` on|off, the refresh at
+  session start, `/junkd:statusline`, its pane.
+- `hooks/tools-pane.tsx`, `tools.ts`, `tools-views.tsx` — tools: the pane, its poll and the settings group; the
+  counters, the worktree parser and the agents tree; the four tabs.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
+- `hooks/lessons.tsx`, `lessons.ts`, `lessons-views.tsx` — the lessons loop: the tab, 📒, the dialog and its context
+  line, `/junkd:lessons`; the reader of the three stores, the stack filter and the pending rule; the tab's drawing.
+- `hooks/dashboard.tsx`, `dashboard.ts` — the orch dashboard: `/junkd:dashboard`, the phases, `status.js`; the task
+  store's parsers and the status builder.
+- `skills/orch/dashboard/` — the dashboard page (`orch-dashboard.html`), its timeline scale (`scale.js`) and the
+  demo data with the data contract (`status.sample.js`); `skills/orch/bin/orch-status` its shell writer.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
-  `tldr`); the real helpers live inside their skill (`skills/handoff/bin`, `skills/orch/bin`,
-  `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/junkd/scripts/setup.sh`,
-  `skills/junkd/scripts/cache-check.sh`).
+  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `explain`, `dashboard`, `direction`, `lessons`); the real helpers live inside their skill (`skills/handoff/bin`,
+  `skills/orch/bin` (with `orch-watch`, and `orch-state lesson`), `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
+  (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
+  `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a
+  real copy in each skill that sources it (handoff, handon, tldr, ctx-limit, ctx-tokens).
 - `bin/`, `scripts/`, `agents/` at the plugin root — links: `bin -> skills/junkd/bin` and `scripts ->
   skills/junkd/scripts` (each entry a link to its skill's real file), `agents -> skills/orch/roles`, as the
   layout invariant of `tests/smoke.sh` asks.
 - `output-styles/STE.md` — the `junkd:STE` output style. `docs/orch-guide.md` (and `.html`) — orch's long guide.
 - Tests: `hooks/*.test.ts(x)` (`claude plugin test plugins/junkd`), `tests/junkd.sh`, `tests/orch.sh`,
-  `tests/tldr.sh`, `tests/cache-check.sh`, all run by `tests/smoke.sh`.
+  `tests/tldr.sh`, `tests/cache-check.sh`, `tests/ctx.sh`, `tests/statusline.sh` (its golden line in
+  `tests/statusline/`), `tests/orch-watch.sh`, all run by `tests/smoke.sh`; `tests/dashboard.sh` (the page's scale
+  under node and its file:// shape) and `tests/orch-status.sh` (the shell writer over fixture task stores);
+  `tests/lessons.sh` (`orch-state lesson` and the lessons of `scripts/orch-context.sh` over fixture stores).

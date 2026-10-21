@@ -35,7 +35,7 @@ an answer to each.
 | The failure mode | What goes wrong | orch's answer |
 |---|---|---|
 | **Context drift** | One agent implements, verifies, reads build logs, drives the browser, and reflects — all in one context. Heavy output (installs, boot logs, test runs, screenshots) fills the window, and quality degrades task after task. | The **orchestrator never codes or verifies itself.** Implementation goes to an `implementer`; the whole verification goes to a `verify-coordinator`. The noisy output lives in *their* contexts. The orchestrator only ever sees a short plan in and a compact verdict out — so `all` can drain many more tasks before its own window fills. |
-| **No memory** | The loop repeats the same mistake on task 7 that it made on task 2. Nothing learned in one task informs the next. | A **retro step** appends a lesson to `_lessons.md` at every resolve. Those lessons are fed back into the next task's plan and the next verification. A pattern that recurs across ≥2 tasks is proposed for promotion into a permanent standing check. |
+| **No memory** | The loop repeats the same mistake on task 7 that it made on task 2. Nothing learned in one task informs the next. | A **retro step** adds a lesson to `_lessons.md` when a resolve had a signal (a fix round, a surviving mutant, a verify FAIL). Those lessons are fed back into the next task's plan and the next verification. A pattern that recurs across ≥2 tasks is proposed for promotion into a permanent standing check. |
 | **Tokens burned on unreachable goals** | "Make it work" isn't checkable, so the agent grinds without ever knowing whether it's done — or declares victory on vibes. | Every task's goal is a set of **verifiable acceptance criteria, frozen before any code is written.** A criterion that no tool can check isn't a criterion. A description too thin to derive one goes `blocked` with a question — never implemented on a guess. |
 | **Happy-path-only verification** | The gate improvises checks from a *positive* acceptance list, on data that happens to cooperate — so the empty / error / edge branches never get hit, and the task bounces later. | Verification derives its cases from the **diff, not the feature description** (`test-planner`), and runs a set of **standing checks** — real-data provenance, malformed-input handling, FE-actually-calls-the-API, E2E-through-the-UI — that hit exactly the branches a lucky run skips. **No PASS without tool evidence.** |
 
@@ -69,9 +69,9 @@ Two more principles hold the whole thing together:
                               │
                     ┌─────────▼──────────┐
                     │  4. VERIFY (gate)  │  verify-coordinator:
-                    │                    │    test-planner → matrix from the DIFF
+                    │                    │    matrix from the DIFF (test-planner if critical)
                     │                    │    ui-reviewer   → browser, screenshot/criterion
-                    │                    │    test-reviewer → test-quality audit
+                    │                    │    test-quality audit (≥ 5 own mutants)
                     │                    │    + inline curl/build/test + standing checks
                     └─────────┬──────────┘   → ONE merged verdict + FAILING: list
                               │
@@ -81,7 +81,7 @@ Two more principles hold the whole thing together:
                   └───────────┬───────────┘        final round FRESH impl. + diff + why
                               │                     still failing after R → blocked + escalate
                     ┌─────────▼──────────┐
-                    │  6. RETRO          │  append lesson → _lessons.md
+                    │  6. RETRO          │  lesson add on a signal → _lessons.md
                     └─────────┬──────────┘
                               │
                     ┌─────────▼──────────┐
@@ -123,7 +123,7 @@ Step by step, as the shipped `commands/orch.md` runs it:
    - **Still failing after round R** → the task is `blocked`, the escalation reason is appended,
      and the loop moves on.
 
-6. **Retro.** Every resolve appends a lesson to `_lessons.md` — see [§5](#5-learning--the-retro--_lessonsmd).
+6. **Retro.** A resolve with a signal adds a lesson to `_lessons.md` — see [§5](#5-learning--the-retro--_lessonsmd).
 
 7. **Draft PR + iterate.** In `chain`/`all` the next task branches off the one just finished; in
    `batch` verdicts are consumed as coordinators finish. At end of run `orch-sync push` reflects
@@ -138,10 +138,9 @@ specific property the orchestrator then trusts without re-checking.
 |---|---|---|
 | **`implementer`** | Builds exactly one task on its own branch in its own worktree. | Scoped changes only (no architectural decisions, no adjacent "improvements"); authors tests for its change; runs the real build/lint/test before reporting; never touches the base branch. |
 | **`lead-implementer`** | Builds one *big* task by fanning out to parallel sub-implementers. | Freezes the shared contract (types/DTOs/signatures) **first**, so no slice guesses another's interface; slices are **file-disjoint**; merges them back and runs the final gate; **falls back to flat** if the task can't be cut cleanly. |
-| **`verify-coordinator`** | Owns the entire verification of one task. | Builds and tears down the verify env; spawns the three reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. **No PASS without tool evidence.** Keeps all the heavy output out of the orchestrator's context. |
-| **`test-planner`** | Reads the **diff** and derives the mandatory test matrix. | One binding row per changed branch / guard / validation / fallback / boundary — happy **and** edge — each with a *real* induction recipe and a preferred layer (`e2e`/`web`/`api`). A `?state=`-style preview is never accepted as proof of an error/edge row. |
+| **`verify-coordinator`** | Owns the entire verification of one task. | Builds and tears down the verify env; audits the shipped tests itself and spawns the reviewers below; runs the inline + standing checks; writes the verdict table + evidence into the task file; returns one compact verdict. **No PASS without tool evidence.** Keeps all the heavy output out of the orchestrator's context. |
+| **`test-planner`** | Reads the **diff** and derives the mandatory test matrix; spawned only for a `critical: true` task or on request (the coordinator derives the matrix itself otherwise). | One binding row per changed branch / guard / validation / fallback / boundary — happy **and** edge — each with a *real* induction recipe and a preferred layer (`e2e`/`web`/`api`). A `?state=`-style preview is never accepted as proof of an error/edge row. |
 | **`ui-reviewer`** | Verifies the UI/browser criteria by driving the real browser. | One screenshot per criterion via `agent-browser`; every state (default/empty/loading/error/no-permission); data checked against the real account, not a mock; PASS/FAIL/PM-REVIEW — never on the implementer's word. |
-| **`test-reviewer`** | Audits the tests that ship with the change. | Judges *quality* (real assertions, coverage of the change, no over-mocking, modifications truly updated) — not just that the suite is green. Returns `OK` or `GAPS`; `GAPS` is a FAIL. |
 
 A note on **where evidence lives**: the `verify-coordinator` and `ui-reviewer` deliberately run in
 the orchestrator's checkout, **not** the throwaway verify worktree, so the screenshots and the
@@ -184,13 +183,53 @@ exist.
 
 | Standing check | Gated on | What it proves |
 |---|---|---|
-| **Green scoped suite + change covered**, plus an independent **test-quality audit** (`test-reviewer` `GAPS` = FAIL) when tests were added/touched | `tests` declared | The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions. |
+| **Green scoped suite + change covered**, plus the coordinator's own **test-quality audit** (real assertions, modified behaviour re-pinned, ≥ 5 own mutants from the diff's branches; `GAPS` = FAIL) when tests were added/touched | `tests` declared | The change is tested, and the tests are worth keeping — not tautologies, not over-mocked, and modifications really updated the assertions. |
 | **Malformed body → clean 4xx naming the field, never a 500** | `api` declared | Every touched write-endpoint validates its input. Happy-path-only is not a pass. |
 | **Real-data provenance** — a fresh account created *this run* with **random** values; rendered == returned == stored | `web` + `api` declared | The screen shows *this account's* data from the live API — never a mock/demo seed or a `?preview=` switch a hardcoded value could pass. |
 | **FE actually calls the live API** on data-backed routes, verified **E2E through the UI** | `web` + `api` declared | The frontend really consumes the backend end to end — not static content with a silent mock behind it. |
 | **`ui-reviewer` drives the real browser** — a screenshot per criterion, every state | `web` declared | Screen/flow/state criteria are proven visually, at the project's target viewport, against the design tokens — not taken on the implementer's word. |
 | **Every path from `test-planner`'s matrix** — happy + each edge (empty/loading/error/no-permission/boundary), each induced for real | always (scaled to declared layers) | The branches a lucky random run skips are actually hit. A state that genuinely can't be reached this run is a visible FAIL/PM-REVIEW row with a reason — never a silently missing line. |
+| **Security review of the diff** — one fresh reviewer runs the built-in `security-review` skill; each finding at or above `severity` is a FAIL row | `security` declared | The change adds no injection, XSS, SSRF, IDOR, auth bypass, leaked secret, unsafe deserialization or path traversal at the declared severity. See *Security* below. |
 | **Everything in `standing_checks_extra`** | project config | Project-specific lessons already promoted to permanent checks (see [§5](#5-learning--the-retro--_lessonsmd)). |
+
+### Break rows
+
+The matrix asks whether each path works; it never asks what happens when two of them happen at
+once, in the wrong order, twice, or half way. So after the matrix a **Break**
+section from the same diff, over six kinds: **concurrency** (two of the same request at once against
+one resource: one wins, no double effect, no 500), **ordering** (steps out of order or repeated: a
+clean 4xx/409, state unchanged), **replay** (the identical request again after success: idempotent
+or a named conflict), **interrupted flow** (a kill between two writes of one operation: no
+half-written state on restart), **resource exhaustion** (the queue, slot, quota or disk full: a named
+error, never a hang) and **privilege edge** (the other principal who owns something tries the
+operation: denied). A standard task gets ONE row, the cheapest way to break the change. A task with
+`critical: true` in its frontmatter gets a row per kind, and a kind that does not apply is written
+`n/a: <why>`, never dropped; the section ends with `BREAK <id>: <n> rows (<critical|standard>)`. The
+freeze ladder sets `critical: true` when the task names auth, money, deletion, migration,
+concurrency or a shared resource (port, lock, file, queue), or when you say so, and an interactive
+run shows it with the criteria for approval. `verify-coordinator` executes every Break row for real
+(two parallel `curl`s, a repeated step, a kill between writes), never by reading the code; a row it
+cannot induce this run is a `PM-REVIEW` with the reason.
+
+### Security
+
+Security is a standing check of the verify leg, not a new agent and not the implementer's own business.
+With `capabilities.security: { severity: high }` in the config (`/junkd:orch-init` proposes it when the
+repo has a web app, an api, or a file named like `auth|login|session|token|secret|upload|exec|spawn|sql|query`),
+the `verify-coordinator` spawns one fresh reviewer in step 0, beside the matrix work: Sonnet, or Opus when
+the diff touches such a file. It runs Claude Code's built-in `security-review` skill over
+`git diff <base>...<branch>` in the verify worktree, on the changed files and what they call. Each
+finding at or above `severity` is its own `FAIL` row with `file:line` and the class; lower findings are
+notes under the table; no finding is one `PASS` row `security: no findings ≥ high`; a reviewer that
+cannot run (no such skill on the host) is one `PM-REVIEW` row with the reason. The check runs on every
+round, because a fix round changes the diff. Without the block there is no security row at all.
+
+The orchestrator session itself runs with `ENABLE_STOP_REVIEW=0`, set by you where the session starts
+(`ENABLE_STOP_REVIEW=0 claude`), never by a hook. The variable belongs to the `security-guidance` plugin
+and turns off only its Stop-time diff review: in a multi-agent run that review fires in whichever agent
+stops, on a diff other agents move, and its findings stay in that agent where nothing blocks on them.
+Its commit/push review stays on, because it runs in the implementer at the moment of the commit, on that
+commit alone, and is a cheap early warning. The verdict that gates `done` is the standing check above.
 
 ---
 
@@ -198,9 +237,10 @@ exist.
 
 `orch` learns *within a run* and, with your approval, *across runs*.
 
-- **The retro step.** At **every** task resolve — especially after FAIL rounds or a `blocked` — the
-  orchestrator appends 2–3 sentences to `<tasks_dir>/_lessons.md`: *what failed, why, and what
-  check would have caught it.*
+- **The retro step.** At a task resolve that had a signal — a fix round, a surviving mutant, a
+  PM-REVIEW that found a bug, a dead or stalled agent, a verify FAIL — the orchestrator adds a lesson
+  with `orch-state lesson add`: 2–3 sentences, *what failed, why, and what check would have caught
+  it*, and a promotion target. A clean round-0 PASS writes nothing.
 - **Fed forward immediately.** Those lessons are handed into the next task's plan (step 3) and into
   the next `verify-coordinator` spawn (step 4). So a mistake made on task 2 informs task 3 in the
   same run.
@@ -208,6 +248,27 @@ exist.
   orchestrator proposes promoting it into `standing_checks_extra` in the config — where it becomes a
   permanent, always-on check for every future task. This **asks you first; the loop never edits the
   config silently.**
+- **Rules need checks.** A rule written in `CLAUDE.md` ("never", "always", "must", "only", a
+  "Binding rules" section) holds only on the prompt until a tool checks it. `/junkd:orch-init` scans
+  every `CLAUDE.md`/`AGENTS.md` and proposes, per rule, a `standing_checks_extra` row with a concrete
+  recipe (grep / test / curl), a pointer to the test that already pins it, or "stays prose". You confirm
+  each row; re-runs propose only new rules. The starter `TEST-POLICY.md` it offers makes this a
+  standing rule: a task that adds a binding rule adds its check in the same branch. The retro
+  shortcut: a lesson that names a rule already in `CLAUDE.md` is proposed for promotion at once
+  ("rule exists in CLAUDE.md §X, no check"), without waiting for a second task.
+
+**Lessons.** The lessons are a queue that empties itself, not a diary. They live in three stores,
+promoted one way: **local** `<tasks_dir>/_lessons.md` (born there, never in git), **repo**
+`lessons.md` at the project root (committed with the project, for the team and other machines) and
+**global** `~/.claude/junkd/lessons.md` (one per machine, read by every repo). Each lesson carries a
+`stack:` tag (node, python, shell, tsx-mods, go, rust, any) and a `to:` target: `test` or `smoke` (the
+implementer of the same task adds the check in a fix round), `check` (a `standing_checks_extra` row,
+after you say yes), `role` (a task for the agents' role files in junk-drawer), `repo` or `global`
+(moved up a store), or `drop`. Every orch session starts with the lessons whose stack meets the
+repo's, as data in a fenced block. A run does not end — no `BACKLOG:` line — while a lesson is
+pending: the orchestrator resolves each with you (on Claude Code in the lessons tab of the junkd pane,
+which opens by itself; the `📒 N` segment under the prompt counts them), and a new run starts with
+the same dialog. The `orch_lessons` setting switches the whole loop off; the files are then left alone.
 
 This is the missing feedback loop in naive agent runs: without it, the same class of bug gets
 re-litigated task after task.
@@ -263,6 +324,27 @@ BACKLOG: BLOCKED   — remaining tasks need a human: <ids + one-line reasons>
 `blocked` after the round cap, or a `deps` entry that isn't a known task id (a human prerequisite).
 A `/loop` driver stops on both `DRAINED` and `BLOCKED`.
 
+### The direction check: the sum of the tasks against the specs
+
+Each task passes its own frozen criteria, and nothing in the loop compares the sum of the tasks with the
+project's requirement documents. A long `all` run can drift: a task minted from a wrong recon, a `derived`
+criterion nobody read. `/junkd:direction` is that comparison. It reads the spec files of the config's `specs:`
+key, sends one read-only agent per file (on Claude Code an `Explore` agent on `model: sonnet`), and gets back one
+row per requirement: `MET`, `PARTIAL`, `MISSING`, `CONTRADICTED` or `UNVERIFIABLE` (prose with no checkable claim,
+never "did not look"), with evidence (`path:line`, a test, a task id). One more agent lists the undocumented work:
+changes in `git diff --stat <since>..<head>` that no spec row claims.
+
+The report, `.orch/direction/<YYYY-MM-DD>-<short-sha>.md`, holds a scorecard per spec, the merged table, the
+undocumented-work table and a Decisions list: one checkbox per `MISSING`, `CONTRADICTED` or undocumented row, with
+the two options "change code" and "update spec". The human decides which side moves; a confirmed "change code"
+becomes an `orch-state new` task whose criterion quotes the spec sentence verbatim. The reply ends with
+`DIRECTION: <met>/<total> MET — <n> decisions in <path>`.
+
+An `all` or `--single-pr` run whose config declares `specs:` runs the check at the end, before the PR step and the
+push, and quotes the `DIRECTION:` line in its summary above the `BACKLOG:` line; the decisions stay open for the
+human. `batch`, `chain` and single-task runs run it only when asked. `--since` defaults to the head of the newest
+report (when it is an ancestor), else to the run's base commit; the report names both ends.
+
 ---
 
 ## 7. Setup & usage walkthrough
@@ -316,6 +398,7 @@ deps: [TASK-120]        # this task is eligible only once every dep is done
 source: adhoc           # adhoc | github#45 | linear:ABC-12
 source_updated_at:      # stamped on pull; push compares it (drift guard)
 criteria_source: derived # verbatim | derived
+critical: false         # true: every break kind gets a Break row (set by the freeze ladder)
 ---
 ## Description
 <what the task is — describe the desired behaviour>
@@ -339,7 +422,7 @@ Evidence files land in `<tasks_dir>/<ID>.evidence/`.
 3. **Delegated.** A short plan + the current lessons go to an `implementer`, spawned in its own
    worktree on branch `task/adhoc-1-fix-login-redirect`, fed the dev-server and test commands from
    the config.
-4. **Verified.** `verify-coordinator` boots the app, has `test-planner` derive the matrix from the
+4. **Verified.** `verify-coordinator` boots the app, derives the matrix from the
    diff (including the *failed*-login and *already-logged-in* branches), has `ui-reviewer` drive the
    real browser through the redirect on a fresh random account, runs the standing checks, and
    returns a merged verdict.
@@ -377,7 +460,7 @@ error-prone steps that shouldn't be an LLM's job. Keeping them out of the model'
 frontmatter never drifts and ports never collide.
 
 - **`orch-state`** — the canonical task-store CRUD and the *only* writer of status:
-  `list` (id/status/deps table) · `set <id> <status>` · `reset-stale [--blocked]` (`in_progress`, with `--blocked` also `blocked` →
+  `list` (id/status/`!`/deps table; `!` marks a `critical: true` task) · `set <id> <status>` · `reset-stale [--blocked]` (`in_progress`, with `--blocked` also `blocked` →
   `todo`) · `new <id> [title]` (skeleton task file).
 - **`orch-worktree`** — per-task git worktrees under `.worktrees/` plus **stable port slots**
   (`port = capability port_base + slot`): `add <id> <branch> [base]` · `remove <id>` · `slot <id>`.
@@ -401,7 +484,9 @@ capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }              # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if no api
   tests: { api: "npm test" }   # use `root` for a repo-level suite; omit absent runners
+  security: { severity: high } # omit unless there is a web app, an api, or a security-named file
 standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
+specs: [PRD.md, specs/*.md]    # spec files /junkd:direction checks; omit when none
 github: { label: "orch" }      # github-issues backend only; drop otherwise
 ---
 Free-form project notes /junkd:orch should know: conventions, gotchas, where the visual spec lives,
@@ -416,7 +501,9 @@ calibration values that must never be guessed, etc.
 | `branch_prefix` | Per-task branch name = `<branch_prefix><id>-<slug>`. |
 | `capabilities.web` / `.api` | `run` (dev-server command), `port_base`, `health` path. **Omit the whole block if the layer doesn't exist** — its standing checks are then skipped. |
 | `capabilities.tests` | Test command map (`{ pkg: "cmd" }`); use `root` for a repo-level suite. |
+| `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row; a missing or other value is read as `high`, with a note under the table. Absent → no security check (see [§4](#4-standing-checks-gated-by-capabilities)). |
 | `standing_checks_extra` | Project-specific checks promoted from `_lessons.md` (starts empty). |
+| `specs` | Paths or globs of the requirement documents `/junkd:direction` scores the code against. `/junkd:orch-init` proposes them from `PRD*`, `SPEC*`, `specs/`, `docs/ARCHITECTURE*`, `docs/PLAN*` and writes no key when none exist; without it the direction check stops and an `all` run skips it. |
 | `github.label` | Only for the `github-issues` backend — the label to pull. |
 | *(prose below the frontmatter)* | Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed. |
 
