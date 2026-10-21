@@ -59,7 +59,7 @@ export type Watched = {
   status: Status // as listed, or as last listed when gone
   nested: boolean // spawned by another agent
   wasAlive: boolean // listed and not done at the previous tick
-  finished: boolean // done, or a stop record newer than its last move
+  finished: boolean // done, or a stop record newer than its last call start, spawn and resume
   finishedAt?: number
   inFlight: boolean // a tool call of its own is running
   lastEnd: number // when its last tool call ended, else when it started
@@ -139,6 +139,7 @@ export type Mem = {
   firstSeen: number
   moved: number // the newest call start or end, or the spawn, seen so far
   finishedAt?: number
+  resumed?: number // when it was last seen back from done or from the dead: a stop record older than this is an earlier run's
   cwd?: string
 }
 export type VerdictKind = 'running' | 'waiting' | 'call' | 'stall' | 'dead' | 'idle' | 'kept' | 'stop' | 'stopped' | 'done'
@@ -195,6 +196,7 @@ export function tick(prev: WatchState, snap: Snapshot, now: number): { state: Wa
     // Back from done or from the dead (a SendMessage resumed it): it moved.
     if (!m.listed || (m.status === 'done' && status !== 'done')) {
       m.moved = now
+      m.resumed = now
       m.finishedAt = undefined
       delete st.alarms[a.id]
     }
@@ -218,7 +220,7 @@ export function tick(prev: WatchState, snap: Snapshot, now: number): { state: Wa
       delete st.alarms[m.id]
     }
     const recordAt = snap.records[m.id]
-    const hasRecord = recordAt !== undefined && recordAt >= Math.max(call?.start ?? 0, snap.spawns[m.id]?.at ?? 0)
+    const hasRecord = recordAt !== undefined && recordAt >= Math.max(m.resumed ?? 0, call?.start ?? 0, snap.spawns[m.id]?.at ?? 0)
     const finished = m.status === 'done' || hasRecord
     if (finished && m.listed && m.finishedAt === undefined) m.finishedAt = hasRecord ? recordAt : now
     if (!m.listed && !wasAlive.has(m.id)) continue // gone before this tick: settled already

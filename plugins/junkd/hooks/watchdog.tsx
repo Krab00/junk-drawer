@@ -23,6 +23,8 @@ const reason = (err: unknown) => (err as Error)?.message ?? String(err)
 
 let timer: { cancel(): void } | null = null
 let ticking = false
+let gen = 0 // bumped by every reset: a tick that began before one drops its result
+const stopFailed = new Map<string, string>() // agent id -> why its last stop failed (said once, retried each tick)
 let calls: Record<string, Call> = Object.create(null)
 let spawns: Record<string, Spawn> = Object.create(null)
 let records: Record<string, number> = Object.create(null) // agent id -> when this module saw its SubagentStop
@@ -36,6 +38,8 @@ export const settingsNow = (): WatchSettings => ({
 })
 
 function resetWatch() {
+  gen++
+  stopFailed.clear()
   calls = Object.create(null)
   spawns = Object.create(null)
   records = Object.create(null)
@@ -93,6 +97,7 @@ function syncTimer($: $) {
 async function runTick($: $): Promise<void> {
   if (ticking || !settingsNow().on) return
   ticking = true
+  const g = gen
   try {
     const listed = await $.agent.list().catch(() => undefined)
     const now = await $.clock.now()
@@ -106,6 +111,7 @@ async function runTick($: $): Promise<void> {
       branches: listed ? await deathBranches($, prev, listed) : {},
       settings: settingsNow(),
     }
+    if (g !== gen) return // /clear or the switch went off meanwhile: this tick's state is stale
     const { state, events } = tick(prev, snap, now)
     W.state = state
     for (const ev of events) await act($, ev, state, now)
@@ -206,9 +212,17 @@ async function act($: $, ev: WatchEvent, state: WatchState, now: number): Promis
   if (ev.kind === 'idle-stopped') {
     const stopped = await stopAgent($, ev.id, state)
     if (stopped === true) {
+      stopFailed.delete(ev.id)
       $.ui.toast(`⚠ stopped ${ev.agent}: ${ev.note}`)
       return logEvent($, now, ev.agent, 'idle-stopped', ev.note)
     }
+    // Not stopped: no alarm and no "stopped" verdict, so the next tick raises it again and retries.
+    state.alarms[ev.id] = (state.alarms[ev.id] ?? []).filter(k => k !== 'idle-stopped')
+    const v = state.verdicts[ev.id]
+    if (v?.kind === 'stopped') state.verdicts[ev.id] = { ...v, kind: 'stop' }
+    // ponytail: the toast and the log line come once per reason, not every 30 s retry
+    if (stopFailed.get(ev.id) === stopped) return
+    stopFailed.set(ev.id, stopped)
     $.ui.toast(`⚠ could not stop ${ev.agent}: ${stopped}`)
     return logEvent($, now, ev.agent, 'stop-failed', stopped)
   }
@@ -327,7 +341,10 @@ export async function watchdogStart($: $): Promise<void> {
 // A write to an orch row (orch.tsx's apply): the timer follows orch_enabled and orch_watchdog; off drops the alarms.
 export async function watchdogApplied($: $): Promise<void> {
   syncTimer($)
-  if (!settingsNow().on) W.state = emptyState()
+  if (!settingsNow().on) {
+    gen++
+    W.state = emptyState()
+  }
 }
 // tools-pane.tsx's session.end: /clear and /resume start over (the process goes on, with no session.start); any
 // other end stops the timer.
