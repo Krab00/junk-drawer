@@ -121,6 +121,27 @@ printf -- '---\nid: T30\nstatus: in_progress\n---\n\n## Verification round 3\n\n
 expect "$tmp/outnv/status.js" 'JSON.stringify(S.tasks.find(t => t.id === "T30")) === JSON.stringify({id: "T30", title: "", column: "in_progress", round: 3})' "a table with no Verdict column: the round alone"
 rm -f "$T/T30.md"
 
+# the spec's `## Verification — <branch>` heading (verify-coordinator.md) is round 1, its table read all the same; a
+# lesson block `## L<n> (date) … · from: T<n>` is named by its from:
+printf -- '---\nid: T5\nstatus: verify\n---\n\n## Verification — task/T5-thing\n\n| Criterion | Evidence | Verdict |\n|---|---|---|\n| AC1 a | ok | PASS |\n| AC2 b | no | FAIL |\n| ACX1 c | ? | PM-REVIEW |\n' >"$T/T5.md"
+cp "$T/_lessons.md" "$tmp/_lessons.keep"
+printf '# Lessons\n\n## L1 (2026-10-18) scope: local · stack: shell · to: smoke · from: T2\nA ported script. More.\n\n## L2 (2026-10-19) scope: local\nNo from here.\n' >"$T/_lessons.md"
+(cd "$proj" && "$bin" --out "$tmp/outv" >/dev/null 2>&1)
+expect "$tmp/outv/status.js" 'JSON.stringify(S.tasks.find(t => t.id === "T5")) === JSON.stringify({id: "T5", title: "", column: "verify", round: 1, ac: [1, 2], acx: [0, 1], note: "round 1: FAIL: AC2 · PM-REVIEW: ACX1"})' "## Verification — <branch>: round 1 with its table"
+expect "$tmp/outv/status.js" 'JSON.stringify(S.lessons) === JSON.stringify([{task: "L2", text: "No from here."}, {task: "T2", text: "A ported script."}])' "lesson blocks: the task is the from:, else the heading"
+node --input-type=module -e '
+  const fs = await import("node:fs")
+  const D = await import(process.argv[1])
+  const S = JSON.parse(/^window\.ORCH = ([\s\S]*);\n$/.exec(fs.readFileSync(process.argv[3], "utf8"))[1])
+  const t5 = D.parseVerification(fs.readFileSync(`${process.argv[2]}/T5.md`, "utf8"))
+  const same = JSON.stringify(D.parseLessons(fs.readFileSync(`${process.argv[2]}/_lessons.md`, "utf8"))) === JSON.stringify(S.lessons)
+  const t = S.tasks.find(t => t.id === "T5")
+  process.exit(same && JSON.stringify({ round: t.round, ac: t.ac, acx: t.acx, note: t.note }) === JSON.stringify(t5) ? 0 : 1)
+' "$junkd/hooks/dashboard.ts" "$T" "$tmp/outv/status.js"
+ok $? "dashboard.ts reads the spec heading and the lesson blocks like orch-status"
+cp "$tmp/_lessons.keep" "$T/_lessons.md"
+rm -f "$T/T5.md"
+
 # the window: clamped, rounded; a non-number is 24; the setting when the env is unset
 for pair in 500:168 168:168 169:168 0:1 1:1 -5:1 2.6:3 abc:24 ' 12 ':12 '':24; do
   h=${pair%:*} want=${pair##*:}

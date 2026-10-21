@@ -84,6 +84,19 @@ test('parseLessons: one lesson per `## T<n>` heading, its first sentence, newest
   expect(parseLessons(text)).toEqual([{ task: 'T2', text: 'A lesson over two lines!' }, { task: 'T1', text: 'First lesson.' }])
   expect(parseLessons('\r\n## T4 (d)\r\nNo period at all\r\n')).toEqual([{ task: 'T4', text: 'No period at all' }])
   expect(parseLessons('')).toEqual([])
+  // the current lesson blocks: `## L<n> (date) scope: … · from: T<n>` names its task by from:
+  const blocks = '# Lessons\n\n## L1 (2026-10-18) scope: local · stack: shell · to: smoke · from: T2\nA ported script. Then more.\n\n## L2 (2026-10-19) scope: local\nNo from here.\n'
+  expect(parseLessons(blocks)).toEqual([{ task: 'L2', text: 'No from here.' }, { task: 'T2', text: 'A ported script.' }])
+})
+
+test('parseVerification: the spec\'s `## Verification — <branch>` heading is round 1; a later round heading wins; `Verifications` is none', () => {
+  const rows = ['| AC1 a | x | PASS |', '| AC2 b | x | FAIL |', '| ACX1 c | x | PM-REVIEW |']
+  const table = ['| Criterion | Evidence | Verdict |', '|---|---|---|', ...rows, ''].join('\n')
+  expect(parseVerification(`## Verification — task/T5-thing\n\n${table}`)).toEqual({ round: 1, ac: [1, 2], acx: [0, 1], note: 'round 1: FAIL: AC2 · PM-REVIEW: ACX1' })
+  expect(parseVerification(`## Verification\n\n${table}`)).toMatchObject({ round: 1, ac: [1, 2] })
+  expect(parseVerification(`## Verification — b\n\n${table}\n## Verification round 2\n\n| Criterion | Verdict |\n|-|-|\n| AC1 a | PASS |\n`)).toEqual({ round: 2, ac: [1, 1] })
+  expect(parseVerification(`## Verification round 1\n\n${table}\n## Verification — b\n\n| Criterion | Verdict |\n|-|-|\n| AC1 a | PASS |\n`)).toEqual({ round: 1, ac: [1, 1] })
+  expect(parseVerification(`## Verifications\n\n${table}`)).toBe(undefined)
 })
 
 test('orchRoot climbs out of a task worktree to the checkout with .orch; relTo draws a path inside the root relative', () => {
@@ -937,6 +950,40 @@ test('only this folder\'s own flag opens it: another repo\'s open dashboard writ
   await rec.clock.settle()
   expect(STATUS in rec.files).toBe(false)
   expect(statusWrites(rec)).toBe(0)
+})
+
+test('a watchdog death marker (a record with a deadNote) is no SubagentStop record: the agent is dead, not done', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  await dash($)
+  for (const [id, name] of [['w1', 'impl-T1'], ['w2', 'impl-T2'], ['w3', 'impl-T3']] as const) {
+    rec.nextAgent = id
+    rec.agents = [...rec.agents, { id, type: 'junkd:implementer', name, description: name, status: 'running' }]
+    await spawn($, { name, description: name })
+  }
+  await rec.clock.advance(SEC)
+  rec.files[`${RECORDS}/w1.json`] = `${JSON.stringify({ type: 'junkd:implementer', tokens: null, deadNote: 'stalled 10m' })}\n`
+  rec.files[`${RECORDS}/w2.json`] = 'not json\n'
+  rec.files[`${RECORDS}/w3.json`] = record(10)
+  rec.agents = [] // all gone
+  await turnEnd($)
+  await rec.clock.settle()
+  const agents = status(rec).agents
+  expect(agents.find(a => a.name === 'impl-T1')).toMatchObject({ status: 'dead', deadNote: 'no SubagentStop record' })
+  expect(agents.find(a => a.name === 'impl-T2')).toMatchObject({ status: 'dead' })
+  expect(agents.find(a => a.name === 'impl-T3')).toMatchObject({ status: 'done' })
+  expect(task(rec, 'T1')!.phases![0]).toMatchObject({ open: false, killed: true })
+  expect(task(rec, 'T3')!.phases![0]!.killed).toBe(undefined)
+})
+
+test('reload: an open phase read back whose agent has only a watchdog deadNote record ends killed', async ($, on) => {
+  const rec = world(on)
+  const before = { tasks: [{ id: 'T3', title: 'old', column: 'in_progress', phases: [phase({ agent: 'impl-T3', id: 'rec3', start: T0 - 600 * SEC, end: T0 - 300 * SEC, open: true })] }] }
+  rec.files[STATUS] = `window.ORCH = ${JSON.stringify(before)};\n`
+  rec.files[`${RECORDS}/rec3.json`] = `${JSON.stringify({ type: '', tokens: null, deadNote: 'stalled' })}\n`
+  await start($)
+  await dash($)
+  expect(task(rec, 'T3')!.phases![0]).toMatchObject({ open: false, killed: true })
 })
 
 test('reload: an open phase read back whose agent left a SubagentStop record ends done, not killed', async ($, on) => {

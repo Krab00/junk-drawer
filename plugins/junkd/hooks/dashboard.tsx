@@ -107,11 +107,21 @@ async function dashDir($: $): Promise<{ dir: string; top: string } | undefined> 
   return hash === undefined ? undefined : { dir: `${await configDir($)}/junkd/orch/dashboard/${hash}`, top }
 }
 
-// The SubagentStop record scripts/orch-agent-stop.sh wrote for an agent (orch.tsx reads the same file).
+// The SubagentStop record scripts/orch-agent-stop.sh wrote for an agent (orch.tsx reads the same file). The watchdog
+// writes a record of its own at the same path when it declares an agent dead (a deadNote): that marks a death, not a
+// stop, as watchdog.tsx's savedAt reads it. So a record that is not JSON, or has a deadNote, is none.
 async function hasRecord($: $, id: string): Promise<boolean> {
   const sid = await $.session.id().catch(() => '')
   if (!/^[A-Za-z0-9_-]+$/.test(sid) || !/^[A-Za-z0-9_-]+$/.test(id)) return false
-  return $.fs.exists(`${await configDir($)}/junkd/orch/_agents/${sid}/${id}.json`).catch(() => false)
+  const text = await $.fs.read(`${await configDir($)}/junkd/orch/_agents/${sid}/${id}.json`).catch(() => undefined)
+  if (text === undefined) return false
+  // ponytail: a record that exists but does not parse is none, as in the watchdog (the stop script always writes JSON)
+  try {
+    const saved = JSON.parse(text) as unknown
+    return typeof saved === 'object' && saved !== null && !('deadNote' in saved)
+  } catch {
+    return false
+  }
 }
 
 // the store ---------------------------------------------------------------------------------------------------------

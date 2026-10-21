@@ -9,7 +9,7 @@
 #   --open        also copy the page (index.html, scale.js) beside it, touch the `open` flag and open index.html
 #                 (`open` on macOS, `xdg-open` elsewhere, else the path is all you get)
 # Prints the written file's path. Built from: the task store (.orch/tasks/*.md frontmatter and the last
-# "## Verification round N" table; files starting with `_` are not tasks), _lessons.md, the SubagentStop records under
+# "## Verification round N" or "## Verification — <branch>" table; files starting with `_` are not tasks), _lessons.md, the SubagentStop records under
 # junkd/orch/_agents/<session>/ (ORCH_SESSION, else the newest folder), the OAuth usage endpoint (macOS keychain; any
 # failure is no usage), git for repo and branch. Env: ORCH_DASHBOARD_WINDOW_H (hours the timeline shows, 1-168; else the
 # orch_dashboard_window_h setting, else 24), ORCH_NOW_MS (the clock), ORCH_STATUS_NO_USAGE=1 (no keychain, no network).
@@ -166,12 +166,12 @@ build() {
              deps: listof($s.fm.deps // ""; $s.blocks.deps // [])}
           end
         end;
-    # the last "## Verification round N" section: N, the AC and ACX rows as [passed, all], the FAIL/PM-REVIEW note
+    # the last "## Verification round N" (or "## Verification — <branch>", N = 1) section: N, the AC and ACX rows as [passed, all], the FAIL/PM-REVIEW note
     def verdicts:
       lines as $ls
-      | ([$ls | to_entries[] | select(.value | test("^##\\s+Verification round\\s+\\d+\\b"; "i"))] | last) as $h
+      | ([$ls | to_entries[] | select(.value | test("^##\\s+Verification\\b"; "i"))] | last) as $h
       | if $h == null then null
-        else ($h.value | capture("round\\s+(?<n>\\d+)"; "i").n | tonumber) as $round
+        else ([$h.value | capture("^##\\s+Verification\\b(?:\\s+round\\s+(?<n>\\d+)\\b)?"; "i")][0].n | if . == null then 1 else tonumber end) as $round
         | ($ls[($h.key + 1):] | (map(test("^##\\s")) | index(true)) as $end | if $end == null then . else .[:$end] end) as $sec
         | (reduce ($sec[] | select(trim | startswith("|")) | trim | gsub("^\\||\\|$"; "") | split("|") | map(trim)) as $row
             ({at: -1, ac: [0, 0], acx: [0, 0], fail: [], pm: []};
@@ -193,7 +193,8 @@ build() {
           + (if $r.acx[1] > 0 then {acx: $r.acx} else {} end)
           + (if $note != "" then {note: "round \($round): \($note)"} else {} end)
         end;
-    # _lessons.md: each "## T<n> (date)" heading and the first sentence of its paragraph, newest first
+    # _lessons.md: each "## T<n> (date)" or "## L<n> (date) … · from: T<n>" heading (the task is its from: when it has one)
+    # and the first sentence of its paragraph, newest first
     def lessons:
       lines as $ls
       | def body($j; $acc):
@@ -202,7 +203,8 @@ build() {
           else body($j + 1; $acc + (if $acc != "" then " " else "" end) + ($ls[$j] | trim)) end;
         [range(0; $ls | length) as $i | ($ls[$i] | capture("^##\\s+(?<t>\\S+)")?) as $m | select($m != null)
          | body($i + 1; "") as $b | ((($b | capture("^(?<s>.*?[.!?])(\\s|$)")?) | .s) // $b) as $s
-         | select($s != "") | {task: $m.t, text: $s}] | reverse;
+         | ([$ls[$i] | capture("\\bfrom:\\s*(?<f>[^\\s·,]+)")] | .[0].f) as $from
+         | select($s != "") | {task: ($from // $m.t), text: $s}] | reverse;
     def column: (. | trim | ascii_downcase) as $s
       | if $s == "done" or $s == "blocked" or $s == "todo" or $s == "in_progress" or $s == "verify" then $s else "todo" end;
     def ctx: if type != "number" or isinfinite or isnan then "—" elif . < 1000 then (round | tostring) else "\((. / 1000) | round)k" end;
