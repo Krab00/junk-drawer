@@ -5,7 +5,7 @@ import type { ElementTable, RenderInput } from 'claude-code'
 import type { JunkdStatuslineField as Field, JunkdStatuslineSegment as Segment } from '../types'
 
 export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button'>
-export type StatuslineActs = { close(): void; set(field: Field, value: boolean): void }
+export type StatuslineActs = { close(): void; toggle(field: Field): void }
 // `values.enabled` is whether settings.json's statusLine is junkd's; `config` is the pluginConfigs key the segment rows
 // are stored under and the second-config warning ('' when there is none).
 export type StatuslineData = { values: Record<Field, boolean>; preview: string; note: string; config: { key: string; warn: string } }
@@ -55,7 +55,7 @@ export function statuslineView(els: Els, props: RenderInput<'Pane'>['props'], da
           </Text>
         </Box>
         <Box width={6} flexShrink={0}>
-          <Button key={`set:${field}`} plain dimColor hotkey={hotkeyOf(field)} label={isOn ? 'off' : 'on'} onPress={() => act.set(field, !isOn)} />
+          <Button key={`set:${field}`} plain dimColor hotkey={hotkeyOf(field)} label={isOn ? 'off' : 'on'} onPress={() => act.toggle(field)} />
         </Box>
         <Box flexShrink={1} overflow="hidden">
           <Text color={P.secondary} wrap="truncate-end">

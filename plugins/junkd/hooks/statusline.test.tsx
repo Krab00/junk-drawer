@@ -46,9 +46,16 @@ type Opts = {
   hostLag?: number
   // No `settings.read` beneath the plugin: the call rejects, as it does in a world that does not model the host.
   noSettingsRead?: boolean
+  // What the plugin's $.store holds when the world starts: the state a copy of the module that was running before a reload
+  // left behind.
+  store?: Record<string, unknown>
+  // The first `statusline-setup on` does not answer until the test calls rec.releaseOn(): a script that is still writing
+  // settings.json.
+  holdOn?: boolean
+  // The first look of the wait for the host (the sleep of SETTLE_MS) does not end until the test calls rec.releaseSettle().
+  holdSettle?: boolean
 }
 function world(on: On, o: Opts = {}) {
-  mock.store(on)
   mock.env(on, o.env ?? { HOME })
   const rec = {
     config: [] as { key: string; value: unknown }[],
@@ -64,11 +71,18 @@ function world(on: On, o: Opts = {}) {
     host: { line: undefined as unknown, behind: 0 },
     // The `source` of every settings.read the module made.
     reads: [] as (string | undefined)[],
+    // The plugin's $.store (what survives a reload of the module), and what it held at each write of a row.
+    kept: new Map<string, unknown>(Object.entries(o.store ?? {})),
+    keptAtWrite: [] as unknown[],
+    releaseOn: () => {},
+    releaseSettle: () => {},
     // Releases the sleeps of VERIFY_MS the module started and lets what follows them run.
     verify: async () => {},
     o,
   }
   const verifying: (() => void)[] = []
+  let held = false
+  let heldSettle = false
   rec.verify = async () => {
     verifying.splice(0).forEach(release => release())
     for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 0))
@@ -94,6 +108,9 @@ function world(on: On, o: Opts = {}) {
   }
   const result = (exitCode = 0, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
   on('ui.panes', () => ({ value: (o.panes ?? []) as never }))
+  on('store.get', (_$, e) => ({ value: rec.kept.get(e.key) }))
+  on('store.set', (_$, e) => { rec.kept.set(e.key, e.value); return { value: undefined } })
+  on('store.delete', (_$, e) => { rec.kept.delete(e.key); return { value: undefined } })
   on('ui.toast', (_$, e) => { rec.toasts.push(e.text); return { value: undefined } })
   on('ui.open', (_$, e) => { rec.log.push(`ui.open ${e.id}${e.focus ? ' focus' : ''} ${e.title}`); return { value: { isPlaced: true as const } } })
   on('ui.close', (_$, e) => { rec.log.push(`ui.close ${e.id}`); return { value: undefined } })
@@ -110,6 +127,10 @@ function world(on: On, o: Opts = {}) {
   on('clock.sleep', (_$, e) => {
     rec.order.push(`sleep ${e.ms}`)
     if (e.ms === VERIFY_MS) return new Promise<{ value: undefined }>(release => verifying.push(() => release({ value: undefined })))
+    if (e.ms === SETTLE_MS && o.holdSettle && !heldSettle) {
+      heldSettle = true
+      return new Promise<{ value: undefined }>(release => { rec.releaseSettle = () => release({ value: undefined }) })
+    }
     if (rec.host.behind > 0 && --rec.host.behind === 0) rec.host.line = fileLine()
     return { value: undefined }
   })
@@ -117,6 +138,7 @@ function world(on: On, o: Opts = {}) {
   on('session.cwd', () => ({ value: '/work/proj' }))
   on('config.set', (_$, e) => {
     rec.order.push(`config.set ${e.key}`)
+    rec.keptAtWrite.push(rec.kept.get('statusline-pane'))
     rec.config.push({ key: e.key, value: e.value })
     // The host writes its copy of the file back whole: its statusLine replaces the file's.
     const line = hostLine()
@@ -144,18 +166,25 @@ function world(on: On, o: Opts = {}) {
       const a = o.setup?.[mode]
       if (a === 'throw') throw new Error('spawn EACCES')
       const ok = (a?.exitCode ?? 0) === 0
-      if (ok && mode === 'on') {
-        rec.files.set(`${cfg}/junkd/statusline.sh`, o.script ?? SCRIPT)
-        const key = e.argv[2] === '--config' ? e.argv[3] : undefined
-        edit(s => { s.statusLine = { type: 'command', command: key ? `${cfg}/junkd/statusline.sh --config ${key}` : `${cfg}/junkd/statusline.sh` } })
-        changed()
+      const run = () => {
+        if (ok && mode === 'on') {
+          rec.files.set(`${cfg}/junkd/statusline.sh`, o.script ?? SCRIPT)
+          const key = e.argv[2] === '--config' ? e.argv[3] : undefined
+          edit(s => { s.statusLine = { type: 'command', command: key ? `${cfg}/junkd/statusline.sh --config ${key}` : `${cfg}/junkd/statusline.sh` } })
+          changed()
+        }
+        if (ok && mode === 'off') {
+          rec.files.delete(`${cfg}/junkd/statusline.sh`)
+          edit(s => { delete s.statusLine })
+          changed()
+        }
+        return result(a?.exitCode ?? 0, a?.stdout ?? (a ? '' : mode === 'status' ? 'on\n' : `statusline: ${mode}\n`), a?.stderr ?? '')
       }
-      if (ok && mode === 'off') {
-        rec.files.delete(`${cfg}/junkd/statusline.sh`)
-        edit(s => { delete s.statusLine })
-        changed()
+      if (mode === 'on' && o.holdOn && !held) {
+        held = true
+        return new Promise<ReturnType<typeof run>>(release => { rec.releaseOn = () => release(run()) })
       }
-      return result(a?.exitCode ?? 0, a?.stdout ?? (a ? '' : mode === 'status' ? 'on\n' : `statusline: ${mode}\n`), a?.stderr ?? '')
+      return run()
     }
     if (bin.endsWith('/bin/statusline.sh')) return result(o.preview?.exitCode ?? 0, o.preview?.stdout ?? LINE)
     if (bin === 'rm') rec.files.delete(e.argv.at(-1)!)
@@ -850,4 +879,196 @@ test('session start with the row off sleeps and runs nothing', withOptions({ sta
   await start($)
   await rec.verify()
   expect(rec.order).toEqual([])
+})
+
+// ------------------------------------------------------------------ T32: a flip makes the host load the module again; presses are served in order
+
+// Every write of a row (`$.config.set` on pluginConfigs) makes the host load this module again while the pane is still on the
+// screen: the new copy starts with nothing in memory, and the copy that was running does not finish what it began. A reload
+// is a session start with the pane among `$.ui.panes()` and what the old copy kept in `$.store`.
+const KEPT = 'statusline-pane'
+const kept = (note: string, ago = 0) => ({ [KEPT]: { note, at: Date.now() - ago } })
+const HINT = 'also in /config, under junkd (statusline_…)' // the note row when there is no note
+
+test('a reload with the pane up: the new copy takes it back (the note kept for it, the switch, the key, the preview) and the next /junkd:statusline closes it', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, panes: [{ id: 'statusline' }], store: kept('✓ ctx off') })
+  await start($)
+  const pane = await mount($)
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ ctx off')
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text, 'the line is wired: the switch says so at once').toBe(' on ')
+  expect((await pane.find({ key: 'config-key' }))?.text).toBe(`config: pluginConfigs ${KEY}`)
+  expect((await pane.find({ type: 'Box', key: 'preview' }))?.text).toBe(SHOWN)
+  expect(previews(rec)).toHaveLength(1)
+  await command($, '')
+  expect(rec.log, 'closed, not opened a second time').toEqual(['ui.close statusline'])
+})
+test('a reload with the pane up and the row off: nothing is wired, the pane is taken back all the same', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { panes: [{ id: 'statusline' }] })
+  await start($)
+  expect(previews(rec)).toHaveLength(1)
+  await command($, '')
+  expect(rec.log).toEqual(['ui.close statusline'])
+  expect(setups(rec)).toEqual([])
+})
+test('a note kept longer than 10 s ago, or one that is no note, is not shown', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, panes: [{ id: 'statusline' }], store: kept('✓ ctx off', 10_001) })
+  await start($)
+  const pane = await mount($)
+  expect((await pane.find({ key: 'note' }))?.text, 'too old').toBe(HINT)
+  rec.kept.set(KEPT, { note: 5, at: Date.now() })
+  await start($)
+  expect((await pane.find({ key: 'note' }))?.text, 'not a string').toBe(HINT)
+  rec.kept.set(KEPT, { note: '✓ ctx off' })
+  await start($)
+  expect((await pane.find({ key: 'note' }))?.text, 'no time').toBe(HINT)
+  rec.kept.set(KEPT, { note: '✓ ctx off', at: Date.now() - 9_000 })
+  await start($)
+  expect((await pane.find({ key: 'note' }))?.text, 'still fresh').toBe('✓ ctx off')
+})
+test('a start with no pane up reads no note and draws no preview', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, store: kept('✓ ctx off') })
+  await start($)
+  expect(previews(rec)).toEqual([])
+  await command($, '')
+  expect(rec.log, 'not up: the command opens it').toEqual(['ui.open statusline focus statusline'])
+  expect((await (await mount($)).find({ key: 'note' }))?.text).toBe(HINT)
+})
+test('the key row is there from the first drawing: the rows below it do not move when the files are read', W, async ($, on) => {
+  world(on, { copy: SCRIPT })
+  await start($)
+  const pane = await mount($) // a copy that has read nothing yet
+  expect((await pane.find({ key: 'config-key' }))?.text).toBe(`config: pluginConfigs ${KEY}`)
+})
+test('every switch, in the order the pane draws them, writes its own row (a-g)', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  const drawn = (await pane.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('set:'))
+  expect(drawn).toEqual(FIELDS.map(f => `set:${f}`))
+  for (const key of drawn) {
+    await pane.press({ key: key! })
+    expect(rec.config.at(-1)?.key, key).toBe(key!.replace('set:', 'junkd.statusline_'))
+  }
+  expect(rec.config).toHaveLength(FIELDS.length)
+})
+test('a press while the wired switch is being applied is refused with a note and writes nothing; after it a press is served', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: 1, holdSettle: true })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  const first = pane.press({ key: 'set:enabled' }) // runs the script and waits for the host: held
+  await new Promise(r => setTimeout(r, 30))
+  await pane.press({ key: 'set:ctx' })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✗ the wired switch is still being applied: press again in a moment')
+  expect(rec.config, 'the refused press wrote nothing').toEqual([])
+  rec.releaseSettle()
+  await first
+  await new Promise(r => setTimeout(r, 30)) // the flip goes on after the press returned
+  expect(rec.config).toEqual([{ key: 'junkd.statusline_enabled', value: false }])
+  await pane.press({ key: 'set:ctx' })
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.statusline_ctx', value: false })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ ctx off')
+})
+test('the same segment pressed twice from one drawing writes the same value twice (the row as it stood); a press served later flips it back', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  await Promise.all([pane.press({ key: 'set:ctx' }), pane.press({ key: 'set:ctx' })])
+  expect(rec.config.map(c => c.value)).toEqual([false, false])
+  await pane.press({ key: 'set:ctx' })
+  expect(rec.config.map(c => c.value)).toEqual([false, false, true])
+  expect(await get($, 'statusline_ctx')).toBe(true)
+})
+test('two different segments pressed together are both written: only the wired switch makes a press wait', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  await Promise.all([pane.press({ key: 'set:ctx' }), pane.press({ key: 'set:model' })])
+  expect(rec.config.map(c => c.key).sort()).toEqual(['junkd.statusline_ctx', 'junkd.statusline_model'])
+})
+test('the wired switch pressed while a segment is being written is applied, and a press after it is served', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  await Promise.all([pane.press({ key: 'set:ctx' }), pane.press({ key: 'set:enabled' })])
+  expect(rec.config.map(c => c.key).sort()).toEqual(['junkd.statusline_ctx', 'junkd.statusline_enabled'])
+  await pane.press({ key: 'set:model' })
+  expect(rec.config.at(-1)).toEqual({ key: 'junkd.statusline_model', value: false })
+})
+test('a press whose flip failed is the note, and the next press is served', W, async ($, on) => {
+  on('clock.sleep', { ms: SETTLE_MS }, () => ({ deny: 'no sleeping' }))
+  const rec = world(on, { copy: SCRIPT, hostLag: 1 })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  await pane.press({ key: 'set:enabled' }) // the wait for the host rejects
+  expect((await pane.find({ key: 'note' }))?.text).toMatch(/^✗ .*no sleeping/)
+  await pane.press({ key: 'set:ctx' })
+  expect(rec.config).toEqual([{ key: 'junkd.statusline_ctx', value: false }])
+})
+test('a press after a refused write is served', W, async ($, on) => {
+  on('config.set', { key: 'junkd.statusline_ctx' }, () => ({ deny: 'locked' }))
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  await pane.press({ key: 'set:ctx' })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✗ locked')
+  await pane.press({ key: 'set:model' })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ model off')
+  expect(rec.config).toEqual([{ key: 'junkd.statusline_model', value: false }])
+})
+test('the note is in $.store when the row is written, and gone when the write is refused', W, async ($, on) => {
+  on('config.set', { key: 'junkd.statusline_effort' }, () => ({ deny: 'locked' }))
+  const rec = world(on, { copy: SCRIPT })
+  await start($)
+  await command($, '')
+  const pane = await mount($)
+  await pane.press({ key: 'set:model' })
+  expect(rec.keptAtWrite).toEqual([{ note: '✓ model off', at: expect.any(Number) }])
+  await pane.press({ key: 'set:effort' })
+  expect(rec.kept.has(KEPT), 'refused: nothing for a reload to show').toBe(false)
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✗ locked')
+})
+test('a refused wiring is no write: the note is not kept', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { setup: { on: { exitCode: 1, stdout: `${REFUSED}\n` } } })
+  await start($)
+  await command($, '')
+  await (await mount($)).press({ key: 'set:enabled' })
+  expect(rec.kept.size).toBe(0)
+  expect(rec.keptAtWrite).toEqual([])
+})
+test('a reload that has to wire the line again draws the pane after the script: the switch says wired', W, async ($, on) => {
+  const rec = world(on, { panes: [{ id: 'statusline' }] }) // no copy, no line: the start runs on
+  await start($)
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['on'])
+  const pane = await mount($)
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' on ')
+  expect((await pane.find({ type: 'Box', key: 'preview' }))?.text).toBe(SHOWN)
+})
+test('a press that comes while the script of the start still writes settings.json is served after it', W, async ($, on) => {
+  const rec = world(on, { panes: [{ id: 'statusline' }], holdOn: true })
+  const started = start($)
+  const pane = await mount($)
+  const pressed = pane.press({ key: 'set:ctx' })
+  await new Promise(r => setTimeout(r, 30))
+  expect(rec.config, 'the script has not answered: no write beside it').toEqual([])
+  rec.releaseOn()
+  await Promise.all([started, pressed])
+  expect(rec.order.filter(o => o === 'setup on' || o.startsWith('config.set'))).toEqual(['setup on', 'config.set junkd.statusline_ctx'])
+})
+test('the second look of the start draws the pane again when it wires the line once more', W, async ($, on) => {
+  const rec = world(on, { panes: [{ id: 'statusline' }] })
+  await start($)
+  const pane = await mount($)
+  expect(previews(rec)).toHaveLength(1)
+  rec.files.set(`${CFG}/settings.json`, '{}') // a writer dropped the line meanwhile
+  await rec.verify()
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['on', 'on'])
+  expect(previews(rec), 'the pane was drawn from the files again').toHaveLength(2)
+  expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' on ')
 })
