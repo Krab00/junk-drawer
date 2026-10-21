@@ -112,6 +112,24 @@ out=$(run --once --no-stop --idle-minutes 5) || fail "--no-stop exited non-zero"
 head -n1 <<<"$out" | grep -qF 'report only (--no-stop)' || fail "--no-stop header: $(head -n1 <<<"$out")"
 row impl-T18 | grep -qF 'stop, report only (T18 is done)' || fail "--no-stop impl-T18: $(row impl-T18)"
 
+# the project from inside a worktree that has an .orch of its own (the live orch dir is one): orch-state's root is
+# that worktree, and the project root is the checkout above its /.worktrees/ tail, so the task worktrees beside it
+# are this project's, not another's. Same rows and no footer from <repo>/.worktrees/orch and from a task worktree two
+# levels down (<repo>/.worktrees/orch/.worktrees/T5), as from <repo>.
+orchwt="$repo/.worktrees/orch"
+mkdir -p "$orchwt/.worktrees/T5"
+git -C "$orchwt" init -q
+cp -R "$repo/.orch" "$orchwt/.orch"
+base=$(run --once --idle-minutes 5)
+grep -q '^impl-T17 ' <<<"$base" && ! grep -q 'other project' <<<"$base" || fail "the project root's own table: $base"
+for dir in "$orchwt" "$orchwt/.worktrees/T5"; do
+    out=$(cd "$dir" && "$watch" --once --idle-minutes 5)
+    [ "$out" = "$base" ] || fail "from $dir the table differs from the project root's:
+$out
+---
+$base"
+done
+
 # the idle minutes: clamped 1-120; from settings.json when not given (a numeric string counts), else 10
 for pair in '0 1' '1 1' '120 120' '121 120'; do
     out=$(run --once --idle-minutes "${pair% *}")
