@@ -20,6 +20,7 @@ const REPO = '/repo'
 const st = (s: Partial<OrchState> = {}): OrchState => ({ model: FABLE, binDir: BIN, configDir: CFG, repo: REPO, ...s })
 const SCRATCH = '/private/tmp/claude-501/-Users-u-repo/0b1c-session/scratchpad'
 const PREFIX = 'Orchestrator mode (orch):'
+const UNKNOWN = 'a000000000000000' // spelled as a subagent id nobody knows (16 hex after `a`: the shortest the rule reads as one)
 
 // ------------------------------------------------------------------ orchGuard, pure
 
@@ -328,7 +329,36 @@ test('SendMessage: reviewers are always fresh, an implementer over the cap is re
   expect(orchGuard(send, st({ agent: { type: 'junkd:implementer', tokens: 300_000 } }), on_)).toBeUndefined()
   expect(orchGuard(send, st({ agent: { tokens: 300_000 } }), { ...on_, implementer_ctx_k: 250 })).toMatch(/exceeds cap 250k/)
   expect(orchGuard(send, st({ agent: { type: 'general-purpose' } }), on_)).toBeUndefined()
-  expect(orchGuard(send, st({ agent: null }), on_)).toMatch(/no agent "a1" is known/)
+  expect(orchGuard(main('SendMessage', { to: UNKNOWN }), st({ agent: null }), on_)).toBe(`${PREFIX} no agent "${UNKNOWN}" is known (not in the agent list, no SubagentStop record). Spawn a fresh agent.`)
+})
+
+test('T35: SendMessage to a peer session, main or a protocol reply passes in every active mode; only an unknown subagent id is refused', () => {
+  const send = (to: string) => main('SendMessage', { to, message: 'hello' })
+  for (const [guard, model] of [['fable', FABLE], ['always', FABLE], ['always', OPUS]] as const) {
+    const o = { ...on_, guard }
+    for (const to of ['HANDON', 'HANDON [69f752]', 'main', 'shutdown_response', 'claude-5-peer [x] [y]', 'peer@team', 'a000000000000000x', 'b000000000000000', 'a00000000000000g', 'a00000000000000', 'A000000000000000'])
+      expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toBeUndefined()
+    for (const to of [UNKNOWN, `${UNKNOWN} [69f752]`, 'a0123456789abcdef', 'a0123456789abcdef0123'])
+      expect(orchGuard(send(to), st({ model, agent: null }), o), `${guard} ${to}`).toMatch(/^Orchestrator mode \(orch\): no agent ".*" is known \(not in the agent list, no SubagentStop record\)\. Spawn a fresh agent\.$/)
+    // the tools of the inbox
+    for (const tool of ['ReadNotifications', 'ListAgents']) expect(orchGuard(main(tool), st({ model, agent: null }), o), `${guard} ${tool}`).toBeUndefined()
+  }
+  // a known subagent keeps its rules, whatever its id looks like
+  expect(orchGuard(send(UNKNOWN), st({ agent: { type: 'junkd:ui-reviewer' } }), on_)).toMatch(/ui-reviewer is a reviewer/)
+})
+
+test('T35: a peer session absent from the agent list passes SendMessage by name, with or without " [ref]"; an unknown subagent id is still refused', async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'ping' })
+  rec.agents = [{ id: 'imp1', type: 'junkd:implementer', name: 'impl' }]
+  expect(denial(await send('HANDON'))).toBeUndefined()
+  expect(denial(await send('HANDON [69f752]'))).toBeUndefined()
+  expect(denial(await send('main'))).toBeUndefined()
+  expect(denial(await send(UNKNOWN))).toMatch(/no agent "a000000000000000" is known \(not in the agent list, no SubagentStop record\)\. Spawn a fresh agent\./)
+  expect(denial(await send(`${UNKNOWN} [69f752]`))).toMatch(/no agent/)
+  expect(denial(await $.tool.call({ tool: 'ReadNotifications' }))).toBeUndefined()
+  expect(denial(await $.tool.call({ tool: 'ListAgents' }))).toBeUndefined()
 })
 
 test('settings: defaults for missing or wrong types, the number rows clamped to their bounds at load', () => {
@@ -429,7 +459,7 @@ test('every denial family starts with the prefix', () => {
     orchGuard(main('Monitor', { command: 'git push' }), s, on_),
     orchGuard(main('Agent', { subagent_type: 'fork' }), s, on_),
     orchGuard(main('Agent', { model: 'fable' }), s, on_),
-    orchGuard(main('SendMessage', { to: 'x' }), s, on_),
+    orchGuard(main('SendMessage', { to: UNKNOWN }), s, on_),
     orchGuard(main('SendMessage', { to: 'x' }), st({ agent: { type: 'ui-reviewer' } }), on_),
     orchGuard(main('SendMessage', { to: 'x' }), st({ agent: { type: 'junkd:implementer', tokens: 900_000 } }), on_),
     orchSpawn({ fork: true, subagentType: 'fork', parentModel: FABLE }, on_),
@@ -813,8 +843,9 @@ test('SendMessage target from the agent list or the SubagentStop record (type an
   await $.classic.SubagentStop({ agent_id: 'late', agent_type: 'junkd:implementer', agent_transcript_path: '/t/late.jsonl', stop_hook_active: false })
   rec.agents.push({ id: 'late', type: 'junkd:implementer', name: 'latename' })
   expect(denial(await send('latename'))).toMatch(/exceeds cap 300k/)
-  expect(denial(await send('nobody'))).toMatch(/no agent "nobody" is known/)
-  expect(denial(await send('../../x'))).toMatch(/no agent/) // never read as a path
+  expect(denial(await send(UNKNOWN))).toMatch(/no agent "a000000000000000" is known/)
+  expect(denial(await send('nobody'))).toBeUndefined() // a name nobody carries: a peer session, the engine's to resolve
+  expect(denial(await send('../../x'))).toBeUndefined() // never read as a path
   await frame($, 'set', { key: 'orch_implementer_ctx_k', value: 400 })
   expect(denial(await send('fixer'))).toBeUndefined() // the cap is read live
 })
@@ -842,8 +873,8 @@ test('T12 AC2: a record on disk alone caps, as after a module reload: by id and 
   rec.agents.push({ id: 'imp9', type: 'junkd:ui-reviewer' })
   expect(denial(await send('imp9'))).toMatch(/ui-reviewer is a reviewer/)
   // a record of another session is not this one's
-  rec.files[`${RECORDS}/other-sess/elsewhere.json`] = record('junkd:implementer', 900_000)
-  expect(denial(await send('elsewhere'))).toMatch(/no agent "elsewhere" is known/)
+  rec.files[`${RECORDS}/other-sess/a1b2c3d4e5f60718.json`] = record('junkd:implementer', 900_000)
+  expect(denial(await send('a1b2c3d4e5f60718'))).toMatch(/no agent "a1b2c3d4e5f60718" is known/)
 })
 
 test('T12 AC2: the record file comes first, the in-memory record is the fallback; a file that does not hold a record is none', async ($, on) => {
@@ -873,8 +904,8 @@ test('T12 AC2: the record file comes first, the in-memory record is the fallback
     rec.files[`${RECORDS}/${SID}/bad${i}.json`] = text
     expect(denial(await send(`bad${i}`)), text).toMatch(/verify-coordinator is a reviewer/)
     // and with no memory either, nobody
-    rec.files[`${RECORDS}/${SID}/none${i}.json`] = text
-    expect(denial(await send(`none${i}`)), text).toMatch(/no agent "none\d" is known/)
+    rec.files[`${RECORDS}/${SID}/a00000000000000${i}.json`] = text
+    expect(denial(await send(`a00000000000000${i}`)), text).toMatch(/no agent "a00000000000000\d" is known/)
   }
   // a field of the wrong kind is dropped, the other kept: a type that is no string (an array reads as its text) or
   // tokens that are no number (a string compares as a number)
@@ -890,20 +921,20 @@ test('T12 AC2: a session id or a target that is no plain id never leads to a fil
   const send = (to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'fix it' })
   // a target spelled as a path, or with a dot: never read
   rec.files[`${RECORDS}/${SID}/a.b.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send('a.b'))).toMatch(/no agent "a.b" is known/)
+  expect(denial(await send('a.b'))).toBeUndefined() // not capped: the file was not read
   rec.files[`${RECORDS}/x.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send(`../x`))).toMatch(/no agent/)
+  expect(denial(await send(`../x`))).toBeUndefined()
   // a session id that is no plain id
   rec.sid = 'a/b'
   rec.files[`${RECORDS}/a/b/imp.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  expect(denial(await send('imp'))).toBeUndefined() // not capped: the file was not read
   rec.sid = '..'
   rec.files[`${RECORDS}/../imp.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  expect(denial(await send('imp'))).toBeUndefined() // not capped: the file was not read
   // no session id (it throws): the folder of '' is not read
   rec.sid = undefined
   rec.files[`${RECORDS}//imp.json`] = record('junkd:implementer', 450_000)
-  expect(denial(await send('imp'))).toMatch(/no agent "imp" is known/)
+  expect(denial(await send('imp'))).toBeUndefined() // not capped: the file was not read
   // the same file under a plain session id is read
   rec.sid = 'sess-2'
   rec.files[`${RECORDS}/sess-2/imp.json`] = record('junkd:implementer', 450_000)
