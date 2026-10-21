@@ -65,7 +65,7 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
     logs: [] as { dir: string; path: string; line: string }[], // the measurement log's appends, in order
     logFails: false, // the append itself fails
     contexts: [] as (readonly string[] | undefined)[], // each submission's context, beside rec.prompts
-    clearMode: 'ok' as 'ok' | 'hang' | 'throw', // what /clear does
+    clearMode: 'ok' as 'ok' | 'empty' | 'hang' | 'throw' | 'deny', // what /clear does: ok/empty run (empty = the real { text: '' }), deny = a hook above refused (resolves {})
     handonHold: undefined as Promise<void> | undefined, // /junkd:handon does not end until this resolves
     dropPrompt: undefined as string | undefined, // the prompt.submit bottom refuses with this reason
   }
@@ -85,6 +85,8 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
     if (rec.handonHold && /(^|:)handon$/.test(e.command)) await rec.handonHold // the host raises its submission meanwhile
     if (e.command === 'clear' && rec.clearMode === 'hang') await new Promise(() => {}) // the host never answers
     if (e.command === 'clear' && rec.clearMode === 'throw') throw new Error('clear blew up')
+    if (e.command === 'clear' && rec.clearMode === 'deny') return { deny: 'refused' } as never // a hook answers { deny }: the engine resolves the call as {}, nothing is cleared
+    if (e.command === 'clear' && rec.clearMode === 'empty') return { text: '' }
     return { text: `downstream ${e.command}` }
   })
   on('prompt.submit', (_$, e) => {
@@ -2049,9 +2051,9 @@ test('the loop\'s own ask still gives up after 3 tries (the cap counts the loop\
   expect(rec.toasts.some(t => /not written after 3 tries/.test(t))).toBe(true)
 })
 
-// The engine strips a hook's `{ deny }` from a resolved $.command.run (it resolves `{}`, as a successful /clear may), so a
-// refused /clear cannot be told from a done one; the failures the loop can see are a timeout and a rejection.
-const setClear = (rec: { clearMode: string }, mode: 'ok' | 'hang' | 'throw') => { rec.clearMode = mode }
+// A /clear that ran resolves { text: '' } and opens a fresh window; one a hook above refused resolves {} (the engine strips
+// the { deny }) and nothing is cleared; the failures the loop can see are a timeout, a rejection and that missing text.
+const setClear = (rec: { clearMode: string }, mode: 'ok' | 'empty' | 'hang' | 'throw' | 'deny') => { rec.clearMode = mode }
 
 // ---- a /clear that never happens (seen live: the clear was never queued and the phase stayed `clear` for good)
 
@@ -2129,6 +2131,59 @@ test('after a lost /clear the next turn end retries it: cycle:retry-clear, then 
     expect(clears(rec)).toBe(2)
   })
 }
+
+test('a /clear a hook refused (resolves {}): clear-failed:denied, no handon in the uncleared session, a retry on the next turn end', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  setClear(rec, 'deny')
+  await reachClear($, rec, clock)
+  expect(lastLog(rec)).toContain('decision=cycle:clear-failed:denied')
+  expect(lastLog(rec)).toContain('fresh=false')
+  expect(lastLog(rec)).toContain('phase=clear')
+  expect(rec.commands.some(c => c.startsWith('junkd:handon')), 'no handon went into the uncleared session').toBe(false)
+  setClear(rec, 'ok')
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=cycle:retry-clear')
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(rec.commands).toContain('junkd:handon abcdef12')
+  expect(clears(rec)).toBe(2)
+})
+
+test('a /clear that resolves { text: "" } (what a done clear answers) is a success: no clear-failed, the handon follows', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  setClear(rec, 'empty')
+  await reachClear($, rec, clock)
+  expect(bodies(rec).some(l => l.includes('clear-failed'))).toBe(false)
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(rec.commands).toContain('junkd:handon abcdef12')
+  expect(clears(rec)).toBe(1)
+})
+
+test('a /clear refused for good: three retries, the fourth refusal is give-up:clear, the loop disarmed', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  setClear(rec, 'deny')
+  await reachClear($, rec, clock)
+  for (let i = 1; i <= 3; i++) {
+    await turn($)
+    expect(lastLog(rec), `retry ${i}`).toContain('decision=cycle:retry-clear')
+    await clock.advance(1)
+    await settle()
+    expect(lastLog(rec), `retry ${i} refused`).toContain('decision=cycle:clear-failed:denied')
+  }
+  expect(clears(rec)).toBe(4)
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=give-up:clear')
+  expect(rec.toasts).toContain('ahandoff: /clear failed 4 times — disarmed')
+  expect(rec.commands.some(c => c.startsWith('junkd:handon'))).toBe(false)
+})
 
 test('a /clear lost for good: three retries, then give-up:clear, a toast and the loop disarmed', TOKENS_300, async ($, on) => {
   const rec = world(on)
