@@ -54,6 +54,10 @@ type Opts = {
   holdOn?: boolean
   // The first look of the wait for the host (the sleep of SETTLE_MS) does not end until the test calls rec.releaseSettle().
   holdSettle?: boolean
+  // A row's write makes the host load the module again and cancels the copy that wrote it: from the write on, that copy's
+  // runs of statusline-setup never answer (it is gone where it waits), until the test calls rec.reload() and starts the
+  // copy that replaces it.
+  reloadOnWrite?: boolean
 }
 function world(on: On, o: Opts = {}) {
   mock.env(on, o.env ?? { HOME })
@@ -76,6 +80,11 @@ function world(on: On, o: Opts = {}) {
     keptAtWrite: [] as unknown[],
     releaseOn: () => {},
     releaseSettle: () => {},
+    // Set true: the next run of the renderer (the preview) does not answer until the test calls rec.releasePreview(): a
+    // reload's start that has not drawn the pane yet.
+    holdPreview: false,
+    releasePreview: () => {},
+    reload: () => {},
     // Releases the sleeps of VERIFY_MS the module started and lets what follows them run.
     verify: async () => {},
     o,
@@ -83,6 +92,8 @@ function world(on: On, o: Opts = {}) {
   const verifying: (() => void)[] = []
   let held = false
   let heldSettle = false
+  let cancelled = false
+  rec.reload = () => { cancelled = false }
   rec.verify = async () => {
     verifying.splice(0).forEach(release => release())
     for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 0))
@@ -139,6 +150,7 @@ function world(on: On, o: Opts = {}) {
   on('config.set', (_$, e) => {
     rec.order.push(`config.set ${e.key}`)
     rec.keptAtWrite.push(rec.kept.get('statusline-pane'))
+    if (o.reloadOnWrite) cancelled = true
     rec.config.push({ key: e.key, value: e.value })
     // The host writes its copy of the file back whole: its statusLine replaces the file's.
     const line = hostLine()
@@ -161,6 +173,7 @@ function world(on: On, o: Opts = {}) {
     rec.runs.push(run)
     const bin = e.argv[0] ?? ''
     if (bin.endsWith('/bin/statusline-setup')) {
+      if (cancelled) return new Promise<never>(() => {})
       const mode = e.argv[1] as 'on' | 'off' | 'status'
       rec.order.push(`setup ${mode}`)
       const a = o.setup?.[mode]
@@ -185,6 +198,10 @@ function world(on: On, o: Opts = {}) {
         return new Promise<ReturnType<typeof run>>(release => { rec.releaseOn = () => release(run()) })
       }
       return run()
+    }
+    if (bin.endsWith('/bin/statusline.sh') && rec.holdPreview) {
+      rec.holdPreview = false
+      return new Promise<ReturnType<typeof result>>(release => { rec.releasePreview = () => release(result(o.preview?.exitCode ?? 0, o.preview?.stdout ?? LINE)) })
     }
     if (bin.endsWith('/bin/statusline.sh')) return result(o.preview?.exitCode ?? 0, o.preview?.stdout ?? LINE)
     if (bin === 'rm') rec.files.delete(e.argv.at(-1)!)
@@ -1127,13 +1144,66 @@ test('the note stays in $.store after the row is written: the copy the host load
   expect(rec.kept.get(KEPT)).toEqual({ note: '✓ enabled off', at: expect.any(Number) })
   expect(rec.keptAtWrite.at(-1), 'kept before the wired switch is written too').toEqual({ note: '✓ enabled off', at: expect.any(Number) })
 })
-test('the row off with the line still wired: the switch reads off and a press runs on', withOptions({ statusline_enabled: false }), async ($, on) => {
-  const rec = world(on, { copy: SCRIPT }) // the line is wired in settings.json, the row is off
+test('the row off with the line still wired and the removal refused: the switch reads off and a press runs on', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, setup: { off: { exitCode: 1, stdout: 'refused\n' } } }) // the line is wired in settings.json, the row is off
   await start($)
+  expect(setups(rec).map(r => r.argv[1]), 'the start tried to take it out').toEqual(['off'])
+  rec.runs.length = 0
   await command($, '')
   const pane = await mount($)
   expect((await pane.find({ type: 'Box', key: 'enabled-pill' }))?.text).toBe(' off ')
   await pane.press({ key: 'set:enabled' })
   expect(setups(rec).map(r => r.argv[1])).toEqual(['on'])
   expect(rec.config).toEqual([{ key: 'junkd.statusline_enabled', value: true }])
+})
+
+// ------------------------------------------------------------------ the pass over the findings of the review of the pull request
+
+test('a press on the wired switch right after a reload reads the line from settings.json: off turns it off, not on again', W, async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, panes: [{ id: 'statusline' }], settings: { statusLine: { type: 'command', command: '/my/line.sh' } } })
+  // The copy that stood before the reload last saw no junkd line (the flag is false) ...
+  await start($)
+  // ... and the new copy's start has not drawn the pane yet when the press comes, with the line wired in the file.
+  rec.files.set(`${CFG}/settings.json`, JSON.stringify(wiredSettings))
+  rec.runs.length = 0
+  rec.holdPreview = true
+  const second = start($)
+  const pane = await mount($)
+  await pane.press({ key: 'set:enabled' })
+  await new Promise(r => setTimeout(r, 30))
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['off'])
+  expect(rec.config).toEqual([{ key: 'junkd.statusline_enabled', value: false }])
+  expect(lineIn(rec), 'the line is out').toBeUndefined()
+  rec.releasePreview()
+  await second
+})
+test('the row off, the host wrote settings.json back after the row\'s own off and the module was loaded again: the start takes the line out again, and looks again VERIFY_MS later', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, hostLag: Infinity, reloadOnWrite: true })
+  // The copy that writes the row: off runs, the host never reads the file, its write of the row puts the line back, and the
+  // host loads the module again, which cancels this copy where it waits (its second off never answers).
+  await start($)
+  await rec.verify()
+  rec.files.set(`${CFG}/settings.json`, JSON.stringify(wiredSettings))
+  rec.runs.length = 0
+  void set($, 'statusline_enabled', false)
+  await new Promise(r => setTimeout(r, 30))
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['off', 'off'])
+  expect(lineIn(rec)?.command, 'the host put the line back').toBe(WIRED)
+  // The copy that replaces it starts with the row off (its options) and the line wired.
+  rec.reload()
+  rec.runs.length = 0
+  await start($)
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['off'])
+  expect(lineIn(rec), 'the start took it out').toBeUndefined()
+  rec.files.set(`${CFG}/settings.json`, JSON.stringify(wiredSettings)) // a writer put it back meanwhile
+  await rec.verify()
+  expect(setups(rec).map(r => r.argv[1])).toEqual(['off', 'off'])
+  expect(lineIn(rec)).toBeUndefined()
+})
+test('the row off with a statusLine of the person\'s own, or none: the start runs nothing', withOptions({ statusline_enabled: false }), async ($, on) => {
+  const rec = world(on, { copy: SCRIPT, settings: { statusLine: { type: 'command', command: '/my/line.sh' } } })
+  await start($)
+  await rec.verify()
+  expect(setups(rec)).toEqual([])
+  expect(lineIn(rec)?.command).toBe('/my/line.sh')
 })

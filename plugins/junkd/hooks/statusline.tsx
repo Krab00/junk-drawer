@@ -9,8 +9,10 @@
 //   does not say what the row says, the script runs once more. At session start, while enabled, `on` runs again when
 //   the installed copy is missing or differs from the plugin's (a plugin update, the old plugin's path), or when
 //   settings.json has no statusLine, or one of ours whose command is not `<copy> --config <key>`; what it says is not
-//   shown. The start waits for the host the same way and looks again VERIFY_MS later (another writer of settings.json
-//   at the session start can drop the line).
+//   shown. While the row is off, `off` runs at the start when settings.json still has junkd's line (the host wrote its
+//   copy back after the row's own `off`; the write reloaded the module, so the copy that stored the row never looked
+//   again). The start waits for the host the same way and looks again VERIFY_MS later (another writer of settings.json
+//   at the session start can drop the line, or put it back).
 // - the segments: plain rows; the renderer reads them from settings.json (pluginConfigs) itself on every draw, from
 //   the entry the statusLine command names (`--config <key>`): the key this module's options are stored under.
 //   The engine does not hand a module its own key, so pluginKey derives it from the plugin's directory: an installed
@@ -250,6 +252,9 @@ async function toggleRow($: $, field: Field) {
   settling = field === 'enabled'
   try {
     await wiring
+    // The flag is only filled by the pane's refresh, which a reload's start has not finished yet: a press that comes first
+    // would read the line as unwired and flip an `off` into an `on`. The file says.
+    if (field === 'enabled') wired = isWired(await userSettings($), await configDir($))
     await applyRow($, field, !current(field))
   } catch (err) {
     note = `✗ ${reason(err)}`
@@ -331,9 +336,9 @@ async function needsWiring($: $): Promise<boolean> {
 // writes), each of which reads the file and writes it back whole: one of them can drop the line statusline-setup has
 // just written. So the line is looked at again VERIFY_MS later and wired once more if it is gone.
 export const VERIFY_MS = 3000
-// While enabled: `statusline-setup on` when needsWiring (wire), then a pane left up by a reload is taken back (adoptPane:
-// after the script, so it draws the line that is there), then the host's read of the file (so its next write of a row keeps
-// the line) and the second look. Silent.
+// `statusline-setup on` while enabled when needsWiring, `off` with the row off while junkd's line is wired (wire), then a
+// pane left up by a reload is taken back (adoptPane: after the script, so it draws the line that is there), then the
+// host's read of the file (so its next write of a row keeps the line) and the second look. Silent.
 export async function statuslineStart($: $): Promise<void> {
   const wires = await wire($)
   await adoptPane($)
@@ -344,10 +349,17 @@ export async function statuslineStart($: $): Promise<void> {
   }).catch(() => undefined)
 }
 // needsWiring and the script behind it, as the one thing a press waits for (`wiring`): true when the script ran. It is set
-// before the look at the files, which takes a moment of its own.
+// before the look at the files, which takes a moment of its own. With the row off the line is taken out again when the
+// host has written it back (the row's own write reloads the module and cancels the copy that would have looked: this
+// start is the one that does).
 function wire($: $): Promise<boolean> {
   const done = (async () => {
-    if (!S.enabled || !(await needsWiring($))) return false
+    if (!S.enabled) {
+      if (!isWired(await userSettings($), await configDir($))) return false
+      await runSetup($, 'off')
+      return true
+    }
+    if (!(await needsWiring($))) return false
     await runSetup($, 'on')
     return true
   })()
