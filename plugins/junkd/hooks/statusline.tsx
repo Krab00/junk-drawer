@@ -19,6 +19,13 @@
 //   junkd@ entry, which is the marketplace copy's whenever both are in the file.
 // The pane shows the rows, the key and a warning when a second junkd@ config could be the one the line reads, and a
 // preview: bin/statusline.sh run on a sample session, after every flip.
+// - every write of a row makes the host load this module again (it reads pluginConfigs anew), with the pane still on the
+//   screen: the new copy has nothing in memory, and the copy that wrote the row is cancelled where it waits. The start
+//   takes the pane back (adoptPane): it is among the panes the host has up, the files say what to draw, and the note of the
+//   flip was kept in $.store before the write. The key row is drawn from the first frame, so the rows never move under a
+//   click. A press is served by the `ui.press` hook (the closure of the drawing is gone for a moment after a reload), flips
+//   the row as it stands (not as an older drawing held it), waits for a script that is rewriting settings.json, and is
+//   refused while the wired switch is being applied.
 import type { On, RenderInput } from 'claude-code'
 import type { JunkdStatuslineField as Field } from '../types'
 import type { $, HideInput, OpenInput, SetResult, ShowInput } from './feature'
@@ -27,6 +34,9 @@ import { PLUGIN, configKey, configKeys, fieldOf, groupOptions, keyOf, rowsOf } f
 import { FIELDS, plain, statuslineView, type Els } from './statusline-views'
 
 const PANE = 'statusline'
+// $.store key of what the pane shows that a reload of the module would lose (the last row's note), and how long it holds.
+const KEPT = 'statusline-pane'
+const KEPT_MS = 10_000
 const isField = (key: unknown): key is Field => rowsOf('statusline').some(f => f.field === key)
 const S = Object.fromEntries(FIELDS.map(f => [f, true])) as Record<Field, boolean>
 
@@ -57,6 +67,17 @@ async function configDir($: $) {
 }
 
 const coerce = (raw: unknown) => raw === true || raw === 'true' || raw === 'on'
+// What a press flips: the row as it stands when the press is served (the switch for `enabled` is the wired line, not
+// the option), never the value an older drawing of the pane held.
+const current = (field: Field) => (field === 'enabled' ? S.enabled && wired : S[field])
+// The wired switch takes up to SETTLE_TRIES x SETTLE_MS to apply (it waits for the host's copy of settings.json), and
+// the write that ends it makes the host load this module again and cancel what the copy that wrote it still waits for. A
+// press that comes meanwhile would write beside it from a copy the host has not updated, or be lost with the old copy: it
+// is refused, and the note says so. A segment is written at once and needs no such wait.
+let settling = false
+// The script that the start runs rewrites settings.json from what it read; a press waits for it, or its row is lost in the
+// rewrite.
+let wiring: Promise<unknown> = Promise.resolve()
 
 // ------------------------------------------------------------------ the pluginConfigs key this module's options live under
 
@@ -176,25 +197,34 @@ async function lineFollows($: $, value: boolean): Promise<boolean> {
   return isWired(await userSettings($), await configDir($)) === value
 }
 
+// The note a row's flip leaves on the pane.
+const flipped = (field: Field, value: boolean) => `✓ ${field} ${value ? 'on' : 'off'}`
+
 // A row's write, on either path (`store` writes the row): enabled runs its script first and stores nothing when the
 // script refuses, waits for the host to read the file the script wrote (hostReadsFile), stores the row, and runs the
 // script once more when the file does not say what the row says after all; a refused row runs the other mode to put
-// settings.json back.
+// settings.json back. The note is kept in $.store before the write: the write makes the host load this module again,
+// and the copy that was running does not get to say how it went (adoptPane reads the note back).
 async function storeRow<R extends { deny?: string }>($: $, field: Field, value: boolean, store: () => Promise<R>): Promise<R | { deny: string }> {
-  if (field !== 'enabled') return store()
+  if (field !== 'enabled') return keeping($, field, value, store)
   const mode = value ? 'on' : 'off'
   const run = await runSetup($, mode)
   if (run.deny !== undefined) return { deny: run.deny }
   await hostReadsFile($)
-  const r = await store()
+  const r = await keeping($, field, value, store)
   if (r.deny !== undefined) await runSetup($, value ? 'off' : 'on')
   else if (!(await lineFollows($, value))) await runSetup($, mode)
   return r
 }
+async function keeping<R extends { deny?: string }>($: $, field: Field, value: boolean, store: () => Promise<R>): Promise<R> {
+  await $.store.set(KEPT, { note: flipped(field, value), at: Date.now() }).catch(() => undefined)
+  const r = await store()
+  if (r.deny !== undefined) await $.store.delete(KEPT).catch(() => undefined)
+  return r
+}
 
 // Writes one row and applies it; the pane's note says how it went.
-async function setRow($: $, field: Field, raw: unknown): Promise<SetResult> {
-  const value = coerce(raw)
+async function applyRow($: $, field: Field, value: boolean): Promise<SetResult> {
   const { deny } = await storeRow($, field, value, () => $.config.set({ key: configKey(keyOf('statusline', field)), value }))
   if (deny !== undefined) {
     note = `✗ ${deny}`
@@ -202,10 +232,31 @@ async function setRow($: $, field: Field, raw: unknown): Promise<SetResult> {
     return { deny }
   }
   S[field] = value
-  note = `✓ ${field} ${value ? 'on' : 'off'}`
+  note = flipped(field, value)
   await refreshPreview($)
   redraw($)
   return { value }
+}
+function setRow($: $, field: Field, raw: unknown) {
+  return applyRow($, field, coerce(raw))
+}
+// A press on a switch: the other value than the row has when the press is served.
+async function toggleRow($: $, field: Field) {
+  if (settling) {
+    note = '✗ the wired switch is still being applied: press again in a moment'
+    redraw($)
+    return
+  }
+  settling = field === 'enabled'
+  try {
+    await wiring
+    await applyRow($, field, !current(field))
+  } catch (err) {
+    note = `✗ ${reason(err)}`
+    redraw($)
+  } finally {
+    if (field === 'enabled') settling = false
+  }
 }
 
 // `$.ui.open` before any await: only an open made while the press or command runs counts as asked.
@@ -224,6 +275,18 @@ async function closePane($: $) {
 }
 function togglePane($: $) {
   return paneOpen ? closePane($) : openPane($)
+}
+// Every write of a row makes the host load this module again, with the pane still on the screen and nothing in
+// memory: not open, no note, the line not known to be wired, no preview. The start finds the pane among the panes the
+// host has up, reads the note back and draws what the files say.
+// ponytail: the mark that the /junkd set opened the pane (`owner`) is not kept; a pane the set opened closes alone
+// after a flip, until the set opens it again.
+async function adoptPane($: $) {
+  if (!(await $.ui.panes().catch(() => [])).some(p => p.id === PANE)) return
+  paneOpen = true
+  const kept = (await $.store.get(KEPT).catch(() => undefined)) as { note?: unknown; at?: unknown } | undefined
+  if (typeof kept?.note === 'string' && Date.now() - Number(kept.at) < KEPT_MS) note = kept.note
+  await refreshPreview($)
 }
 
 // ------------------------------------------------------------------ what index.tsx and dispatch.ts call
@@ -268,15 +331,28 @@ async function needsWiring($: $): Promise<boolean> {
 // writes), each of which reads the file and writes it back whole: one of them can drop the line statusline-setup has
 // just written. So the line is looked at again VERIFY_MS later and wired once more if it is gone.
 export const VERIFY_MS = 3000
-// While enabled: `statusline-setup on` when needsWiring, then the host's read of the file (so its next write of a row
-// keeps the line) and the second look. Silent.
+// While enabled: `statusline-setup on` when needsWiring (wire), then a pane left up by a reload is taken back (adoptPane:
+// after the script, so it draws the line that is there), then the host's read of the file (so its next write of a row keeps
+// the line) and the second look. Silent.
 export async function statuslineStart($: $): Promise<void> {
-  if (!S.enabled || !(await needsWiring($))) return
-  await runSetup($, 'on')
+  const wires = await wire($)
+  await adoptPane($)
+  if (!wires) return
   await hostReadsFile($)
   void $.clock.sleep(VERIFY_MS).then(async () => {
-    if (S.enabled && (await needsWiring($))) await runSetup($, 'on')
+    if (await wire($)) await refreshPreview($)
   }).catch(() => undefined)
+}
+// needsWiring and the script behind it, as the one thing a press waits for (`wiring`): true when the script ran. It is set
+// before the look at the files, which takes a moment of its own.
+function wire($: $): Promise<boolean> {
+  const done = (async () => {
+    if (!S.enabled || !(await needsWiring($))) return false
+    await runSetup($, 'on')
+    return true
+  })()
+  wiring = done
+  return done
 }
 
 export function registerStatusline(on: On, options: Record<string, unknown>): void {
@@ -320,6 +396,16 @@ export function registerStatusline(on: On, options: Record<string, unknown>): vo
     return {}
   })
 
+  // A press on a switch (a click, or its key a-g) is served here, not by the closure the drawing holds: that closure belongs to
+  // the copy of the module that drew the pane, and for a moment after a write has made the host load the module again it
+  // is gone, so a press then did nothing. The hook of the new copy is there at once. The other buttons (×) keep their closures.
+  on('ui.press', { component: 'Pane', requestId: PANE }, ($, e, next) => {
+    const field = e.element.startsWith('set:') ? e.element.slice('set:'.length) : undefined
+    if (!isField(field)) return next(e)
+    void toggleRow($, field)
+    return { element: e.element }
+  })
+
   // The person's closes (q, ×) pass here; ours go through closePane.
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const isSet = isSets(owner)
@@ -332,9 +418,9 @@ export function registerStatusline(on: On, options: Record<string, unknown>): vo
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e: RenderInput<'Pane'>, next) => {
     if (e.surface === 'mobile') return next(e)
-    return statuslineView($.ui.resolve(e) as Els, e.props, { values: { ...S, enabled: S.enabled && wired }, preview, note, config: configInfo }, {
+    return statuslineView($.ui.resolve(e) as Els, e.props, { values: { ...S, enabled: S.enabled && wired }, preview, note, config: { ...configInfo, key: configInfo.key || pluginKey($.plugin.root) } }, {
       close: () => void (isSets(owner) ? shutSet($) : closePane($)),
-      set: (field, value) => void setRow($, field, value),
+      toggle: field => void toggleRow($, field),
     })
   })
 }
