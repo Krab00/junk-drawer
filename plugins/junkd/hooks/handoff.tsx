@@ -639,7 +639,7 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     // A handoff written since the loop was armed that it did not ask for (the person's, a /junkd:handoff by hand)
     // continues the chain like its own. ponytail: one folder listing per idle turn; a file counts when the loop never
     // recorded it and it is newer than the arming — a file written while the loop was off is older.
-    const external = !S.fresh && S.phase === 'idle' ? await externalHandoff($) : undefined
+    const external = S.phase === 'idle' ? await externalHandoff($) : undefined
     if (S.fresh) {
       // nothing: the first measurement of the new window decides (session.measure)
       await m('skip:fresh')
