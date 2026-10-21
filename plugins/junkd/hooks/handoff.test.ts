@@ -31,6 +31,10 @@ const FILES: Record<string, { mtimeMs: number; text: string }> = {
 const usage = (percent: number) => ({
   startedAt: 0, context: { window: 200000, tokens: percent * 2000, percent }, rateLimits: [],
 })
+// A 1M window with `tokens` used: the percent is the host's whole percentage of it.
+const usageTokens = (tokens: number) => ({
+  startedAt: 0, context: { window: 1_000_000, tokens, percent: Math.floor(tokens / 10_000) }, rateLimits: [],
+})
 // The host before a window's first response: the fill is absent, not zero.
 const noFill = () => ({ startedAt: 0, context: { window: 200000 }, rateLimits: [] })
 
@@ -46,6 +50,7 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
   mock.env(on, { HOME })
   const rec = {
     percent: 10,
+    tokens: undefined as number | undefined, // when set, the used tokens on a 1M window (the percent follows); overrides `percent`
     commands: [] as string[],
     prompts: [] as string[],
     opened: [] as string[],
@@ -64,7 +69,7 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
     dropPrompt: undefined as string | undefined, // the prompt.submit bottom refuses with this reason
   }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
-  on('session.usage', () => ({ value: rec.noFill ? noFill() : usage(rec.percent) }))
+  on('session.usage', () => ({ value: rec.noFill ? noFill() : rec.tokens === undefined ? usage(rec.percent) : usageTokens(rec.tokens) }))
   on('session.id', () => {
     if (rec.sid === undefined) throw new Error('no session')
     return { value: rec.sid }
@@ -1751,4 +1756,241 @@ test('a fresh window that leaves exactly 100 as the limit disarms too (nothing a
   await new Promise(r => setTimeout(r, 20))
   await measure($, 50) // the window opens at the threshold: 50 + 50 = 100
   expect(bodies(rec).at(-1)).toContain('note=base-set,fresh-cleared,auto-disarmed')
+})
+
+// ------------------------------------------------------------------ T34: the threshold in tokens, a change re-arms, any handoff continues
+
+const TOKENS_300 = { options: { handoff_threshold: 300, handoff_checkEvery: 1 } }
+const lastLog = (rec: { logs: { line: string }[] }) => bodies(rec).at(-1) ?? ''
+
+test('the default threshold is 300 thousand tokens: the row, get and the first limit', { ...WITH_CALLER, options: { handoff_checkEvery: 1 } }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  expect(await get($, 'threshold')).toBe(300)
+  await handoff($, 'auto')
+  rec.tokens = 100_000
+  await $.tool.call(READ)
+  expect(lastLog(rec)).toBe('tool.call percent=10 used=100000 limit=300000 armed=true fresh=false decision=skip:below-limit base=0 threshold=300 phase=idle window=1000000')
+})
+
+test('tokens: 299999 used is below a 300 threshold, exactly 300000 hands off; the log has used= and no legacy note', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.tokens = 299_999
+  expect(denial(await $.tool.call(READ))).toBeUndefined()
+  expect(lastLog(rec)).toBe('tool.call percent=29 used=299999 limit=300000 armed=true fresh=false decision=skip:below-limit base=0 threshold=300 phase=idle window=1000000')
+  rec.tokens = 300_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+  expect(lastLog(rec)).toBe('tool.call percent=30 used=300000 limit=300000 armed=true fresh=false decision=fire base=0 threshold=300 phase=idle window=1000000')
+  expect(rec.logs.every(l => LOG_LINE.test(l.line)), rec.logs.map(l => l.line).join('\n')).toBe(true)
+})
+
+test('the legacy rule: 100 or less is a percent of the window (note=legacy-percent), 101 and up are thousands of tokens', { ...WITH_CALLER, options: { handoff_checkEvery: 1 } }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await handoff($, 'auto')
+  rec.tokens = 150_000 // 15% of a 1M window
+  await $.tool.call(READ) // the window is known now
+  await set($, 'threshold', 100) // 100% of 1M = 1M tokens
+  await $.tool.call(READ)
+  expect(lastLog(rec)).toBe('tool.call percent=15 used=150000 limit=1000000 armed=true fresh=false decision=skip:below-limit base=0 threshold=100 phase=idle window=1000000 note=legacy-percent')
+  await set($, 'threshold', 101) // 101k tokens
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+  expect(lastLog(rec)).toBe('tool.call percent=15 used=150000 limit=101000 armed=true fresh=false decision=fire base=0 threshold=101 phase=idle window=1000000')
+  await set($, 'threshold', 10) // 10% of 1M = 100k
+  expect(lastLog(rec)).toContain('limit=100000')
+  expect(lastLog(rec)).toContain('note=rearmed,legacy-percent')
+})
+
+test('a threshold change while armed re-arms: the next measurement compares with the new limit, the log and a toast say so (the /config menu)', { ...WITH_CALLER, ...TOKENS_300 }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await handoff($, 'auto')
+  rec.tokens = 120_000
+  expect(denial(await $.tool.call(READ))).toBeUndefined() // below the old 300k
+  expect((await menu($, 'threshold', 150)).deny).toBeUndefined()
+  expect(lastLog(rec)).toBe('config.set percent=12 used=120000 limit=150000 armed=true fresh=false decision=skip:threshold-changed base=0 threshold=150 phase=idle window=1000000 note=rearmed')
+  expect(rec.toasts).toContain('ahandoff: threshold now 150k')
+  expect(denial(await $.tool.call(READ))).toBeUndefined() // 120k is below the new 150k
+  rec.tokens = 150_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // and 150k is at it
+  expect(lastLog(rec)).toContain('limit=150000 armed=true fresh=false decision=fire')
+})
+
+test('a threshold change re-arms by $.junkd.set and by the pane row too, each once', { ...WITH_CALLER, ...TOKENS_300 }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await handoff($, 'auto')
+  rec.tokens = 120_000
+  await $.tool.call(READ)
+  const rearms = () => bodies(rec).filter(l => l.includes('note=rearmed')).length
+  await set($, 'threshold', 200)
+  expect(rearms()).toBe(1)
+  expect(lastLog(rec)).toContain('limit=200000')
+  expect(rec.toasts.filter(t => t === 'ahandoff: threshold now 200k')).toHaveLength(1)
+  await handoff($, 'panel')
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  await hotkey(ui, '3')
+  const field = (await ui.findAll({ type: 'Input' })).find(i => /^threshold/.test(i.key ?? ''))
+  await ui.input({ key: field!.key!, text: '250' })
+  await ui.unmount()
+  expect(rearms()).toBe(2)
+  expect(rec.toasts).toContain('ahandoff: threshold now 250k')
+  expect(lastLog(rec)).toContain('limit=250000')
+})
+
+test('a threshold change with the loop off re-arms nothing: no log line, no toast', { ...WITH_CALLER, ...TOKENS_300 }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await menu($, 'threshold', 150)
+  await set($, 'threshold', 200)
+  expect(rec.logs).toEqual([])
+  expect(rec.toasts.filter(t => /threshold now/.test(t))).toEqual([])
+  expect(await get($, 'threshold')).toBe(200)
+})
+
+test('a threshold change keeps the baseline of the loop\'s own fresh window: the limit is base + threshold when the new threshold is at or under it', { ...WITH_CALLER, ...TOKENS_300 }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  seed(on, kept({ base: 200_000, fresh: false, threshold: 300 }))
+  await start($)
+  await menu($, 'threshold', 150) // 150k is under the 200k the window started at: growth of 150k above it
+  expect(lastLog(rec)).toBe('config.set percent=0 used=0 limit=350000 armed=true fresh=false decision=skip:threshold-changed base=200000 threshold=150 phase=idle window=0 note=rearmed')
+  rec.tokens = 349_999
+  expect(denial(await $.tool.call(READ))).toBeUndefined()
+  rec.tokens = 350_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+})
+
+test('a reload that brings a new threshold (the /config change reloaded the module) re-arms once the loop is restored', { options: { handoff_threshold: 150, handoff_checkEvery: 1 } }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  seed(on, kept({ base: 0, fresh: false, threshold: 300 })) // the loop as the old module left it, at 300
+  await start($)
+  expect(bodies(rec).filter(l => l.includes('note=rearmed'))).toHaveLength(1)
+  expect(lastLog(rec)).toContain('session.start')
+  expect(lastLog(rec)).toContain('decision=skip:threshold-changed')
+  expect(rec.toasts).toContain('ahandoff: threshold now 150k')
+})
+
+test('a reload with the same threshold re-arms nothing', { options: { handoff_threshold: 300, handoff_checkEvery: 1 } }, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  seed(on, kept({ base: 0, fresh: false, threshold: 300 }))
+  await start($)
+  expect(bodies(rec).filter(l => l.includes('rearmed'))).toEqual([])
+  expect(rec.toasts.filter(t => /threshold now/.test(t))).toEqual([])
+})
+
+// ---- a handoff written by anyone, while armed, continues the chain
+
+// A handoff file that appears in the folder now (a moment after the arming); gone again when the test ends.
+const dropped: string[] = []
+const drop = (id: string, ageMs = -5) => {
+  const name = `2026-10-21T10-00_${id}.md`
+  FILES[name] = { mtimeMs: Date.now() - ageMs, text: '# By hand\n' }
+  dropped.push(name)
+}
+const undrop = () => { for (const n of dropped.splice(0)) delete FILES[n] }
+
+test('a handoff nobody asked the loop for, written while armed: fire:external-handoff, then /clear, handon and the continuation, once', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  try {
+    await start($)
+    await ahandoff($, '')
+    rec.tokens = 50_000 // far below the limit: the loop would not have asked
+    drop('deadbeef')
+    await turn($)
+    expect(lastLog(rec)).toBe('turn.complete percent=5 used=50000 limit=300000 armed=true fresh=false decision=fire:external-handoff base=0 threshold=300 phase=idle window=1000000')
+    await handonRuns($, rec, clock, [handonOf('deadbeef')])
+    expect(rec.commands.indexOf('clear')).toBeGreaterThanOrEqual(0)
+    expect(rec.commands.indexOf('junkd:handon deadbeef')).toBeGreaterThan(rec.commands.indexOf('clear'))
+    expect(rec.commands, 'the loop asked for no handoff of its own').not.toContain('junkd:handoff')
+    expect(rec.contexts.at(-1)?.join('\n')).toContain('continue as they asked: Continue after the handoff')
+    // the same file is not found again
+    const before = rec.commands.length
+    await turn($)
+    await clock.advance(1000)
+    expect(rec.commands.length).toBe(before)
+    expect(bodies(rec).filter(l => l.includes('fire:external-handoff'))).toHaveLength(1)
+  } finally { undrop() }
+})
+
+test('an external handoff written through the Write tool (/junkd:handoff by hand) is found at the turn end too', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  try {
+    await start($)
+    await ahandoff($, '')
+    rec.tokens = 50_000
+    await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_cafe0123.md`, content: '# h' })
+    drop('cafe0123')
+    await turn($)
+    expect(lastLog(rec)).toContain('decision=fire:external-handoff')
+    await handonRuns($, rec, clock, [handonOf('cafe0123')])
+    expect(rec.commands).toContain('junkd:handon cafe0123')
+  } finally { undrop() }
+})
+
+test('a handoff written while the loop is off does nothing, and neither does it once the loop is armed after it', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  try {
+    await start($)
+    drop('0ff0ff00', 10)
+    await turn($)
+    await clock.advance(1000)
+    expect(rec.commands).toEqual([])
+    await new Promise(r => setTimeout(r, 15)) // the arming comes after the file
+    await ahandoff($, '')
+    await turn($)
+    await clock.advance(1000)
+    expect(rec.commands, 'older than the arming: not the loop\'s').toEqual([])
+    expect(bodies(rec).some(l => l.includes('external'))).toBe(false)
+  } finally { undrop() }
+})
+
+test('external handoffs leave the 3-tries cap alone: five in a row keep the loop armed, each one continues', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  try {
+    await start($)
+    await ahandoff($, '')
+    for (const id of ['aaaa0001', 'aaaa0002', 'aaaa0003', 'aaaa0004', 'aaaa0005']) {
+      drop(id)
+      await turn($)
+      await handonRuns($, rec, clock, [handonOf(id)])
+      expect(rec.commands, id).toContain(`junkd:handon ${id}`)
+      rec.tokens = 20_000
+      await $.session.measure({ context: usageTokens(20_000).context, rateLimits: [], changed: ['context'] }) // the fresh window opens
+    }
+    expect(bodies(rec).filter(l => l.includes('give-up'))).toEqual([])
+    expect(rec.toasts.filter(t => /not written after/.test(t))).toEqual([])
+  } finally { undrop() }
+})
+
+test('the loop\'s own ask still gives up after 3 tries (the cap counts the loop\'s asks only)', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.tokens = 400_000
+  await turn($) // fire: ask 1
+  await clock.advance(1000)
+  await turn($) // ask 2
+  await clock.advance(1000)
+  await turn($) // ask 3
+  await clock.advance(1000)
+  await turn($) // gives up
+  expect(bodies(rec).some(l => l.includes('give-up:3-tries'))).toBe(true)
+  expect(rec.toasts.some(t => /not written after 3 tries/.test(t))).toBe(true)
 })
