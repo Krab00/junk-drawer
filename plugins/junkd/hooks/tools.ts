@@ -72,6 +72,7 @@ export const T = {
   enabled: true,
   refresh: REFRESH_DEFAULT,
   agentsOnly: false,
+  showAll: false, // the Agents tab lists the active agents only; `a` flips it to all, for the session
   open: false,
   loaded: false, // a first load since the pane opened has finished: until then the tabs draw `reading…`
   route: 'agents' as Route,
@@ -90,7 +91,7 @@ export const T = {
 // Every field back to its start: a register is a fresh load of the module.
 export function resetTools(): void {
   Object.assign(T, {
-    open: false, loaded: false, route: 'agents', selected: null, selectedAt: 0, folded: Object.create(null), since: 0,
+    showAll: false, open: false, loaded: false, route: 'agents', selected: null, selectedAt: 0, folded: Object.create(null), since: 0,
     counters: emptyCounters(), worktrees: [], agents: [], seen: Object.create(null), spawned: Object.create(null), mcp: [],
   })
 }
@@ -218,6 +219,9 @@ export type Status = 'running' | 'waiting' | 'done'
 export const isDone = (status: string) => status === 'completed' || status === 'failed' || status === 'killed'
 export const statusOf = (status: string): Status =>
   isDone(status) ? 'done' : status === 'waiting' || status === 'idle' ? 'waiting' : 'running'
+
+// Active = running or waiting (idle); finished = completed, failed or killed, the statuses the agent list already carries.
+export const activeOf = (agents: readonly AgentInfo[], all: boolean) => (all ? agents : agents.filter(a => !isDone(a.status)))
 
 export type NodeKind = 'root' | 'worktree' | 'agent'
 export type Node = {
