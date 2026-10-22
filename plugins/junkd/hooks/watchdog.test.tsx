@@ -727,6 +727,19 @@ test('the stop record on disk counts too (a reload lost the module\'s), its mtim
   expect(w.rec.stops).toEqual(['v1', 'v2'])
 })
 
+test('a TaskStop answering "is not running" is a stop done: recorded as stopped, no could-not-stop toast, not retried', W_, async ($, on) => {
+  const w = world(on)
+  await start($)
+  w.rec.stopAnswer = { result: 'x', isError: true, text: '<tool_use_error>Task v1 is not running (status: completed)</tool_use_error>' }
+  w.rec.agents = [agent('v1', 'completed', { type: 'ui-reviewer', name: 'ui-T17' })]
+  await ticks(w, 1)
+  expect(w.rec.toasts).toEqual(['⚠ stopped ui-T17: reported 0 min ago'])
+  expect(logLines(w).map(l => l.kind)).toEqual(['idle-stopped'])
+  await ticks(w, 3)
+  expect(w.rec.stops).toEqual(['v1']) // no retry
+  expect(w.rec.toasts.filter(t => /could not/.test(t))).toEqual([])
+})
+
 test('a stop that fails is said once per reason and logged, never marked stopped, and retried at every tick until it works', W_, async ($, on) => {
   const w = world(on)
   await start($)

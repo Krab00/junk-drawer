@@ -247,7 +247,7 @@ async function stopAgent($: $, id: string, state: WatchState): Promise<true | st
   try {
     const r = (await $.tool.call({ tool: 'TaskStop', task_id: id } as never)) as { deny?: string; isError?: boolean; text?: string }
     if (r.deny !== undefined) return r.deny
-    if (r.isError) return r.text || 'TaskStop failed'
+    if (r.isError) return /is not running/.test(r.text ?? '') ? true : r.text || 'TaskStop failed' // not running: already stopped
     return true
   } catch (err) {
     return reason(err)
