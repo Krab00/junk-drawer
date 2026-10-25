@@ -20,11 +20,20 @@ export const S = {
   armed: false,
   phase: 'idle' as Phase,
   prompt: DEFAULT_PROMPT, // what the fresh session is told after /junkd:handon; `p` in the pane changes it
-  written: null as string | null, // handoff file written this cycle
+  written: null as string | null, // handoff file written this cycle: its Write succeeded; the turn end checks it is on disk before it continues
+  candidate: null as string | null, // a handoff Write the model is making now (tool.call, before its result); promoted to `written` on success
   calls: 0,
   pending: null as { id: string; text: string; delivered: boolean } | null, // the continuation the handon turn carries (handoffContinuation)
   asks: 0, // times this cycle asked the model for the handoff file (1 when the loop fires, +1 per re-ask, 0 once it is written); MAX_ASKS then gives up
   clearTries: 0, // retries of a /clear that timed out or threw since one last worked; MAX_CLEAR_RETRIES then gives up
+  resumeTries: 0, // turn ends that found the phase at resume with no chain in flight, this cycle; MAX_RESUME_RETRIES then gives up
+  inFlight: false, // the clear → handon chain (continueFrom) is running: from its start to its end, the handon command included
+  turnBusy: false, // a loop turn end is deciding (turnEnd): a second one in flight meanwhile skips, so one decision per state
+  chain: 0, // the latest continueFrom's number: a chain that is no longer the latest stops (a retry or a reset superseded it)
+  since: Date.now(), // when the phase last changed (setPhase)
+  epoch: 0, // phase changes so far; the disk-trouble toast says itself once per epoch
+  warned: -1, // the epoch the disk-trouble toast last showed in; -1 = never
+  thresholdSrc: 'default' as 'default' | 'settings', // where S.threshold came from: the option the engine handed, a set, or the default
   count: 0,
   lastId: null as string | null,
   fresh: false, // right after /clear: usage() still reports the old window until the first response
@@ -44,6 +53,7 @@ export const S = {
   window: 0, // the context window the host reported with the last measurement (tokens); 0 = none yet
   last: '', // the last measurement as the log wrote it (without its time), for /junkd:ahandoff status; '' = none yet
   lastAt: 0,
+  logPath: '', // the measurement log's path as the last append found it; '' = none yet
   armedAt: null as number | null,
   external: null as string | null, // a handoff file the main loop wrote while armed and idle, not asked for by the loop; the turn end follows it
   route: 'auto' as Route,
@@ -62,10 +72,19 @@ export const S = {
   version: '0.3.0',
 }
 
+// Every phase change goes through here: `since` and the epoch move only when the phase does.
+export function setPhase(p: Phase): void {
+  if (S.phase === p) return
+  S.phase = p
+  S.since = Date.now()
+  S.epoch++
+}
+
 export function loadOptions(options: Record<string, unknown>): void {
   // a value `set` would refuse falls back to the default, so what loads is what `set` could have stored
   const num = (f: Field, d: number) => (coerce(f, options[f] ?? d).value as number | undefined) ?? d
   S.threshold = num('threshold', 300)
+  S.thresholdSrc = coerce('threshold', options.threshold).error === undefined && options.threshold !== undefined ? 'settings' : 'default'
   S.checkEvery = num('checkEvery', 5)
   S.enabled = options.enabled === undefined ? true : Boolean(options.enabled)
   S.autoOn = Boolean(options.autoOn)
@@ -88,6 +107,10 @@ export const MAX_ASKS = 3
 // ponytail: both are the person's figures (10 s, 3), not measured against the host.
 export const CLEAR_TIMEOUT_MS = 10_000
 export const MAX_CLEAR_RETRIES = 3
+// The cycle's resume (phase `resume` with no clear → handon chain running, seen live: a persist that rejected before the
+// chain was started left it there for good): how many turn ends start the chain again before the loop goes back to idle.
+// ponytail: the person's figure, as MAX_CLEAR_RETRIES; counted in turn ends, never in time — a handon runs a whole turn.
+export const MAX_RESUME_RETRIES = 3
 
 export const LIMIT_PROMPT = 'Continue where the rate limit stopped you'
 export const LIMIT_GRACE = 120_000 // 2 min after the window resets
@@ -101,6 +124,11 @@ export const thresholdTokens = (): number => (isLegacy() ? Math.round((S.thresho
 export const kTokens = (n: number): string => (Number.isFinite(n) ? `${Math.round(n / 1000)}k` : '?')
 // The threshold as the person set it: `300k`, or `85%` while it is legacy.
 export const thresholdText = (): string => (isLegacy() ? `${S.threshold}%` : `${S.threshold}k`)
+
+// Where the threshold comes from, for the status: the plugin setting `handoff_threshold` (never the ctx-limit guard's
+// own ~/.claude/junkd/ctx-limit-threshold file, a different feature), and how it is read.
+export const thresholdSource = (): string =>
+  `src=${S.thresholdSrc} handoff_threshold=${S.threshold} ${isLegacy() ? 'legacy-percent' : `tokens=${S.threshold * 1000}`}`
 
 // The used tokens that trigger a handoff: the threshold, or — when the window already starts at or above it —
 // threshold tokens of growth above the window's baseline. A legacy percent with no window reported yet is no limit.
@@ -140,6 +168,26 @@ export function coerce(field: Field, raw: unknown): Coerced {
 // The current value of a field as the mod holds it (options at load, then every set).
 export function current(field: Field): number | boolean {
   return S[field]
+}
+
+// How long ago `ms` was, coarse: `12s ago`, `3m ago`, `2h ago`, `4d ago`.
+export function ago(ms: number, now = Date.now()): string {
+  const s = Math.max(0, Math.round((now - ms) / 1000))
+  return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86_400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86_400)}d ago`
+}
+
+// The loop's own state as `/junkd:ahandoff status` and the pane show it, one `label value` pair each.
+export function loopState(now = Date.now()): [string, string][] {
+  return [
+    ['armed', String(S.armed)],
+    ['phase', S.phase],
+    ['since', `${new Date(S.since).toISOString()} (${ago(S.since, now)})`],
+    ['retries', `clear ${S.clearTries}/${MAX_CLEAR_RETRIES} · resume ${S.resumeTries}/${MAX_RESUME_RETRIES}`],
+    ['written', S.written ?? (S.candidate ? `${S.candidate} (writing)` : 'none')],
+    ['lastId', S.lastId ?? 'none'],
+    ['pending', S.pending ? S.pending.id : 'none'],
+    ['threshold', thresholdSource()],
+  ]
 }
 
 export const status = () => ({ armed: S.armed, percent: S.percent, phase: S.phase })

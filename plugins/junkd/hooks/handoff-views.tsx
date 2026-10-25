@@ -1,6 +1,6 @@
 // The panel's three tabs (Auto, Handoffs, Settings) as `View`s: each reads `S` and calls
 // `c.api`, handoff.tsx draws the tabs, the rule and the footer around what they return.
-import { DEFAULT_PROMPT, S, kTokens, limit, thresholdText, type Entry, type Route } from './handoff-lib'
+import { DEFAULT_PROMPT, S, kTokens, limit, loopState, thresholdText, type Entry, type Route } from './handoff-lib'
 import { Chosen, Field, Filled, Hidden, P, Rule, Spacer, fit, line, when, type Ctx, type View } from './handoff-ui'
 
 
@@ -43,6 +43,7 @@ const Switch = ({ c, k, hotkey, on, flip }: { c: Ctx; k: string; hotkey: string;
 // The bar's colour as the segment's: ok, warn within 10% of the limit, bad over it.
 const level = () => (S.tokens >= limit() ? P.bad : S.tokens >= limit() * 0.9 ? P.warn : P.ok)
 
+const LOOP: Record<string, string> = { since: 'Since', retries: 'Retries', written: 'Written', pending: 'Pending', threshold: 'Threshold' }
 const PHASE: Record<string, string> = { idle: 'idle, watching', handoff: 'writing the handoff…', clear: 'clearing…', resume: 'resuming…' }
 
 const auto: View = (c) => {
@@ -94,6 +95,12 @@ const auto: View = (c) => {
           <Row c={c} label="State">
             <Text><Text color={S.armed ? P.ok : P.secondary}>{S.armed ? '●' : '○'}</Text>{` ${S.phase === 'idle' && !S.armed ? 'idle, off' : PHASE[S.phase]}`}</Text>
           </Row>
+          {/* what /junkd:ahandoff status says of the loop (armed, phase and lastId have their own rows), the threshold's source last */}
+          {loopState().filter(([k]) => k !== 'armed' && k !== 'phase' && k !== 'lastId').map(([k, v]) => (
+            <Row key={`loop-${k}`} c={c} label={LOOP[k] ?? k}><Text color={P.secondary} wrap="truncate">{line(v)}</Text></Row>
+          ))}
+          <Row c={c} label="Measured"><Text color={P.secondary} wrap="truncate">{line(S.last ? `${hhmm(S.lastAt)} ${S.last}` : 'none yet')}</Text></Row>
+          <Row c={c} label="Log"><Text color={P.secondary} wrap="truncate">{line(S.logPath || 'none yet')}</Text></Row>
           <Row c={c} label="Continue with"><Text wrap="truncate">{line(cont)}</Text></Row>
           <Box paddingLeft={16} flexDirection="column">
             <Field c={c} k="prompt-field" label="Set prompt" hotkey="p" hint="sent after each /junkd:handon · empty = default" placeholder="e.g. /junkd:orch all"

@@ -64,13 +64,20 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
     noFill: false, // usage() answers no percent (a window before its first response)
     logs: [] as { dir: string; path: string; line: string }[], // the measurement log's appends, in order
     logFails: false, // the append itself fails
+    logExit: 0, // the append's exit status (a full disk fails the >> with 1, it does not throw)
+    usageThrows: false, // $.session.usage() throws
+    missing: new Set<string>(), // paths $.fs.exists answers false for (every other path exists)
+    existsThrows: false, // $.fs.exists rejects
     contexts: [] as (readonly string[] | undefined)[], // each submission's context, beside rec.prompts
     clearMode: 'ok' as 'ok' | 'empty' | 'hang' | 'throw' | 'deny', // what /clear does: ok/empty run (empty = the real { text: '' }), deny = a hook above refused (resolves {})
     handonHold: undefined as Promise<void> | undefined, // /junkd:handon does not end until this resolves
     dropPrompt: undefined as string | undefined, // the prompt.submit bottom refuses with this reason
   }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
-  on('session.usage', () => ({ value: rec.noFill ? noFill() : rec.tokens === undefined ? usage(rec.percent) : usageTokens(rec.tokens) }))
+  on('session.usage', () => {
+    if (rec.usageThrows) throw new Error('usage blew up')
+    return { value: rec.noFill ? noFill() : rec.tokens === undefined ? usage(rec.percent) : usageTokens(rec.tokens) }
+  })
   on('session.id', () => {
     if (rec.sid === undefined) throw new Error('no session')
     return { value: rec.sid }
@@ -111,12 +118,16 @@ function world(on: On, o: { commands?: { name: string; description: string; sour
     rec.runs.push(e.argv.join(' '))
     if (e.argv[0] === 'sh' && e.argv[2]?.includes('>>')) { // the log's append: sh -c '<script>' sh <dir> <path> <line>
       if (rec.logFails) throw new Error('read-only file system')
+      if (rec.logExit) return { value: { exitCode: rec.logExit, stdout: '', stderr: 'sh: write error: No space left on device', isStdoutTruncated: false, isStderrTruncated: false } }
       rec.logs.push({ dir: e.argv[4]!, path: e.argv[5]!, line: e.argv[6]! })
     }
     const stdout = e.argv.join(' ').includes('$HOME') ? `${HOME}\n` : ''
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  on('fs.exists', () => ({ value: true }))
+  on('fs.exists', (_$, e) => {
+    if (rec.existsThrows) throw new Error('network location')
+    return { value: !rec.missing.has(e.path) }
+  })
   on('fs.write', () => ({ value: undefined }))
   on('fs.stat', () => ({ deny: 'ENOENT' })) // no file: the stat rejects
   on('fs.list', (_$, e) => ({
@@ -1338,7 +1349,8 @@ test('/junkd:ahandoff status: off or on, the limit, the last measurement and the
   mock.clock(on)
   await start($)
   const text = async () => ((await ahandoff($, 'status')) as { text: string }).text
-  expect(await text()).toBe(`handoff auto off — threshold 5% — limit ? — last measurement: none yet — log: ${HOME}/.claude/junkd/handoff/sess-1.log`)
+  // the first line as before; the loop's own state follows it, one line each (ADHOC-1 H(g) pins those)
+  expect((await text()).split('\n')[0]).toBe(`handoff auto off — threshold 5% — limit ? — last measurement: none yet — log: ${HOME}/.claude/junkd/handoff/sess-1.log`)
   await ahandoff($, '')
   rec.percent = 3
   await $.tool.call(READ)
@@ -2349,4 +2361,803 @@ test('a /clear that works again restarts the retry count: the next lost clear ge
     await settle()
   }
   expect(clears(rec)).toBe(4)
+})
+
+// ---------------------------------------------------------------------------------------------------------------------
+// ADHOC-1: the wedge at phase=resume (session 470f8f44, a full disk). A handoff Write that failed was taken as written,
+// follow() awaited a persist that rejected before it started the chain, the rejection skipped sync and next(e), and the
+// phase sat at resume for good with nothing to retry it. Each test is named H(<letter>) after the task's test list.
+
+const ENOSPC = 'ENOSPC: no space left on device'
+const WRITE = (id: string) => ({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_${id}.md`, content: '# h' }) as const
+const DISK = 'auto-handoff: cannot write log/state — disk full?'
+const diskToasts = (rec: { toasts: string[] }) => rec.toasts.filter(t => t === DISK).length
+const statusLines = async ($: Engine) => ((await ahandoff($, 'status')) as { text: string }).text.split('\n')
+// The decision lines the log holds, in order.
+const decisions = (rec: { logs: { line: string }[] }) => bodies(rec).map(l => /decision=(\S+)/.exec(l)?.[1] ?? '')
+
+// What the failing pieces of a full disk do, each switched on by the test: the store's write of the loop's key and the
+// handoff Write (registered before world() so each answers ahead of it); the existence check is world's rec.missing.
+function disk(on: On) {
+  const d = { store: undefined as 'reject' | 'hang' | undefined, write: undefined as 'error' | 'throw' | 'deny' | undefined, hold: undefined as Promise<void> | undefined }
+  on('store.set', { key: 'ahandoff' }, (_$, e, next) => {
+    if (d.store === 'reject') throw new Error(ENOSPC)
+    if (d.store === 'hang') return new Promise(() => {}) as never
+    return next(e)
+  })
+  on('tool.call', { tool: 'Write' }, async (_$, e, next) => {
+    if (d.hold) await d.hold // the Write is still running
+    if (d.write === 'error') return { isError: true, result: ENOSPC, text: `${ENOSPC}, open '${String(e.file_path)}.tmp.3148'` } as never
+    if (d.write === 'throw') throw new Error(ENOSPC)
+    if (d.write === 'deny') return { deny: 'not here' }
+    return next(e)
+  })
+  return d
+}
+
+// The loop fired and asked for its handoff: the next Write of a handoff is the cycle's own.
+async function reachAsk($: Engine, rec: ReturnType<typeof world>, clock: { advance(ms: number): Promise<unknown> }) {
+  await start($)
+  await ahandoff($, '')
+  rec.tokens = 400_000
+  await turn($) // fire
+  await clock.advance(1000) // the queued /junkd:handoff
+  expect(lastLog(rec)).toContain('decision=fire')
+}
+
+test('H(a) a store.set that rejects inside follow (ENOSPC): the chain still runs, the phase reaches clear, cycle:persist-failed is logged, next(e) runs', TOKENS_300, async ($, on) => {
+  const d = disk(on)
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  d.store = 'reject'
+  const r = (await turn($)) as { text?: string }
+  expect(r.text, 'next(e) ran: the engine below answered').toBe('done')
+  await settle() // the detached persist settles
+  const failed = bodies(rec).find(l => l.includes('decision=cycle:persist-failed'))
+  expect(failed, bodies(rec).join('\n')).toMatch(/ note=err=\S+$/) // the host's message, one token
+  expect(failed).toContain('phase=resume')
+  await clock.advance(1) // the chain starts: it was started before the persist, not after it
+  await settle()
+  expect(bodies(rec).find(l => l.includes('cycle:clear-issued'))).toContain('phase=clear')
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(rec.commands).toContain('junkd:handon abcdef12')
+  expect(await statusLines($)).toContain('phase idle') // the chain ended: the loop is idle again, still armed
+  expect((await statusLines($))[0]).toMatch(/^handoff auto on/)
+  expect(decisions(rec)).not.toContain('skip:phase-resume')
+})
+
+test('H(a) a store.set that never answers inside follow: the turn ends at once and the chain still runs (follow never waits on the persist)', TOKENS_300, async ($, on) => {
+  const d = disk(on)
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  d.store = 'hang'
+  const ended = await Promise.race([turn($).then(() => 'ended'), new Promise(r => setTimeout(() => r('held'), 200))])
+  expect(ended).toBe('ended')
+  expect(lastLog(rec)).toContain('decision=cycle:continue')
+  await clock.advance(1)
+  await settle()
+  expect(rec.commands).toContain('clear')
+})
+
+test('H(a) a store.set that rejects at arming and at the end of the chain: arming still arms, the chain still ends idle and sends the continuation', TOKENS_300, async ($, on) => {
+  const d = disk(on)
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  d.store = 'reject'
+  expect(((await ahandoff($, '')) as { text?: string }).text).toBe('handoff auto on — threshold 300k')
+  rec.tokens = 400_000
+  await turn($)
+  await clock.advance(1000)
+  await $.tool.call(WRITE('abcdef12'))
+  await turn($)
+  await handonRuns($, rec, clock, [])
+  expect(rec.prompts).toContain('Continue after the handoff') // the last step after the failed persist ran
+  expect(await statusLines($)).toContain('phase idle')
+  expect(bodies(rec).filter(l => l.includes('cycle:persist-failed')).length).toBe(3) // arm, follow, chain end
+})
+
+for (const [how, why] of [['error', 'the tool reports an error'], ['throw', 'the tool call throws'], ['deny', 'a hook refuses it']] as const) {
+  test(`H(b) a handoff Write that fails (${why}): no cycle:continue, cycle:written-missing with its path, the turn end asks again`, TOKENS_300, async ($, on) => {
+    const d = disk(on)
+    const rec = world(on)
+    const clock = mock.clock(on)
+    await reachAsk($, rec, clock)
+    d.write = how
+    await $.tool.call(WRITE('c0ffee42')).catch(() => undefined)
+    const missing = bodies(rec).find(l => l.includes('decision=cycle:written-missing'))
+    expect(missing, bodies(rec).join('\n')).toContain(`note=path=${DIR}/2026-10-21T10-00_c0ffee42.md,write-failed`)
+    expect(missing).toMatch(/^tool\.call /)
+    const before = rec.commands.length
+    await turn($)
+    expect(decisions(rec)).not.toContain('cycle:continue')
+    expect(lastLog(rec)).toContain('decision=cycle:ask-handoff')
+    await clock.advance(1000)
+    expect(rec.commands.slice(before)).toEqual(['junkd:handoff']) // asked again; no clear, no handon
+    expect((await statusLines($)).find(l => l.startsWith('written '))).toBe('written none')
+  })
+}
+
+test('H(b) a handoff Write reported done but not on disk at the turn end: cycle:written-missing path=, no cycle:continue, it counts as an ask (3 in all, then give-up)', TOKENS_300, async ($, on) => {
+  const d = disk(on)
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock) // ask 1
+  for (const [i, id] of ['c0ffee41', 'c0ffee42'].entries()) {
+    rec.missing.add(`${DIR}/2026-10-21T10-00_${id}.md`)
+    await $.tool.call(WRITE(id))
+    await turn($)
+    const tail = decisions(rec).slice(-2)
+    expect(tail, `ask ${i + 2}`).toEqual(['cycle:written-missing', 'cycle:ask-handoff'])
+    expect(bodies(rec).at(-2)).toContain(`note=path=${DIR}/2026-10-21T10-00_${id}.md`)
+    await clock.advance(1000)
+  }
+  rec.missing.add(`${DIR}/2026-10-21T10-00_c0ffee43.md`)
+  await $.tool.call(WRITE('c0ffee43'))
+  await turn($) // the third ask's file is missing too: the cap applies
+  expect(decisions(rec).slice(-2)).toEqual(['cycle:written-missing', 'give-up:3-tries'])
+  expect(decisions(rec)).not.toContain('cycle:continue')
+  expect(rec.commands.some(c => c === 'clear' || c.startsWith('junkd:handon'))).toBe(false)
+  expect(rec.toasts).toContain('ahandoff: handoff not written after 3 tries — disarmed')
+})
+
+for (const [name, path] of [['no 8-hex id in its name', `${DIR}/notes.md`], ['an id of 7 hex', `${DIR}/2026-10-21T10-00_c0ffee4.md`], ['an id with a non-hex letter', `${DIR}/2026-10-21T10-00_c0ffee4g.md`]] as const) {
+  test(`H(b) a handoff Write with ${name}: written-missing, no cycle:continue`, TOKENS_300, async ($, on) => {
+    disk(on)
+    const rec = world(on)
+    const clock = mock.clock(on)
+    await reachAsk($, rec, clock)
+    await $.tool.call({ tool: 'Write', file_path: path, content: '# h' })
+    await turn($)
+    expect(decisions(rec).slice(-2)).toEqual(['cycle:written-missing', 'cycle:ask-handoff'])
+  })
+}
+
+test('H(b) an existence check that throws is no file: written-missing, no cycle:continue', TOKENS_300, async ($, on) => {
+  disk(on)
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  rec.existsThrows = true
+  await turn($)
+  expect(decisions(rec).slice(-2)).toEqual(['cycle:written-missing', 'cycle:ask-handoff'])
+})
+
+test('H(b) a handoff Write on disk: cycle:continue names its path; the earlier good Write is kept when a later one fails', TOKENS_300, async ($, on) => {
+  const d = disk(on)
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  d.write = 'error'
+  await $.tool.call(WRITE('abcdef99'))
+  await turn($)
+  expect(lastLog(rec)).toContain(`decision=cycle:continue`)
+  expect(lastLog(rec)).toContain(`note=path=${DIR}/2026-10-21T10-00_abcdef12.md`)
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(rec.commands).toContain('junkd:handon abcdef12')
+})
+
+test('H(b) an external handoff whose Write errored, or whose file is gone at the turn end, is not followed', TOKENS_300, async ($, on) => {
+  const d = disk(on)
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.tokens = 50_000
+  d.write = 'error'
+  await $.tool.call(WRITE('dead0001'))
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=skip:below-limit')
+  d.write = undefined
+  rec.missing.add(`${DIR}/2026-10-21T10-00_dead0002.md`)
+  await $.tool.call(WRITE('dead0002'))
+  await turn($)
+  expect(decisions(rec).slice(-2)).toEqual(['cycle:written-missing', 'skip:below-limit'])
+  await clock.advance(1000)
+  expect(rec.commands).toEqual([])
+})
+
+// The resume with nothing behind it: the chain of the cycle is scheduled at the turn end and runs once the clock moves;
+// a clock that never moves is a chain that never starts (the wedge's state: follow set resume, nothing ran).
+async function reachResume($: Engine, rec: ReturnType<typeof world>, clock: { advance(ms: number): Promise<unknown> }) {
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  await turn($) // cycle:continue: phase resume, the chain scheduled but not started
+  expect(lastLog(rec)).toContain('decision=cycle:continue')
+}
+
+test('H(c) phase=resume with nothing in flight: cycle:retry-resume n=1..3, then give-up:resume, phase idle, still armed, a toast', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachResume($, rec, clock)
+  for (let n = 1; n <= 3; n++) {
+    await turn($)
+    expect(lastLog(rec), `retry ${n}`).toContain('decision=cycle:retry-resume')
+    expect(lastLog(rec)).toContain(`note=n=${n}`)
+    expect((await statusLines($)).find(l => l.startsWith('retries '))).toBe(`retries clear 0/3 · resume ${n}/3`)
+  }
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=give-up:resume')
+  expect(lastLog(rec)).toContain('note=n=4')
+  expect(rec.toasts).toContain('auto-handoff: resume failed 4 times, loop reset to idle; still armed')
+  const lines = await statusLines($)
+  expect(lines[0]).toMatch(/^handoff auto on/)
+  expect(lines).toContain('phase idle')
+  expect(lines).toContain('written none')
+  expect(lines).toContain('pending none')
+  expect(lines).toContain('retries clear 0/3 · resume 0/3')
+  // the four chains that were scheduled never run: each was superseded, the last one by the reset
+  await clock.advance(1000)
+  await settle()
+  expect(rec.commands.filter(c => c === 'clear' || c.startsWith('junkd:handon'))).toEqual([])
+  // and the loop goes on: the next turn end below the limit is a plain skip, one past it fires again
+  rec.tokens = 50_000
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=skip:below-limit')
+  rec.tokens = 400_000
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=fire')
+})
+
+test('H(c) a retried resume runs the chain once: clear and handon of the cycle\'s id, retry count back to 0', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachResume($, rec, clock)
+  await turn($) // retry 1, while the first chain is still waiting to start
+  expect(lastLog(rec)).toContain('decision=cycle:retry-resume')
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(clears(rec), 'the superseded chain stopped: one clear').toBe(1)
+  expect(rec.commands.filter(c => c.startsWith('junkd:handon'))).toEqual(['junkd:handon abcdef12'])
+  expect((await statusLines($)).find(l => l.startsWith('retries '))).toBe('retries clear 0/3 · resume 0/3')
+})
+
+test('H(c) a handon that throws leaves phase=resume with nothing in flight: hook:error stage=continue, then the next turn end retries the chain', TOKENS_300, async ($, on) => {
+  let throws = true
+  on('command.run', { command: 'junkd:handon' }, (_$, e, next) => {
+    if (throws) throw new Error('handon blew up')
+    return next(e)
+  })
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await reachResume($, rec, clock)
+  await clock.advance(1)
+  await settle()
+  expect(bodies(rec).find(l => l.includes('decision=hook:error'))).toMatch(/ note=stage=continue,err=\S+$/)
+  await $.session.measure({ context: usageTokens(20_000).context, rateLimits: [], changed: ['context'] }) // the cleared window's first measure
+  throws = false
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=cycle:retry-resume')
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(clears(rec)).toBe(2)
+  expect(await statusLines($)).toContain('phase idle')
+})
+
+test('H(c2) phase=resume with the handon in flight (fresh window already measured): no retry, the turn end says skip:phase-resume', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await reachResume($, rec, clock)
+  let release!: () => void
+  rec.handonHold = new Promise<void>(r => { release = r })
+  const advanced = clock.advance(1000)
+  for (let i = 0; i < 100 && !rec.commands.some(c => c.startsWith('junkd:handon ')); i++) await settle()
+  await $.prompt.submit(handonOf('abcdef12'))
+  await $.session.measure({ context: usageTokens(20_000).context, rateLimits: [], changed: ['context'] }) // fresh cleared mid-handon
+  for (let i = 0; i < 4; i++) {
+    await turn($) // the handon's own turn ends while its command runs
+    expect(lastLog(rec), `turn ${i}`).toContain('decision=skip:phase-resume')
+  }
+  expect((await statusLines($)).find(l => l.startsWith('pending '))).toBe('pending abcdef12')
+  expect(clears(rec)).toBe(1)
+  release()
+  await advanced
+  rec.handonHold = undefined
+  await settle()
+  expect(decisions(rec)).not.toContain('cycle:retry-resume')
+  expect(await statusLines($)).toContain('phase idle')
+})
+
+test('H(d) a stage inside turn.complete that throws: hook:error stage=<s> is logged, next(e) still runs, the next turn end works', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.usageThrows = true
+  const r = (await turn($)) as { text?: string }
+  expect(r.text).toBe('done')
+  expect(lastLog(rec)).toContain('decision=hook:error')
+  expect(lastLog(rec)).toMatch(/^turn\.complete .* note=stage=usage,err=\S+$/)
+  rec.usageThrows = false
+  rec.tokens = 400_000
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=fire')
+  await clock.advance(1000)
+  expect(rec.commands).toContain('junkd:handoff')
+})
+
+test('H(d) after a turn end that threw (stage usage), the next one judges the cycle as usual: the missing file is written-missing, then an ask', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  rec.missing.add(`${DIR}/2026-10-21T10-00_abcdef12.md`)
+  rec.usageThrows = true // the usage read comes first: its stage is named
+  const r = (await turn($)) as { text?: string }
+  expect(r.text).toBe('done')
+  expect(lastLog(rec)).toMatch(/ note=stage=usage,err=\S+$/)
+  rec.usageThrows = false
+  await turn($) // the turn after it judges the missing file as the stage was never reached before
+  expect(decisions(rec).slice(-2)).toEqual(['cycle:written-missing', 'cycle:ask-handoff'])
+})
+
+test('H(d) a throw in the sync stage (the $.state write rejects): hook:error stage=sync, next(e) still runs', { ...TOKENS_300 }, async ($, on) => {
+  let fail = false
+  on('state.set', KEPT, (_$, e, next) => {
+    if (fail) return { deny: 'state full' }
+    return next(e)
+  })
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.tokens = 50_000
+  fail = true
+  const r = (await turn($)) as { text?: string }
+  expect(r.text).toBe('done')
+  expect(lastLog(rec)).toMatch(/^turn\.complete .* decision=hook:error .* note=stage=sync,err=\S+$/)
+  fail = false
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=skip:below-limit')
+})
+
+test('H(e) session.start with a stale phase=resume (same module, nothing in flight): phase idle, session:reset-phase from=resume, still armed, the stale chain never runs', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachResume($, rec, clock)
+  await start($) // a /clear by hand: the session starts again in the same process
+  const reset = bodies(rec).find(l => l.includes('decision=session:reset-phase'))
+  expect(reset, bodies(rec).join('\n')).toContain('note=from=resume')
+  expect(reset).toMatch(/^session\.start .* armed=true .* phase=idle /)
+  const lines = await statusLines($)
+  expect(lines[0]).toMatch(/^handoff auto on/)
+  expect(lines).toContain('phase idle')
+  expect(lines).toContain('written none')
+  expect(lines).toContain('pending none')
+  await clock.advance(1000)
+  await settle()
+  expect(rec.commands.filter(c => c === 'clear' || c.startsWith('junkd:handon')), 'the stale chain stopped').toEqual([])
+  await turn($)
+  expect(decisions(rec)).not.toContain('cycle:retry-resume')
+})
+
+test('H(e) session.start with a stale phase=handoff resets it too (from=handoff); an idle phase logs nothing', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await start($)
+  expect(bodies(rec).find(l => l.includes('session:reset-phase'))).toContain('note=from=handoff')
+  rec.tokens = 50_000 // below the limit: the next check passes the call
+  expect(denial(await $.tool.call(READ)), 'tools pass again: the cycle that asked for a handoff is over').toBeUndefined()
+  const n = bodies(rec).filter(l => l.includes('session:reset-phase')).length
+  await start($)
+  expect(bodies(rec).filter(l => l.includes('session:reset-phase')).length).toBe(n)
+})
+
+test('H(e) session.start while the loop\'s own chain runs (its clear, its handon) resets nothing', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachResume($, rec, clock)
+  let release!: () => void
+  rec.handonHold = new Promise<void>(r => { release = r })
+  const advanced = clock.advance(1000)
+  for (let i = 0; i < 100 && !rec.commands.some(c => c.startsWith('junkd:handon ')); i++) await settle()
+  await start($) // the loop's own /clear raised a session start
+  expect(bodies(rec).some(l => l.includes('session:reset-phase'))).toBe(false)
+  await $.prompt.submit(handonOf('abcdef12'))
+  release()
+  await advanced
+  rec.handonHold = undefined
+  await settle()
+  expect(rec.contexts.at(-1)?.join('\n')).toContain('continue as they asked') // the chain went on to the end
+  expect(await statusLines($)).toContain('phase idle')
+})
+
+test('H(f) a log append that fails: one toast, not one per turn; a phase change may say it once more', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.logFails = true
+  rec.tokens = 50_000
+  for (let i = 0; i < 5; i++) await turn($)
+  expect(diskToasts(rec)).toBe(1)
+  rec.tokens = 400_000
+  await turn($) // fire: the phase changes to handoff
+  await clock.advance(1000)
+  for (let i = 0; i < 2; i++) await $.tool.call(READ)
+  expect(diskToasts(rec)).toBe(2)
+})
+
+test('H(f) a log append that exits non-zero (a full disk fails the >> with a status) is a failure too: one toast', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.logExit = 1
+  rec.tokens = 50_000
+  for (let i = 0; i < 3; i++) await turn($)
+  expect(diskToasts(rec)).toBe(1)
+  rec.logExit = 0
+  expect(rec.toasts.filter(t => /disk full/.test(t))).toHaveLength(1)
+})
+
+test('H(f) a persist that fails takes the same toast: once per phase, with the log failing too still once', TOKENS_300, async ($, on) => {
+  const d = disk(on)
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  d.store = 'reject'
+  rec.logFails = true
+  await ahandoff($, '')
+  await ahandoff($, '')
+  await ahandoff($, 'off')
+  expect(diskToasts(rec)).toBe(1)
+})
+
+test('H(f) a log and store that work raise no disk toast', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  await turn($)
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(diskToasts(rec)).toBe(0)
+})
+
+test('H(g) status: phase, since (ISO + relative), retries, written, lastId, pending, armed and the threshold source, after the first line', TOKENS_300, async ($, on) => {
+  const d = disk(on)
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  const idle = await statusLines($)
+  expect(idle[0]).toMatch(/^handoff auto off — threshold 300k — limit 300k — last measurement: /)
+  expect(idle.slice(1, 2)).toEqual(['armed false'])
+  expect(idle[2]).toBe('phase idle')
+  expect(idle[3]).toMatch(/^since \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z \(\d+s ago\)$/)
+  expect(idle.slice(4)).toEqual([
+    'retries clear 0/3 · resume 0/3',
+    'written none',
+    'lastId none',
+    'pending none',
+    'threshold src=settings handoff_threshold=300 tokens=300000',
+  ])
+  await reachAsk($, rec, clock)
+  const asked = await statusLines($)
+  expect(asked).toContain('armed true')
+  expect(asked).toContain('phase handoff')
+  // a Write held mid-call: the path shows as being written
+  let release!: () => void
+  const held = new Promise<void>(r => { release = r })
+  d.hold = held
+  const writing = $.tool.call(WRITE('abcdef12'))
+  await settle()
+  expect(await statusLines($)).toContain(`written ${DIR}/2026-10-21T10-00_abcdef12.md (writing)`)
+  release()
+  await writing
+  expect(await statusLines($)).toContain(`written ${DIR}/2026-10-21T10-00_abcdef12.md`)
+  await turn($)
+  const resuming = await statusLines($)
+  expect(resuming).toContain('phase resume')
+  expect(resuming).toContain('lastId abcdef12')
+  expect(resuming).toContain('written none')
+  await turn($)
+  expect(await statusLines($)).toContain('retries clear 0/3 · resume 1/3')
+})
+
+for (const [options, line] of [
+  [{ handoff_threshold: 32, handoff_checkEvery: 1 }, 'threshold src=settings handoff_threshold=32 legacy-percent'],
+  [{ handoff_checkEvery: 1 }, 'threshold src=settings handoff_threshold=300 tokens=300000'], // the engine hands the manifest's default as an option
+  [{ handoff_threshold: 0, handoff_checkEvery: 1 }, 'threshold src=default handoff_threshold=300 tokens=300000'],
+  [{ handoff_threshold: 101, handoff_checkEvery: 1 }, 'threshold src=settings handoff_threshold=101 tokens=101000'],
+] as const) {
+  test(`H(g) status names the threshold's source: ${JSON.stringify(options)} -> ${line}`, { options }, async ($, on) => {
+    world(on)
+    mock.clock(on)
+    await start($)
+    expect((await statusLines($)).at(-1)).toBe(line)
+  })
+}
+
+test('H(g) a threshold set live is from the settings: the status line follows it, a refused one leaves it', { ...WITH_CALLER, options: { handoff_threshold: 0, handoff_checkEvery: 1 } }, async ($, on) => {
+  world(on)
+  mock.clock(on)
+  await start($)
+  expect((await statusLines($)).at(-1)).toBe('threshold src=default handoff_threshold=300 tokens=300000') // 0 is refused: the default
+  await set($, 'threshold', 40)
+  expect((await statusLines($)).at(-1)).toBe('threshold src=settings handoff_threshold=40 legacy-percent')
+  await set($, 'threshold', -1).catch(() => undefined)
+  expect((await statusLines($)).at(-1)).toBe('threshold src=settings handoff_threshold=40 legacy-percent')
+})
+
+test('H(g) the pane\'s Auto tab shows since, retries, written, pending, the threshold source and the log path', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachResume($, rec, clock)
+  await turn($) // a resume retry
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'junkd', surface, ...PANE })
+    await hotkey(ui, '1')
+    const t = await texts(ui)
+    expect(t).toMatch(/Since[\s\S]*\d{4}-\d\d-\d\dT[\d:.]+Z \(\d+s ago\)/)
+    expect(t).toContain('clear 0/3 · resume 1/3')
+    expect(t).toContain('src=settings handoff_threshold=300 tokens=300000')
+    expect(t).toContain(`${HOME}/.claude/junkd/handoff/sess-1.log`)
+    expect(t).toContain('decision=cycle:retry-resume')
+    expect(t).toContain('resuming…')
+    await ui.unmount()
+  }
+})
+
+// ---- ADHOC-1 round 2: what the round-1 verification found open.
+
+// B6: a handoff Write the loop goes on from must be directly in the real handoffs folder, under a `<name>_<8 hex>.md`
+// name. Every other path HANDOFF_FILE lets through (any `/handoffs/<name>.md`) is written-missing with the reason, and
+// the loop neither clears nor runs a handon for it. fs.exists answers true for each of them: the folder check alone stops them.
+const ESCAPES = [
+  ['a sibling handoffs folder', '/tmp/evil/handoffs/2026-10-21T10-00_deadbeef.md'],
+  ['a .. out of the real folder', `${DIR}/../../../../tmp/handoffs/2026-10-21T10-00_cafebabe.md`],
+  ['a .. that climbs back into the real folder', `${DIR}/../handoffs/2026-10-21T10-00_cafebab1.md`],
+  ['the real folder as an argument inside another path', `/tmp/a b ${DIR}/2026-10-21T10-00_deadbee1.md`],
+  ['the real folder after a query in another path', `/tmp/x?p=${DIR}/2026-10-21T10-00_deadbee2.md`],
+  ['a look-alike folder with the real one as its prefix', `${DIR}.evil/handoffs/2026-10-21T10-00_deadbee3.md`],
+  ['a handoffs folder nested in the real one', `${DIR}/handoffs/2026-10-21T10-00_deadbee4.md`],
+  ['a relative path', `./handoffs/2026-10-21T10-00_deadbee5.md`],
+  ['a relative path that reads like the real folder', `${DIR.slice(1)}/2026-10-21T10-00_deadbee6.md`],
+] as const
+for (const [name, path] of ESCAPES) {
+  test(`B6 the loop's own handoff Write to ${name}: written-missing outside-handoffs, an ask, no clear and no handon`, TOKENS_300, async ($, on) => {
+    const rec = world(on)
+    const clock = mock.clock(on)
+    await reachAsk($, rec, clock)
+    expect(denial(await $.tool.call({ tool: 'Write', file_path: path, content: '# h' }))).toBeUndefined() // taken as the handoff Write
+    await turn($)
+    expect(decisions(rec).slice(-2)).toEqual(['cycle:written-missing', 'cycle:ask-handoff'])
+    expect(bodies(rec).at(-2)).toMatch(/ note=path=\S+,outside-handoffs$/)
+    await clock.advance(1000)
+    expect(rec.commands.filter(c => c === 'clear' || c.startsWith('junkd:handon'))).toEqual([])
+    expect(decisions(rec)).not.toContain('cycle:continue')
+  })
+}
+
+test('B6 an external handoff written outside the real folder (the idle loop, by hand) is not followed: written-missing outside-handoffs', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.tokens = 50_000
+  for (const [, path] of ESCAPES.slice(0, 2)) {
+    await $.tool.call({ tool: 'Write', file_path: path, content: '# h' })
+    await turn($)
+    expect(decisions(rec).slice(-2)).toEqual(['cycle:written-missing', 'skip:below-limit'])
+    expect(bodies(rec).at(-2)).toMatch(/ note=path=\S+,outside-handoffs$/)
+  }
+  await clock.advance(1000)
+  expect(rec.commands).toEqual([])
+  expect(decisions(rec)).not.toContain('fire:external-handoff')
+})
+
+test('B6 a handoff path with a trailing slash is no handoff Write: the gate denies it, the loop never takes it as written', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  expect(denial(await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_abcdef12.md/`, content: '# h' }))).toMatch(/handoff/i)
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=cycle:ask-handoff')
+  expect(decisions(rec)).not.toContain('cycle:continue')
+})
+
+test('B6 the reason a written handoff is no file is in the note: not-a-handoff-name, not-on-disk', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call({ tool: 'Write', file_path: `${DIR}/notes.md`, content: '# h' })
+  await turn($)
+  expect(bodies(rec).at(-2)).toContain(`decision=cycle:written-missing`)
+  expect(bodies(rec).at(-2)).toMatch(new RegExp(` note=path=${DIR}/notes\\.md,not-a-handoff-name$`))
+  await clock.advance(1000)
+  rec.missing.add(`${DIR}/2026-10-21T10-00_abcdef12.md`)
+  await $.tool.call(WRITE('abcdef12'))
+  await turn($)
+  expect(bodies(rec).at(-2)).toMatch(new RegExp(` note=path=${DIR}/2026-10-21T10-00_abcdef12\\.md,not-on-disk$`))
+})
+
+// The real folder spelled with a doubled slash or a `.` segment, or CLAUDE_CONFIG_DIR with a trailing slash, is still it.
+for (const [name, config, path] of [
+  ['a doubled slash and a . segment', undefined, `${HOME}/./.claude//handoffs/2026-10-21T10-00_abcdef12.md`],
+  ['CLAUDE_CONFIG_DIR with a trailing slash', '/cfg/', '/cfg/handoffs/2026-10-21T10-00_abcdef12.md'],
+] as const) {
+  test(`B6 the real folder spelled with ${name} is the real folder: cycle:continue, clear and handon of its id`, TOKENS_300, async ($, on) => {
+    if (config) on('env.get', { name: 'CLAUDE_CONFIG_DIR' }, () => ({ value: config }))
+    const rec = world(on)
+    const clock = mock.clock(on)
+    await reachAsk($, rec, clock)
+    await $.tool.call({ tool: 'Write', file_path: path, content: '# h' })
+    await turn($)
+    expect(lastLog(rec)).toContain('decision=cycle:continue')
+    await handonRuns($, rec, clock, [handonOf('abcdef12')])
+    expect(rec.commands.filter(c => c === 'clear' || c.startsWith('junkd:handon'))).toEqual(['clear', 'junkd:handon abcdef12'])
+  })
+}
+
+test('B6 with CLAUDE_CONFIG_DIR set, the home\'s handoffs folder is not the real one: written-missing outside-handoffs', TOKENS_300, async ($, on) => {
+  on('env.get', { name: 'CLAUDE_CONFIG_DIR' }, () => ({ value: '/cfg' }))
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  await turn($)
+  expect(decisions(rec).slice(-2)).toEqual(['cycle:written-missing', 'cycle:ask-handoff'])
+  expect(bodies(rec).at(-2)).toMatch(/,outside-handoffs$/)
+})
+
+// B5: two turn ends in flight at once decide once. The second one that comes while the first decides logs skip:turn-busy.
+test('B5 two turn ends in flight at cycle:continue: one cycle:continue, one follow (1 handoff), one clear and one handon', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachAsk($, rec, clock)
+  await $.tool.call(WRITE('abcdef12'))
+  const rs = (await Promise.all([turn($), turn($)])) as { text?: string }[]
+  expect(rs.map(r => r.text), 'next(e) ran for both').toEqual(['done', 'done'])
+  expect(decisions(rec).filter(x => x === 'cycle:continue')).toHaveLength(1)
+  expect(decisions(rec).filter(x => x === 'skip:turn-busy')).toHaveLength(1)
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  await hotkey(ui, '1')
+  const t = await texts(ui)
+  await ui.unmount()
+  expect(t).toMatch(/\b1 handoff\b(?!s)/) // follow ran once: S.count is 1, not 2
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(rec.commands.filter(c => c === 'clear' || c.startsWith('junkd:handon'))).toEqual(['clear', 'junkd:handon abcdef12'])
+  // the guard is let go: the next turn end decides again
+  await turn($)
+  expect(lastLog(rec)).not.toContain('skip:turn-busy')
+})
+
+test('B5 two turn ends in flight at phase=resume spend one retry: retry-resume n=1 once, no n=2', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachResume($, rec, clock)
+  await Promise.all([turn($), turn($)])
+  const retries = bodies(rec).filter(l => l.includes('decision=cycle:retry-resume'))
+  expect(retries).toHaveLength(1)
+  expect(retries[0]).toMatch(/ note=n=1$/)
+  expect(decisions(rec).filter(x => x === 'skip:turn-busy')).toHaveLength(1)
+  expect(await statusLines($)).toContain('retries clear 0/3 · resume 1/3')
+})
+
+test('B5 a turn end that throws lets the guard go: the next turn end decides', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.usageThrows = true
+  await turn($)
+  expect(lastLog(rec)).toMatch(/ note=stage=usage,err=\S+$/)
+  rec.usageThrows = false
+  rec.tokens = 50_000
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=skip:below-limit')
+})
+
+// M29: a fire at a tool.call is a phase change like any other: `since` and the disk-toast epoch move with it.
+test('M29 a tool.call fire moves the status since line to the fire', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  const sinceOf = async () => (await statusLines($)).find(l => l.startsWith('since '))!.split(' ')[1]
+  const armed = await sinceOf()
+  await new Promise(r => setTimeout(r, 15)) // the wall clock moves past the arming's millisecond
+  rec.tokens = 400_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // fire at the call
+  expect(bodies(rec).some(l => l.startsWith('tool.call ') && l.includes('decision=fire '))).toBe(true)
+  expect(await statusLines($)).toContain('phase handoff')
+  const fired = await sinceOf()
+  expect(Date.parse(fired)).toBeGreaterThan(Date.parse(armed))
+})
+
+test('M29 a tool.call fire starts a new disk-toast epoch: a failing log says it once more in the handoff phase', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  mock.clock(on)
+  await start($)
+  await ahandoff($, '')
+  rec.logFails = true
+  rec.tokens = 50_000
+  await turn($)
+  await turn($)
+  expect(diskToasts(rec)).toBe(1)
+  rec.tokens = 400_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // the fire's own line still belongs to the idle epoch
+  await $.tool.call(READ) // skip:phase-handoff: the first failing line of the new epoch
+  await $.tool.call(READ)
+  expect(diskToasts(rec)).toBe(2)
+})
+
+// M5c: a stale `clear` (its /clear threw, nothing in flight) is reset at session start too.
+test('M5c session.start with a stale phase=clear (the clear threw, nothing in flight): session:reset-phase from=clear, no retry-clear after', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  rec.clearMode = 'throw'
+  await reachResume($, rec, clock)
+  await clock.advance(1)
+  await settle()
+  expect(lastLog(rec)).toContain('decision=cycle:clear-failed:error')
+  expect(await statusLines($)).toContain('phase clear')
+  await start($)
+  const reset = bodies(rec).find(l => l.includes('decision=session:reset-phase'))
+  expect(reset, bodies(rec).join('\n')).toContain('note=from=clear')
+  expect(reset).toMatch(/ armed=true .* phase=idle /)
+  rec.tokens = 50_000
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=skip:below-limit')
+  expect(decisions(rec)).not.toContain('cycle:retry-clear')
+  expect(clears(rec)).toBe(1)
+})
+
+// M12: a chain superseded while it waits on its /clear stops when that clear answers: no second handon.
+test('M12 a chain held in its /clear while a retry-clear starts a newer one stops when its clear answers: one handon', TOKENS_300, async ($, on) => {
+  let releaseClear!: () => void
+  const held = new Promise<void>(r => { releaseClear = r })
+  let clearsSeen = 0
+  on('command.run', { command: 'clear' }, async (_$, e, next) => {
+    if (clearsSeen++ === 0) await held // the first chain's clear answers late
+    return next(e)
+  })
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await reachResume($, rec, clock)
+  await clock.advance(1)
+  await settle()
+  expect(clearsSeen).toBe(1)
+  expect(await statusLines($)).toContain('phase clear')
+  await $.session.measure({ context: usageTokens(20_000).context, rateLimits: [], changed: ['context'] }) // fresh off
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=cycle:retry-clear')
+  await handonRuns($, rec, clock, [handonOf('abcdef12')]) // the newer chain: its clear, its handon
+  expect(clearsSeen).toBe(2)
+  expect(await statusLines($)).toContain('phase idle')
+  releaseClear() // the old chain's clear answers now
+  await settle()
+  await clock.advance(1000)
+  await settle()
+  expect(rec.commands.filter(c => c.startsWith('junkd:handon'))).toEqual(['junkd:handon abcdef12'])
+  expect(await statusLines($)).toContain('phase idle')
+})
+
+// M16: a new cycle starts with its own resume retries, whatever the last one spent.
+test('M16 follow resets the resume retries: a cycle:continue after a resume retry starts at resume 0/3', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  await reachResume($, rec, clock)
+  await turn($)
+  expect(await statusLines($)).toContain('retries clear 0/3 · resume 1/3')
+  await handoff($, 'panel')
+  await handoff($, 'panel')
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  await hotkey(ui, '1')
+  await hotkey(ui, 'n') // handoff now: the phase is handoff again, the resume's retry count untouched
+  await ui.unmount()
+  expect(await statusLines($)).toContain('phase handoff')
+  expect(await statusLines($)).toContain('retries clear 0/3 · resume 1/3')
+  await $.tool.call(WRITE('abcdef34'))
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=cycle:continue')
+  expect(await statusLines($)).toContain('retries clear 0/3 · resume 0/3')
 })
