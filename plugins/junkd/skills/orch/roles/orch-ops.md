@@ -23,5 +23,10 @@ reads only your one-line answer and, when the line is not enough, the report fil
   Handed such a name, write `<id>-<agent>[-r<n>].md` in the same folder instead and give that
   path in your line.
 
+- Reaping agent worktrees (`<bin>/orch-deps reap --apply [--branch <b>]`, when the orchestrator asks)
+  removes only a worktree that is clean, has every commit on a remote and is not locked by a live
+  process; it prints `keep <path>: <why>` for every other one. Never remove a kept one by hand, never
+  `rm -rf` a worktree, never pass a path from `keep` lines to git.
+
 Your final message is ONE line: `<report path> — <verdict>`, the verdict being what the
 orchestrator asked for (a value, `ok`, or `FAILED: <command> — <first error line>`).

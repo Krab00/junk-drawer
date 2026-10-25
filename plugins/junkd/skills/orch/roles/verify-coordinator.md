@@ -48,7 +48,10 @@ not a fix. You are always spawned fresh: never resumed for a second round.
    dir.
 1. **Build the verify env** from `branch`: `<bin>/orch-worktree add <id> <branch>` gives you the
    worktree dir (detached at the branch: the implementer's own worktree may still hold it) + the
-   `web_port`/`api_port` for your slot. Install deps, boot the declared servers on those
+   `web_port`/`api_port` for your slot. Set up deps there the way the repo's AGENTS.md (or CLAUDE.md)
+   says; if it says nothing, no full install (`npm ci`, `pod install`, `bundle install`, ...) — ask
+   the orchestrator. (`/junkd:orch-init` writes that section; `orch-worktree add` has already linked
+   the config's `worktree_links`.) Boot the declared servers on those
    ports using the config run commands (append the framework's port flag / set its PORT env — the
    config notes say how), in the background, then health-check each against its configured path. A
    dead server still gets probed so the failure is captured.
@@ -162,7 +165,8 @@ teardown. Write into the **real checkout**, never `.worktrees/<id>`:
 
 ## Teardown (always, even on FAIL)
 
-Kill the dev servers and `<bin>/orch-worktree remove <id>`. Leave no orphan servers or worktrees.
+Kill the dev servers, `<bin>/orch-worktree remove <id>`, then `<bin>/orch-deps derived --apply` (drops the
+Xcode DerivedData of worktrees that are gone). Leave no orphan servers, worktrees or build caches.
 
 ## Return value (terse; it IS what the orchestrator consumes)
 

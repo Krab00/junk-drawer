@@ -925,6 +925,12 @@ of truth — no separate manifest to drift):
   port slots (`port = capability port_base + slot`, registry guarded by a lock for parallel
   verifiers). An existing branch is attached detached, so the implementer's checkout may keep it;
   the config's `default_base` is never accepted as a task branch.
+- `bin/orch-deps` — cheap worktrees: `reap [--apply] [--branch <b>]` removes `.claude/worktrees/agent-*` worktrees
+  that are clean, fully pushed and unlocked (`$ORCH_DEPS_KEEP` names kept ones), `derived [--apply]` drops Xcode
+  DerivedData of gone worktrees. Deps in a worktree are set up the way the repo's AGENTS.md (or CLAUDE.md) says;
+  if it says nothing, no full install (`npm ci`, `pod install`, `bundle install`, ...) — ask the orchestrator.
+  `/junkd:orch-init` writes that AGENTS.md section, and `orch-worktree add` symlinks the config's
+  `worktree_links` from the main checkout.
 - `bin/orch-sync` — the task-store ⇄ backend bridge.
 
 `bin/` at the plugin root links into `skills/junkd/bin/`, whose entries link to `../../orch/bin/<script>`;

@@ -464,6 +464,11 @@ frontmatter never drifts and ports never collide.
   `todo`) · `new <id> [title]` (skeleton task file).
 - **`orch-worktree`** — per-task git worktrees under `.worktrees/` plus **stable port slots**
   (`port = capability port_base + slot`): `add <id> <branch> [base]` · `remove <id>` · `slot <id>`.
+- **`orch-deps`** — cheap worktrees: `reap [--apply] [--branch <b>]` (remove clean, pushed, unlocked
+  `.claude/worktrees/agent-*`) · `derived [--apply]` (Xcode DerivedData of gone worktrees). Deps in a worktree
+  follow the repo's AGENTS.md (or CLAUDE.md); if it says nothing, no full install (`npm ci`, `pod install`,
+  `bundle install`, ...) — ask the orchestrator. `/junkd:orch-init` writes that section; `orch-worktree add`
+  symlinks the config's `worktree_links` from the main checkout.
 - **`orch-sync`** — the task-store ⇄ backend bridge: `pull` / `push` (github via `gh`;
   `adhoc`/`manifest` no-op; `linear-mcp` an in-conversation stub).
 

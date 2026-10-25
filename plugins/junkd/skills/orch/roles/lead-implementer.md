@@ -22,7 +22,10 @@ types and signatures. If slices ran blind they'd drift (FE built against a contr
 shipped). So **before any sub-implementer is spawned**, you yourself:
 
 1. Create the task branch without checking out the base (`git switch -c <branch> <base>`; git
-   refuses a branch that another worktree holds), install deps.
+   refuses a branch that another worktree holds), set up deps the way the repo's AGENTS.md (or
+   CLAUDE.md) says — if it says nothing, no full install (`npm ci`, `pod install`, `bundle install`,
+   ...) in a worktree, ask the orchestrator (`/junkd:orch-init` writes that section; `orch-worktree
+   add` links the config's `worktree_links`); hand the same rule to every slice.
 2. Write and commit the **shared contract** the slices depend on — the types / DTOs / endpoint
    signatures / function stubs (throwing "not implemented" or returning a typed placeholder). A
    real commit on the task branch. Keep it minimal: only the surface the slices share.
