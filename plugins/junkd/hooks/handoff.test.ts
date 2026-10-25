@@ -2919,6 +2919,7 @@ const ESCAPES = [
   ['a look-alike folder with the real one as its prefix', `${DIR}.evil/handoffs/2026-10-21T10-00_deadbee3.md`],
   ['a handoffs folder nested in the real one', `${DIR}/handoffs/2026-10-21T10-00_deadbee4.md`],
   ['a relative path', `./handoffs/2026-10-21T10-00_deadbee5.md`],
+  ['a relative path that reads like the real folder', `${DIR.slice(1)}/2026-10-21T10-00_deadbee6.md`],
 ] as const
 for (const [name, path] of ESCAPES) {
   test(`B6 the loop's own handoff Write to ${name}: written-missing outside-handoffs, an ask, no clear and no handon`, TOKENS_300, async ($, on) => {

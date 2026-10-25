@@ -195,7 +195,7 @@ function resetCycle() {
 async function notHandoff($: $, path: string): Promise<string | undefined> {
   const dir = normalPath(await handoffDir($))
   const p = normalPath(path)
-  if (dir === undefined || p === undefined || path.endsWith('/') || p.slice(0, p.lastIndexOf('/')) !== dir) return 'outside-handoffs'
+  if (dir === undefined || p === undefined || p.slice(0, p.lastIndexOf('/')) !== dir) return 'outside-handoffs'
   if (idOf(p.slice(p.lastIndexOf('/') + 1)) === null) return 'not-a-handoff-name'
   return (await $.fs.exists(p).catch(() => false)) ? undefined : 'not-on-disk'
 }
