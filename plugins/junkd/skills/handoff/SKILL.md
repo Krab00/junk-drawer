@@ -12,7 +12,7 @@ Run the helpers from this skill directory as `./bin/handoff-path` and `./bin/han
 
 ## Save
 
-1. From this skill directory, run `./bin/handoff-path`. It creates the handoffs folder, prints the target file path (line 1) and a short id of 8 hex characters (line 2), and copies the id to the clipboard where the host has one.
+1. From this skill directory, run `./bin/handoff-path`. It creates the handoffs folder, prints the target file path (line 1) and a short id of 8 hex characters (line 2), and copies the id to the clipboard where the host has one. If `./bin/handoff-path` fails (ENOSPC, a full disk, or any other error), STOP and report the error in one line; never invent a handoff path or an id yourself.
 2. Use line 1 as the output file and line 2 as the short id.
 3. Write a concrete Markdown handoff with your file-writing tool: objective and rationale, current state, completed work, next actions, key paths and commands, decisions, and gotchas learned this session. Start it with a `# ` title line (the handoff list shows it). No filler; assume the next session has no conversation context.
 4. Report in one line: `saved - id <id>`, and the command that resumes it in a fresh session of the host you run on (only that one):
