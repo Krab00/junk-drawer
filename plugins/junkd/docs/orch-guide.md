@@ -464,6 +464,9 @@ frontmatter never drifts and ports never collide.
   `todo`) · `new <id> [title]` (skeleton task file).
 - **`orch-worktree`** — per-task git worktrees under `.worktrees/` plus **stable port slots**
   (`port = capability port_base + slot`): `add <id> <branch> [base]` · `remove <id>` · `slot <id>`.
+- **`orch-deps`** — cheap worktrees: `link [dir]` (symlink gitignored `node_modules` / `ios/Pods` from the main
+  checkout; never `npm ci` / `pod install` in a worktree) · `reap [--apply] [--branch <b>]` (remove clean, pushed,
+  unlocked `.claude/worktrees/agent-*`) · `derived [--apply]` (Xcode DerivedData of gone worktrees).
 - **`orch-sync`** — the task-store ⇄ backend bridge: `pull` / `push` (github via `gh`;
   `adhoc`/`manifest` no-op; `linear-mcp` an in-conversation stub).
 

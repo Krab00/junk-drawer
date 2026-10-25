@@ -6,6 +6,7 @@
 #   orch-worktree add <id> <branch> [base]  # create/attach the worktree (detached at <branch> when it
 #                                           # exists: the implementer's own worktree may still hold it);
 #                                           # print dir + slot + ports
+#                                           # and link its install dirs from the main checkout (orch-deps link)
 #   orch-worktree remove <id>               # remove the worktree, free its slot
 #   orch-worktree slot <id>                 # print (assigning if needed) the slot for <id>
 set -euo pipefail
@@ -88,6 +89,7 @@ case "$cmd" in
     else
       git -C "$root" worktree add "$dir" -b "$branch" "${base:-HEAD}" >&2
     fi
+    "$here/orch-deps" link "$dir" >&2 || true    # node_modules / Pods linked from the main checkout, never reinstalled
     slot=$(_slot_for "$id")
     echo "dir=$dir"
     echo "slot=$slot"

@@ -878,4 +878,70 @@ for good in '.orch/tasks' '".orch/tasks"' '.orch/new/deep' './.orch/tasks'; do
 done
 rm -f "$fence/.orch/config.md"
 
+# ---------------------------------------------------------------- orch-deps: link install dirs, reap agent worktrees
+bash -n "$plugin/bin/orch-deps" || fail "bash -n orch-deps"
+[ -L "$plugin/skills/junkd/bin/orch-deps" ] || fail "skills/junkd/bin/orch-deps is no link"
+g() { git -c user.email=t@t -c user.name=t "$@"; }
+dp="$tmp/deps/main"; mkdir -p "$dp/mobile" "$dp/lib" "$dp/vendor"
+dp=$(cd -P "$dp" && pwd)
+g init -q -b main "$dp"
+printf 'node_modules/\n!vendor/node_modules/\n/mobile/ios\n' > "$dp/.gitignore"
+printf '{}\n' > "$dp/package.json"; printf '{}\n' > "$dp/mobile/package.json"; printf '{}\n' > "$dp/lib/package.json"; printf '{}\n' > "$dp/vendor/package.json"
+printf 'v1\n' > "$dp/mobile/package-lock.json"; printf 'v1\n' > "$dp/lib/package-lock.json"
+mkdir -p "$dp/lib/node_modules"; printf 'x\n' > "$dp/lib/node_modules/tracked.txt"
+g -C "$dp" add -A; g -C "$dp" add -f lib/node_modules/tracked.txt; g -C "$dp" commit -qm init
+g init -q --bare "$tmp/deps/remote.git"; g -C "$dp" remote add origin "$tmp/deps/remote.git"; g -C "$dp" push -q origin main
+mkdir -p "$dp/node_modules/a" "$dp/mobile/node_modules/b" "$dp/mobile/ios/Pods/c" "$dp/vendor/node_modules/d"   # the one real install
+wt="$dp/.claude/worktrees"
+g -C "$dp" worktree add -q "$wt/agent-clean" -b worktree-agent-clean main
+out=$("$bin/orch-deps" link "$wt/agent-clean")
+for rel in node_modules mobile/node_modules mobile/ios/Pods; do
+    [ -L "$wt/agent-clean/$rel" ] && [ "$(readlink "$wt/agent-clean/$rel")" = "$dp/$rel" ] || fail "link: $rel not linked to the source: $out"
+done
+[ ! -L "$wt/agent-clean/lib/node_modules" ] || fail "link: a tracked node_modules was replaced by a link"
+[ ! -e "$wt/agent-clean/vendor/node_modules" ] || fail "link: a node_modules the source does not ignore was linked"
+[ -z "$(git -C "$wt/agent-clean" status --porcelain)" ] || fail "link: the links show up in git status"
+[ -z "$("$bin/orch-deps" link "$wt/agent-clean" 2>/dev/null)" ] || fail "link: a second run linked again"
+[ -z "$("$bin/orch-deps" link "$dp" 2>/dev/null)" ] || fail "link: the source checkout linked into itself"
+# a worktree whose lockfile differs from the source's gets no link for that package (it must install its own)
+g -C "$dp" worktree add -q "$wt/agent-dirty" -b worktree-agent-dirty main
+printf 'v2\n' > "$wt/agent-dirty/mobile/package-lock.json"
+err=$("$bin/orch-deps" link "$wt/agent-dirty" 2>&1 >/dev/null)
+[ ! -e "$wt/agent-dirty/mobile/node_modules" ] || fail "link: linked despite a differing lockfile"
+rg -q 'skip mobile/node_modules: mobile/package-lock.json differs' <<<"$err" || fail "link: no skip note: $err"
+# reap: clean + pushed goes; dirty, unpushed, locked by a live pid, ORCH_DEPS_KEEP stay
+g -C "$dp" worktree add -q "$wt/agent-unpushed" -b worktree-agent-unpushed main
+g -C "$wt/agent-unpushed" commit -q --allow-empty -m local
+g -C "$dp" worktree add -q "$wt/agent-locked" -b worktree-agent-locked main
+g -C "$dp" worktree lock --reason "claude agent agent-locked (pid $$ start now)" "$wt/agent-locked"
+g -C "$dp" worktree add -q "$wt/agent-kept" -b worktree-agent-kept main
+g -C "$dp" worktree add -q "$tmp/deps/other" -b other main     # no agent worktree: never listed
+export HOME_SAVED="$HOME"; export HOME="$tmp/deps/home"; dd="$HOME/Library/Developer/Xcode/DerivedData"
+if command -v plutil >/dev/null; then
+    mkdir -p "$dd/App-gone" "$dd/App-live"
+    plutil -create xml1 "$dd/App-gone/info.plist"; plutil -insert WorkspacePath -string "$wt/agent-gone/ios/App.xcworkspace" "$dd/App-gone/info.plist"
+    plutil -create xml1 "$dd/App-live/info.plist"; plutil -insert WorkspacePath -string "$wt/agent-kept" "$dd/App-live/info.plist"
+fi
+dry=$(cd "$dp" && ORCH_DEPS_KEEP="agent-kept" "$bin/orch-deps" reap)
+rg -qx "remove $wt/agent-clean" <<<"$dry" || fail "reap: clean+pushed not removable: $dry"
+rg -qx "keep $wt/agent-dirty: uncommitted changes" <<<"$dry" || fail "reap: dirty not kept: $dry"
+rg -qx "keep $wt/agent-unpushed: 1 commit\(s\) on no remote" <<<"$dry" || fail "reap: unpushed not kept: $dry"
+rg -qx "keep $wt/agent-locked: locked by live pid $$" <<<"$dry" || fail "reap: live lock not kept: $dry"
+rg -qx "keep $wt/agent-kept: in ORCH_DEPS_KEEP" <<<"$dry" || fail "reap: ORCH_DEPS_KEEP not kept: $dry"
+if rg -q "$tmp/deps/other" <<<"$dry"; then fail "reap: listed a non-agent worktree"; fi
+[ -d "$wt/agent-clean" ] || fail "reap without --apply removed something"
+[ "$(cd "$dp" && "$bin/orch-deps" reap --branch worktree-agent-dirty | rg -c "^(keep|remove) $wt/")" = 1 ] || fail "reap --branch: not limited to that branch"
+(cd "$wt/agent-dirty" && ORCH_DEPS_KEEP="agent-kept" "$bin/orch-deps" reap --apply) >/dev/null
+[ ! -e "$wt/agent-clean" ] || fail "reap --apply: clean worktree left"
+for d in agent-dirty agent-unpushed agent-locked agent-kept; do [ -d "$wt/$d" ] || fail "reap --apply removed $d"; done
+[ -f "$wt/agent-dirty/mobile/package-lock.json" ] && [ -d "$tmp/deps/other" ] || fail "reap --apply touched a kept tree"
+for rel in node_modules/a mobile/node_modules/b mobile/ios/Pods/c; do [ -d "$dp/$rel" ] || fail "reap --apply followed a link into the source: $rel gone"; done
+git -C "$dp" rev-parse --verify -q worktree-agent-clean >/dev/null || fail "reap --apply deleted the branch"
+if command -v plutil >/dev/null; then
+    [ ! -e "$dd/App-gone" ] || fail "reap --apply: DerivedData of a gone worktree left"
+    [ -d "$dd/App-live" ] || fail "reap --apply: DerivedData of a live worktree removed"
+fi
+export HOME="$HOME_SAVED"
+if "$bin/orch-deps" reap --bogus 2>/dev/null; then fail "reap: unknown flag accepted"; fi
+
 echo "orch tests passed"
