@@ -188,10 +188,24 @@ function resetCycle() {
   S.chain++
 }
 
-// A handoff file the cycle may go on from: on disk, under a name idOf reads an id from. A check that fails is no file.
-async function onDisk($: $, path: string): Promise<boolean> {
-  if (idOf(path.replace(/^.*\//, '')) === null) return false
-  return $.fs.exists(path).catch(() => false)
+// A handoff file the cycle may go on from: directly in the handoffs folder, under a name idOf reads an id from, and on
+// disk. HANDOFF_FILE takes any `/handoffs/<name>.md`; a Write elsewhere (another `handoffs` folder, a `..` out of the
+// real one, a nested folder) would have the loop /clear for a file /junkd:handon never finds there. Undefined when the
+// file is one, else why not: `outside-handoffs`, `not-a-handoff-name` or `not-on-disk`. A check that fails is no file.
+async function notHandoff($: $, path: string): Promise<string | undefined> {
+  const dir = normalPath(await handoffDir($))
+  const p = normalPath(path)
+  if (dir === undefined || p === undefined || path.endsWith('/') || p.slice(0, p.lastIndexOf('/')) !== dir) return 'outside-handoffs'
+  if (idOf(p.slice(p.lastIndexOf('/') + 1)) === null) return 'not-a-handoff-name'
+  return (await $.fs.exists(p).catch(() => false)) ? undefined : 'not-on-disk'
+}
+
+// An absolute path with its doubled slashes and `.` segments dropped; undefined for a relative path or one with a `..`
+// segment (never resolved: a path that climbs is not the loop's).
+function normalPath(path: string): string | undefined {
+  if (!path.startsWith('/')) return undefined
+  const parts = path.split('/').filter(x => x !== '' && x !== '.')
+  return parts.includes('..') ? undefined : `/${parts.join('/')}`
 }
 
 // A turn died on the 5h limit: one timer to 2 min past the window's reset, then the continuation prompt.
@@ -684,7 +698,7 @@ export async function handoffToolCall($: $, e: ToolCallInput, next: Next<'tool.c
     const fire = used >= limit()
     await measured($, 'tool.call', percent, fire ? 'fire' : 'skip:below-limit', '', used)
     if (fire) {
-      S.phase = 'handoff'
+      setPhase('handoff')
       S.asks = 1 // the deny text is the first ask, as the turn-end fire counts it
     }
     await sync($, percent)
@@ -749,6 +763,20 @@ async function turnEnd($: $, e: { agentId?: string; reason?: string; answer?: un
   at.stage = 'lessons'
   await lessonsTurnEnd($, e) // the lessons stores again, and the dialog when the answer prints BACKLOG:; never throws
   if (e.agentId) return
+  // One loop turn end at a time (seen in a probe: two in flight both read the written file, both logged cycle:continue and
+  // both followed; two at resume spent two retries). Taken before the loop's first await, so a second one that comes
+  // while the first runs decides nothing: it logs skip:turn-busy, and the next turn end sees what the first one left.
+  if (S.turnBusy) return measured($, 'turn.complete', S.percent, 'skip:turn-busy')
+  S.turnBusy = true
+  try {
+    await loopTurnEnd($, e, at)
+  } finally {
+    S.turnBusy = false
+  }
+}
+
+// The loop's part of a turn end, under S.turnBusy (turnEnd).
+async function loopTurnEnd($: $, e: { reason?: string }, at: { stage: string }): Promise<void> {
   at.stage = 'disarmed'
   if (!S.armed) return measured($, 'turn.complete', S.percent, 'skip:disarmed')
   // ponytail: the host names no error kind here — an error with the 5h window at 99%+ is the limit.
@@ -761,14 +789,16 @@ async function turnEnd($: $, e: { agentId?: string; reason?: string; answer?: un
   const { percent, used } = await readUsage($)
   const m = (decision: string, note = '') => measured($, 'turn.complete', percent, decision, note, used)
   at.stage = 'written'
-  // The loop's own handoff (its Write reported done) and an external one must be on disk under a handoff name before a
-  // cycle goes on from them; one that is not is dropped, and for the loop's own the turn counts as one more ask.
-  if (S.phase === 'handoff' && S.written && !(await onDisk($, S.written))) {
-    await m('cycle:written-missing', `path=${token(S.written)}`)
+  // The loop's own handoff (its Write reported done) and an external one must be in the handoffs folder, on disk under a
+  // handoff name, before a cycle goes on from them (notHandoff); one that is not is dropped, and for the loop's own the turn counts as one more ask.
+  const own = S.phase === 'handoff' && S.written ? await notHandoff($, S.written) : undefined
+  if (own !== undefined) {
+    await m('cycle:written-missing', `path=${token(S.written)},${own}`)
     S.written = null
   }
-  if (S.phase === 'idle' && S.external && !(await onDisk($, S.external))) {
-    await m('cycle:written-missing', `path=${token(S.external)}`)
+  const other = S.phase === 'idle' && S.external ? await notHandoff($, S.external) : undefined
+  if (other !== undefined) {
+    await m('cycle:written-missing', `path=${token(S.external)},${other}`)
     S.external = null
   }
   // A handoff this session's main loop wrote while armed that the loop did not ask for (handoffToolCall noted it).
