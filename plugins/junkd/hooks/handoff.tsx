@@ -9,7 +9,7 @@ import type { JunkdAhandoff as Ahandoff } from '../types'
 import type { HideInput, OpenInput, SetResult, ShowInput } from './feature'
 import { isSets, shutSet } from './set'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
-import { CLEAR_TIMEOUT_MS, DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, MAX_ASKS, MAX_CLEAR_RETRIES, PROMPT_DELAY_MS, S, coerce, current, idOf, isField, isLegacy, kTokens, limit, loadOptions, status, thresholdText, thresholdTokens, type $, type Entry, type Field, type Route } from './handoff-lib'
+import { CLEAR_TIMEOUT_MS, DAY, DEFAULT_PROMPT, LIMIT_GRACE, LIMIT_PROMPT, MAX_ASKS, MAX_CLEAR_RETRIES, MAX_RESUME_RETRIES, PROMPT_DELAY_MS, S, coerce, current, idOf, isField, isLegacy, kTokens, limit, loadOptions, loopState, setPhase, status, thresholdText, thresholdTokens, type $, type Entry, type Field, type Route } from './handoff-lib'
 import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements } from './handoff-ui'
 import { VIEWS } from './handoff-views'
 import { toolsTurnEnd } from './tools-pane'
@@ -61,8 +61,8 @@ async function handoffDir($: $): Promise<string> {
 // Every measurement the loop makes or skips writes one line to `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/handoff/<session>.log`:
 //   <iso> <hook> percent=<n> used=<tokens> limit=<tokens> armed=<bool> fresh=<bool> decision=<fire|skip:reason> base=<n> threshold=<n> phase=<p> window=<n>
 // (a trailing `note=<words>` where the hook did something besides decide; `legacy-percent` while the threshold is 100 or less). Appended with `>>`, never read back; a log
-// that cannot be written is dropped, the loop never waits on it for more than the one append. The last line (without
-// its time) is also kept in S.last, for `/junkd:ahandoff status`.
+// that cannot be written is dropped, the loop never waits on it for more than the one append, and a toast says so once
+// per phase (diskTrouble). The last line (without its time) is also kept in S.last, for `/junkd:ahandoff status`.
 const PLAIN_ID = /^[A-Za-z0-9_-]+$/
 type Hook = 'session.start' | 'tool.call' | 'turn.complete' | 'session.measure' | 'config.set' | 'cycle'
 async function logPath($: $): Promise<string | undefined> {
@@ -77,9 +77,38 @@ async function measured($: $, hook: Hook, percent: number, decision: string, not
   try {
     const path = await logPath($)
     if (!path) return
+    S.logPath = path
     const dir = path.slice(0, path.lastIndexOf('/'))
-    await $.process.run(['sh', '-c', 'mkdir -p -- "$1" && printf \'%s\\n\' "$3" >> "$2"', 'sh', dir, path, `${new Date(S.lastAt).toISOString()} ${body}`])
+    const r = await $.process.run(['sh', '-c', 'mkdir -p -- "$1" && printf \'%s\\n\' "$3" >> "$2"', 'sh', dir, path, `${new Date(S.lastAt).toISOString()} ${body}`])
+    if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `exit ${r.exitCode}`) // a full disk fails the >> with a status, not a throw
+  } catch {
+    diskTrouble($)
+  }
+}
+
+// Free text (an error's message, a path) as one token of a log note: no whitespace, no `,` (the note's separator).
+// ponytail: cut at 200 characters so one line stays one line; a longer message is only ever a stack nobody greps.
+const token = (v: unknown): string => String(v instanceof Error ? v.message : v).replace(/[\s,]+/g, '_').slice(0, 200) || '?'
+
+// The log or the store could not be written (seen live: a full disk swallowed both and nothing said so): one toast per
+// phase epoch (setPhase), never one per turn.
+function diskTrouble($: $) {
+  if (S.warned === S.epoch) return
+  S.warned = S.epoch
+  try {
+    $.ui.toast('auto-handoff: cannot write log/state — disk full?')
   } catch {}
+}
+
+// What a hook stage threw, in the log: `hook:error` with `stage=<s>,err=<message>`.
+function hookError($: $, hook: Hook, stage: string, err: unknown): Promise<void> {
+  return measured($, hook, S.percent, 'hook:error', `stage=${stage},err=${token(err)}`)
+}
+
+// A promise nobody waits for (a step the next turn runs, a redraw, a press): what it rejects with is logged, never left
+// unhandled. Every detached promise of this module goes through here.
+function detach($: $, stage: string, p: Promise<unknown>): void {
+  p.catch(err => hookError($, 'cycle', stage, err))
 }
 
 async function listHandoffs($: $, force?: boolean): Promise<Entry[]> {
@@ -130,12 +159,39 @@ function sync($: $, percent?: number) {
   }))
 }
 
-function persist($: $) {
-  return $.store.set(STORE, {
-    on: S.armed, prompt: S.prompt,
-    pending: S.phase === 'resume' && S.lastId ? { id: S.lastId, prompt: S.prompt } : undefined,
-    resumeAt: S.blocked ? S.resumeAt : undefined,
-  })
+// Best effort, never rejects: a store that cannot be written (a full disk) is logged (`cycle:persist-failed`) and said
+// in a toast, and the caller goes on — the loop's state is S, the store only what a new process starts from.
+async function persist($: $): Promise<void> {
+  try {
+    await $.store.set(STORE, {
+      on: S.armed, prompt: S.prompt,
+      pending: S.phase === 'resume' && S.lastId ? { id: S.lastId, prompt: S.prompt } : undefined,
+      resumeAt: S.blocked ? S.resumeAt : undefined,
+    })
+  } catch (err) {
+    await measured($, 'cycle', S.percent, 'cycle:persist-failed', `err=${token(err)}`)
+    diskTrouble($)
+  }
+}
+
+// Ends the cycle where it stands and starts the loop idle again, still armed: what was written, asked or pending is
+// dropped, and a chain still waiting to start (continueFrom) stops when it does.
+function resetCycle() {
+  setPhase('idle')
+  S.written = null
+  S.candidate = null
+  S.pending = null
+  S.external = null
+  S.clearTries = 0
+  S.resumeTries = 0
+  S.fresh = false
+  S.chain++
+}
+
+// A handoff file the cycle may go on from: on disk, under a name idOf reads an id from. A check that fails is no file.
+async function onDisk($: $, path: string): Promise<boolean> {
+  if (idOf(path.replace(/^.*\//, '')) === null) return false
+  return $.fs.exists(path).catch(() => false)
 }
 
 // A turn died on the 5h limit: one timer to 2 min past the window's reset, then the continuation prompt.
@@ -147,7 +203,7 @@ async function scheduleResume($: $) {
   S.blocked = true
   S.resumeAt = Date.parse(S.resetsAt) + LIMIT_GRACE
   const delay = Math.max(0, S.resumeAt - (await $.clock.now()))
-  limitTimer = $.clock.after(delay, () => void resumeAfterLimit($))
+  limitTimer = $.clock.after(delay, () => detach($, 'limit-resume', resumeAfterLimit($)))
   await persist($)
   $.ui.toast(`handoff: 5h limit hit — resuming at ${hhmm(S.resumeAt)}`)
   await sync($)
@@ -182,15 +238,18 @@ function record(path: string) {
 
 // The handoff file is there: its id is the last one, /clear and /junkd:handon <id> follow. The asks count belongs to the
 // loop's own requests for a file, so a file nobody asked for does not touch it beyond the reset.
-async function follow($: $, path: string) {
+// The chain is started before the persist (seen live: a persist that rejected on a full disk came first, and the phase
+// sat at resume with nothing running); the persist is best effort, never rejects, and the turn does not wait on it.
+function follow($: $, path: string) {
   const id = record(path)
   S.calls = 0
   S.asks = 0
   S.external = null
   S.count++
-  S.phase = 'resume'
-  await persist($)
+  S.resumeTries = 0
+  setPhase('resume')
   continueFrom($, id)
+  detach($, 'persist', persist($))
 }
 
 async function load($: $) {
@@ -202,7 +261,7 @@ async function load($: $) {
 
 // /junkd:handoff in the next turn. ponytail: detached — $.command.run is refused inside a hook the turn waits on.
 function queueHandoff($: $) {
-  void $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') }))
+  detach($, 'queue-handoff', $.clock.sleep(0).then(async () => $.command.run({ command: await findCommand($, 'handoff') })))
 }
 
 // Why the /clear did not happen: `timeout` (no answer in CLEAR_TIMEOUT_MS), `error` (the call rejected or threw) or `denied`
@@ -234,38 +293,53 @@ function clearRan(r: unknown): boolean {
 // model loads the handoff and goes on in the same turn, however it loads it (under the orch guard an agent does,
 // and a turn that ends with that agent running would let a separate prompt start before the handoff is in). Only
 // when no handon submission took it (a handon that raised none) is it sent as a prompt of its own, as before.
+// Each call is a numbered chain: one that a newer call (a retry) or a reset (resetCycle) superseded stops at its next
+// step. S.inFlight is up from the chain's start to its end, the handon included, so no turn end retries over it.
 function continueFrom($: $, id: string) {
   const text = S.prompt || DEFAULT_PROMPT
-  void $.clock.sleep(0).then(async () => {
-    S.fresh = S.armed // the guard is the loop's: a manual resume while off needs none
-    S.phase = 'clear'
-    // ponytail: queue /clear before any other await — a headless session exits right after the turn.
-    const cleared = $.command.run({ command: 'clear' })
-    void sync($)
-    void measured($, 'cycle', S.percent, 'cycle:clear-issued')
-    // The host may never answer, a hook may refuse it (denied) or it may throw (seen live: the clear was never queued and the phase stayed
-    // `clear` for good): any of the three leaves the phase at `clear` with fresh off, and the next turn end retries.
-    const failed = await clearFailure($, cleared)
-    if (failed) {
-      S.fresh = false // the window was not cleared: the next turn end is judged as a turn end, not as a fresh window
-      await measured($, 'cycle', S.percent, `cycle:clear-failed:${failed}`)
-      return void (await sync($))
-    }
-    S.clearTries = 0
-    S.phase = 'resume'
-    void sync($)
-    const pending = (S.pending = { id, text, delivered: false })
+  const chain = ++S.chain
+  const latest = () => chain === S.chain
+  detach($, 'continue', $.clock.sleep(0).then(async () => {
+    if (!latest()) return
+    S.inFlight = true
     try {
-      await $.command.run({ command: await findCommand($, 'handon'), args: id })
+      S.fresh = S.armed // the guard is the loop's: a manual resume while off needs none
+      setPhase('clear')
+      // ponytail: queue /clear before any other await — a headless session exits right after the turn.
+      const cleared = $.command.run({ command: 'clear' })
+      detach($, 'sync', sync($))
+      detach($, 'log', measured($, 'cycle', S.percent, 'cycle:clear-issued'))
+      // The host may never answer, a hook may refuse it (denied) or it may throw (seen live: the clear was never queued and the phase stayed
+      // `clear` for good): any of the three leaves the phase at `clear` with fresh off, and the next turn end retries.
+      const failed = await clearFailure($, cleared)
+      if (!latest()) return
+      if (failed) {
+        S.fresh = false // the window was not cleared: the next turn end is judged as a turn end, not as a fresh window
+        await measured($, 'cycle', S.percent, `cycle:clear-failed:${failed}`)
+        await sync($)
+        return
+      }
+      S.clearTries = 0
+      setPhase('resume')
+      detach($, 'sync', sync($))
+      const pending = (S.pending = { id, text, delivered: false })
+      try {
+        await $.command.run({ command: await findCommand($, 'handon'), args: id })
+      } finally {
+        if (S.pending === pending) S.pending = null
+      }
+      // a handon that threw left the phase at resume: the chain ends here, and the next turn end retries (resumeTries)
+      if (!latest()) return
+      setPhase('idle')
+      S.resumeTries = 0
+      await persist($)
+      S.tokens = 0
+      await sync($, 0)
+      if (!pending.delivered) await sendPrompt($, text)
     } finally {
-      S.pending = null
+      if (latest()) S.inFlight = false
     }
-    S.phase = 'idle'
-    await persist($)
-    S.tokens = 0
-    await sync($, 0)
-    if (!pending.delivered) await sendPrompt($, text)
-  })
+  }))
 }
 
 // What the handon submission of a continuing loop carries to the model: the person's continuation prompt, said as
@@ -285,21 +359,26 @@ export function handoffContinuation(e: { command?: { name: string; args: string 
 // inside a hook the turn waits on), PROMPT_DELAY_MS after the command that armed it ended. The host refuses a
 // submitted text starting with /, so a slash command goes through $.command.run instead.
 function runPrompt($: $, text: string) {
-  void $.clock.sleep(PROMPT_DELAY_MS).then(() => sendPrompt($, text))
+  detach($, 'prompt', $.clock.sleep(PROMPT_DELAY_MS).then(() => sendPrompt($, text)))
 }
 async function sendPrompt($: $, text: string) {
   const [, command, args = ''] = /^\/(\S+)\s*([\s\S]*)$/.exec(text) ?? []
-  if (command) return void (await $.command.run({ command, args }))
+  if (command) {
+    await $.command.run({ command, args })
+    return
+  }
   const r = await $.prompt.submit({ text })
   // a hook or a settings hook that refuses the prompt leaves no turn: say so instead of leaving the loop silent
   if (r.drop !== undefined) $.ui.toast(`ahandoff: the prompt was refused — ${r.drop}`)
 }
 
-// `/junkd:ahandoff status`: armed or off, the limit as it stands, the last measurement, and the log's path.
+// `/junkd:ahandoff status`: armed or off, the limit as it stands, the last measurement, and the log's path; then the
+// loop's own state (loopState), one `label value` line each, the threshold's source last.
 async function statusText($: $): Promise<string> {
   const path = await logPath($)
   const last = S.last ? `${new Date(S.lastAt).toISOString()} ${S.last}` : 'none yet'
-  return `handoff auto ${S.armed ? 'on' : 'off'} — threshold ${thresholdText()} — limit ${kTokens(limit())} — last measurement: ${last} — log: ${path ?? 'none (no session id)'}`
+  const head = `handoff auto ${S.armed ? 'on' : 'off'} — threshold ${thresholdText()} — limit ${kTokens(limit())} — last measurement: ${last} — log: ${path ?? 'none (no session id)'}`
+  return [head, ...loopState().map(([k, v]) => `${k} ${v}`)].join('\n')
 }
 
 async function panel($: $) {
@@ -332,7 +411,7 @@ async function openPane($: $, route?: Route, focus = true) {
   if (route) S.route = route
   S.paneOpen = (await opened).isPlaced
   await sync($)
-  void load($)
+  detach($, 'load', load($))
 }
 
 // The engine does not raise our own `$.ui.close` to our `ui.close` hook, so we clear the flag here.
@@ -359,10 +438,12 @@ function warnUnreachable($: $) {
 async function arm($: $) {
   if (!S.enabled) {
     S.note = `✗ ${OFF}`
-    return void redraw($)
+    redraw($)
+    return
   }
   S.armed = true
-  S.phase = 'idle'
+  setPhase('idle')
+  S.resumeTries = 0
   S.calls = 0
   S.asks = 0
   S.external = null
@@ -376,9 +457,11 @@ async function arm($: $) {
 async function disarm($: $) {
   S.armed = false
   cancelResume()
-  S.phase = 'idle'
+  setPhase('idle')
   S.written = null
+  S.candidate = null
   S.clearTries = 0
+  S.resumeTries = 0
   S.fresh = false
   S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
   S.armedAt = null
@@ -431,10 +514,11 @@ async function apply($: $, field: Field, value: number | boolean) {
   if (field === 'threshold') {
     const changed = S.threshold !== value // a write can reach apply twice (the hook and setOption): the second changes nothing
     S.threshold = value as number
+    S.thresholdSrc = 'settings'
     if (changed && S.armed) await rearmed($, 'config.set')
   }
   else if (field === 'checkEvery') S.checkEvery = value as number
-  else if (field === 'staleDays') { S.staleDays = value as number; S.entries = null; void load($) }
+  else if (field === 'staleDays') { S.staleDays = value as number; S.entries = null; detach($, 'load', load($)) }
   else if (field === 'segment') S.segment = value as boolean
   else if (field === 'autoOn') S.autoOn = value as boolean
   else if (field === 'resumeAfterLimit') { S.resumeAfterLimit = value as boolean; if (!value) cancelResume() }
@@ -457,14 +541,14 @@ function api($: $): Api {
       S.note = ''
       S.confirm = null
       S.viewing = null
-      void sync($)
-      void load($)
+      detach($, 'sync', sync($))
+      detach($, 'load', load($))
     },
     arm: () => arm($),
-    disarm: () => void disarm($),
+    disarm: () => detach($, 'disarm', disarm($)),
     handoffNow: async () => {
       if (S.armed) {
-        S.phase = 'handoff'
+        setPhase('handoff')
         S.asks = 1 // the queued /junkd:handoff is the first ask, as the turn-end fire counts it
       }
       S.note = '✓ handoff queued'
@@ -497,7 +581,7 @@ function api($: $): Api {
     set: async (field, value) => { await setOption($, field, value) },
     refresh: () => {
       redraw($)
-      void load($)
+      detach($, 'load', load($))
     },
   }
 }
@@ -524,7 +608,7 @@ export async function handoffOpen($: $, input: OpenInput = {}): Promise<void> {
   if (route && S.paneOpen) {
     S.route = route
     await sync($)
-    void load($)
+    detach($, 'load', load($))
   } else await toggle($, route)
 }
 // show never closes: the pane opens (or, up already, is asked again: retitled, its tab switched, the keys asked
@@ -564,6 +648,14 @@ async function restore($: $) {
 }
 
 export async function handoffStart($: $): Promise<void> {
+  // A phase other than idle at a session start the loop's own chain is not running (seen live: a `resume` with nothing
+  // behind it, carried through a /clear by hand, S being the same module object): that cycle is over. The loop stays
+  // armed and starts idle; a chain still waiting to start stops (resetCycle).
+  if (S.phase !== 'idle' && !S.inFlight) {
+    const from = S.phase
+    resetCycle()
+    await measured($, 'session.start', S.percent, 'session:reset-phase', `from=${from}`)
+  }
   const saved = (await $.store.get(STORE)) as { on?: boolean; prompt?: string | null; pending?: { id: string }; resumeAt?: number } | undefined
   if (saved?.pending) $.ui.toast(`handoff: pending handoff ${saved.pending.id} — run /junkd:handon ${saved.pending.id}`)
   if (saved?.resumeAt && saved.resumeAt > Date.now()) {
@@ -602,13 +694,28 @@ export async function handoffToolCall($: $, e: ToolCallInput, next: Next<'tool.c
     // A handoff this session's main loop writes while the loop is idle (the person's /junkd:handoff by hand) continues the
     // chain at the turn end like its own. The handoffs folder is global: other sessions' files are not this loop's.
     const r = await next(e)
-    if (r.deny === undefined) S.external = String(e.file_path)
+    if (r.deny === undefined && !r.isError) S.external = String(e.file_path)
     return r
   }
   const isHandoffPath = e.tool === 'Bash' && /handoff-path/.test(String(e.command))
   const isHandoffSkill = e.tool === 'Skill' && /handoff/.test(String((e as { skill?: unknown }).skill))
-  if (isHandoffWrite) S.written = String(e.file_path)
-  if (isHandoffWrite || isHandoffPath || isHandoffSkill) return next(e)
+  if (isHandoffWrite) {
+    // Only a Write the tool reports done is the cycle's file (seen live: a Write that failed on a full disk, to a path the
+    // model made up when bin/handoff-path could not run, was taken as written); the turn end checks it is on disk too.
+    const path = String(e.file_path)
+    S.candidate = path
+    let done = false
+    try {
+      const r = await next(e)
+      done = r.deny === undefined && !r.isError
+      return r
+    } finally {
+      if (S.candidate === path) S.candidate = null
+      if (done) S.written = path
+      else await measured($, 'tool.call', S.percent, 'cycle:written-missing', `path=${token(path)},write-failed`)
+    }
+  }
+  if (isHandoffPath || isHandoffSkill) return next(e)
   return {
     deny: 'ahandoff: context limit reached. Stop the current work now. Call the Skill tool with skill "junkd:handoff" and follow it (run its bin/handoff-path, then Write the handoff markdown to the path it prints — include task ids, branch, worktree, round and what to do next). Then end the turn with one line. Every other tool is denied until the handoff is written.',
   }
@@ -628,10 +735,107 @@ export function handoffSegment($: $, e: RenderInput<'PromptHint'>) {
     : S.blocked ? P.warn
     : S.tokens >= limit() ? P.bad : S.tokens >= limit() * 0.9 ? P.warn : P.ok
   return (
-    <Button key="handoff-segment" plain label={label} onPress={() => void toggle($)}>
+    <Button key="handoff-segment" plain label={label} onPress={() => detach($, 'segment', toggle($))}>
       <Text color={color}>{label}</Text>
     </Button>
   )
+}
+
+// The loop's turn end, without the next(e) that its hook runs in a finally; `at.stage` names the step it is on.
+async function turnEnd($: $, e: { agentId?: string; reason?: string; answer?: unknown }, at: { stage: string }): Promise<void> {
+  toolsTurnEnd($)
+  at.stage = 'dashboard'
+  detach($, 'dashboard', dashboardTurnEnd($)) // the orch dashboard's status.js, while it is open; never throws
+  at.stage = 'lessons'
+  await lessonsTurnEnd($, e) // the lessons stores again, and the dialog when the answer prints BACKLOG:; never throws
+  if (e.agentId) return
+  at.stage = 'disarmed'
+  if (!S.armed) return measured($, 'turn.complete', S.percent, 'skip:disarmed')
+  // ponytail: the host names no error kind here — an error with the 5h window at 99%+ is the limit.
+  if (e.reason === 'error' && S.resumeAfterLimit && S.fiveHour >= 99) {
+    at.stage = 'five-hour-limit'
+    await measured($, 'turn.complete', S.percent, 'skip:five-hour-limit')
+    return scheduleResume($)
+  }
+  at.stage = 'usage'
+  const { percent, used } = await readUsage($)
+  const m = (decision: string, note = '') => measured($, 'turn.complete', percent, decision, note, used)
+  at.stage = 'written'
+  // The loop's own handoff (its Write reported done) and an external one must be on disk under a handoff name before a
+  // cycle goes on from them; one that is not is dropped, and for the loop's own the turn counts as one more ask.
+  if (S.phase === 'handoff' && S.written && !(await onDisk($, S.written))) {
+    await m('cycle:written-missing', `path=${token(S.written)}`)
+    S.written = null
+  }
+  if (S.phase === 'idle' && S.external && !(await onDisk($, S.external))) {
+    await m('cycle:written-missing', `path=${token(S.external)}`)
+    S.external = null
+  }
+  // A handoff this session's main loop wrote while armed that the loop did not ask for (handoffToolCall noted it).
+  const external = S.phase === 'idle' ? S.external : null
+  at.stage = 'decide'
+  if (S.fresh) {
+    // nothing: the first measurement of the new window decides (session.measure)
+    await m('skip:fresh')
+  } else if (S.phase === 'handoff' && !S.written && S.asks >= MAX_ASKS) {
+    // asked MAX_ASKS times, no file: stop here instead of asking every turn for ever
+    at.stage = 'give-up-asks'
+    await m(`give-up:${MAX_ASKS}-tries`)
+    await disarm($)
+    $.ui.toast(`ahandoff: handoff not written after ${MAX_ASKS} tries — disarmed`)
+  } else if (S.phase === 'clear') {
+    // the cycle's /clear was lost (a clear in flight has fresh on, and the branch above skips): ask again, MAX_CLEAR_RETRIES times
+    at.stage = 'retry-clear'
+    if (S.clearTries >= MAX_CLEAR_RETRIES) {
+      await m('give-up:clear')
+      await disarm($)
+      $.ui.toast(`ahandoff: /clear failed ${MAX_CLEAR_RETRIES + 1} times — disarmed`)
+    } else {
+      S.clearTries++
+      await m('cycle:retry-clear')
+      continueFrom($, S.lastId!)
+    }
+  } else if (S.phase === 'resume' && !S.inFlight) {
+    // the cycle's resume has nothing running it (seen live: the chain was never started): start it again,
+    // MAX_RESUME_RETRIES times, then back to idle, still armed. A handon in flight (S.inFlight) is never retried over.
+    at.stage = 'retry-resume'
+    if (S.resumeTries >= MAX_RESUME_RETRIES || !S.lastId) {
+      const tries = S.resumeTries + 1
+      await m('give-up:resume', `n=${tries}`)
+      resetCycle()
+      await persist($)
+      $.ui.toast(`auto-handoff: resume failed ${tries} times, loop reset to idle; still armed`)
+    } else {
+      S.resumeTries++
+      await m('cycle:retry-resume', `n=${S.resumeTries}`)
+      continueFrom($, S.lastId)
+    }
+  } else if (S.phase === 'handoff' && !S.written) {
+    at.stage = 'ask-handoff'
+    await m('cycle:ask-handoff')
+    S.asks++
+    queueHandoff($) // model never wrote it mid-turn: ask /junkd:handoff as the next turn
+  } else if (external) {
+    at.stage = 'external'
+    await m('fire:external-handoff')
+    follow($, external)
+  } else if (S.phase === 'idle' && used >= limit()) {
+    at.stage = 'fire'
+    await m('fire')
+    setPhase('handoff')
+    S.asks = 1
+    queueHandoff($)
+  } else if (S.phase === 'handoff' && S.written) {
+    at.stage = 'continue'
+    const path = S.written
+    await m('cycle:continue', `path=${token(path)}`)
+    S.written = null
+    follow($, path)
+  } else {
+    await m(S.phase === 'idle' ? 'skip:below-limit' : `skip:phase-${S.phase}`)
+  }
+  at.stage = 'sync'
+  await sync($, percent)
 }
 
 export function registerHandoff(on: On, options: Record<string, unknown>): void {
@@ -668,67 +872,23 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     return r
   })
 
-  // The module's one turn.complete hook: the tools pane reads its tree again at every turn's end, first.
+  // The module's one turn.complete hook: the tools pane reads its tree again at every turn's end, first. Whatever a stage
+  // throws is logged (`hook:error stage=<s>`) and the turn still passes on: sync and next(e) run whatever happened
+  // (seen live: a rejection here skipped both and nothing said so).
   on('turn.complete', async ($, e, next) => {
-    toolsTurnEnd($)
-    void dashboardTurnEnd($) // the orch dashboard's status.js, while it is open; never throws
-    await lessonsTurnEnd($, e) // the lessons stores again, and the dialog when the answer prints BACKLOG:; never throws
-    if (e.agentId) return next(e)
-    if (!S.armed) {
-      await measured($, 'turn.complete', S.percent, 'skip:disarmed')
-      return next(e)
+    const at = { stage: 'tools-pane' }
+    let r!: ReturnType<typeof next>
+    try {
+      await turnEnd($, e, at)
+    } catch (err) {
+      await hookError($, 'turn.complete', at.stage, err)
+      try {
+        await sync($)
+      } catch {}
+    } finally {
+      r = next(e)
     }
-    // ponytail: the host names no error kind here — an error with the 5h window at 99%+ is the limit.
-    if (e.reason === 'error' && S.resumeAfterLimit && S.fiveHour >= 99) {
-      await measured($, 'turn.complete', S.percent, 'skip:five-hour-limit')
-      await scheduleResume($)
-      return next(e)
-    }
-    const { percent, used } = await readUsage($)
-    const m = (decision: string) => measured($, 'turn.complete', percent, decision, '', used)
-    // A handoff this session's main loop wrote while armed that the loop did not ask for (handoffToolCall noted it).
-    const external = S.phase === 'idle' ? S.external : null
-    if (S.fresh) {
-      // nothing: the first measurement of the new window decides (session.measure)
-      await m('skip:fresh')
-    } else if (S.phase === 'handoff' && !S.written && S.asks >= MAX_ASKS) {
-      // asked MAX_ASKS times, no file: stop here instead of asking every turn for ever
-      await m(`give-up:${MAX_ASKS}-tries`)
-      await disarm($)
-      $.ui.toast(`ahandoff: handoff not written after ${MAX_ASKS} tries — disarmed`)
-    } else if (S.phase === 'clear') {
-      // the cycle's /clear was lost (a clear in flight has fresh on, and the branch above skips): ask again, MAX_CLEAR_RETRIES times
-      if (S.clearTries >= MAX_CLEAR_RETRIES) {
-        await m('give-up:clear')
-        await disarm($)
-        $.ui.toast(`ahandoff: /clear failed ${MAX_CLEAR_RETRIES + 1} times — disarmed`)
-      } else {
-        S.clearTries++
-        await m('cycle:retry-clear')
-        continueFrom($, S.lastId!)
-      }
-    } else if (S.phase === 'handoff' && !S.written) {
-      await m('cycle:ask-handoff')
-      S.asks++
-      queueHandoff($) // model never wrote it mid-turn: ask /junkd:handoff as the next turn
-    } else if (external) {
-      await m('fire:external-handoff')
-      await follow($, external)
-    } else if (S.phase === 'idle' && used >= limit()) {
-      await m('fire')
-      S.phase = 'handoff'
-      S.asks = 1
-      queueHandoff($)
-    } else if (S.phase === 'handoff' && S.written) {
-      await m('cycle:continue')
-      const path = S.written
-      S.written = null
-      await follow($, path)
-    } else {
-      await m(S.phase === 'idle' ? 'skip:below-limit' : `skip:phase-${S.phase}`)
-    }
-    await sync($, percent)
-    return next(e)
+    return r
   })
 
   on('session.measure', async ($, e, next) => {
@@ -757,7 +917,7 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
           if (S.window > 0 && limit() >= S.window) {
             // ponytail: a limit no window can reach would never hand off — disarm instead.
             S.armed = false
-            S.phase = 'idle'
+            setPhase('idle')
             note = 'base-set,fresh-cleared,auto-disarmed'
             await persist($)
             $.ui.toast(`handoff: fresh window at ${kTokens(used)}, ${thresholdText()} more can't fit — auto disarmed`)
@@ -792,14 +952,14 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
     if (e.surface === 'mobile') return next(e)
     S.cols = Math.max(20, (e.props.bodyColumns ?? 100) - EDGE)
     const a = api($)
-    const ui = fields($.ui.resolve(e) as Elements, a, e.surface, key => void $.ui.focus({ requestId: PANE, key }))
+    const ui = fields($.ui.resolve(e) as Elements, a, e.surface, key => detach($, 'focus', $.ui.focus({ requestId: PANE, key })))
     const c: Ctx = { api: a, ui, surface: e.surface }
     const screen = VIEWS[S.route](c)
     // Docked, the pane is floor to ceiling: the body takes what is left, the footer sits at the bottom.
     const rows = e.props.placement === 'dock' ? e.props.scroll?.bodyRows : undefined
     return (
       <ui.Box flexDirection="column" paddingRight={EDGE} minHeight={rows}>
-        <Tabs c={c} close={() => void (isSets(owner) ? shutSet($) : closePane($))} />
+        <Tabs c={c} close={() => detach($, 'close', isSets(owner) ? shutSet($) : closePane($))} />
         <Rule c={c} />
         <ui.Box flexDirection="column" flexGrow={1} marginTop={1}>
           {screen.body}
