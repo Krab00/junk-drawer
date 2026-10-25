@@ -1,7 +1,7 @@
 ---
 description: "Project-agnostic orchestration loop: pick tasks from the canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Usage: /junkd:orch <free text> | <ID...> | batch [N] | chain [N] | all [--base <b>] [--rounds R] [--deep] [--single-pr[=<b>]]"
 argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel | watchdog [on|off]] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-deps:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
 ---
 
 # /junkd:orch — project-agnostic orchestration loop
@@ -61,6 +61,13 @@ or reinvent their logic):
 - `${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree add <id> <branch> [base] | remove <id> | slot <id>`
   — per-task worktrees under `.worktrees/`; prints `dir=`, `slot=`, and `web_port=`/`api_port=`
   (= the config `port_base` + a stable slot) for every declared capability.
+- `${CLAUDE_PLUGIN_ROOT}/bin/orch-deps reap [--apply] [--branch <b>] | derived [--apply]` — keeps worktrees
+  cheap. **Set up dependencies in a worktree the way the repo's AGENTS.md (or CLAUDE.md) says; if it says
+  nothing, no full install (`npm ci`, `pod install`, `bundle install`, ...) in a worktree — ask the
+  orchestrator.** `/junkd:orch-init` writes that AGENTS.md section, and `orch-worktree add` symlinks the
+  config's `worktree_links` from the main checkout. `reap` removes the agent worktrees Claude Code leaves under
+  `.claude/worktrees/agent-*` (one per `isolation: worktree` spawn) — only clean ones with every commit on a
+  remote, never a locked one; `derived` drops the Xcode DerivedData of gone worktrees.
 - `${CLAUDE_PLUGIN_ROOT}/bin/orch-sync pull|push [id...]` — the task-store ⇄ backend bridge.
 - `${CLAUDE_PLUGIN_ROOT}/bin/orch-state lesson add|list|promote|up|drop|prune|pending|inject` — the three lesson
   stores (§7). It is the only writer of them: never edit a lessons file by hand.
@@ -235,6 +242,9 @@ tell it which apply; never ask for a check on an undeclared layer):
     + a short analysis of *why the previous attempts keep failing* (a new pair of eyes).
   - **Still failing after round R** → append the escalation reason + remaining FAILs to the task
     file, `orch-state set <id> blocked`, move on.
+- **Task resolved (`done` or `blocked`)** → `orch-ops` runs `orch-deps reap --apply --branch <branch>`: the
+  task's implementer (and slice) worktrees go once clean and pushed. Never earlier: a fix round resumes the
+  same implementer in its worktree.
 - **Retro (§7)**: a lesson on a signal, none on a clean round-0 PASS.
 
 ### 6. Iterate
@@ -247,7 +257,8 @@ tell it which apply; never ask for a check on an undeclared layer):
 - **`--single-pr` only, end of run:** build the single PR (see **Single-PR mode**) before the push.
 - **End of run (all modes):** `orch-sync push` — reflect statuses + post the verification tables
   (no-op for `adhoc`/`manifest`; `github-issues` comments via `gh`; `linear-mcp` you push via MCP).
-  Then tear down or PR the orch worktree per **Branch rule**.
+  Then `orch-ops` runs `orch-deps reap --apply` (every leftover agent worktree that is clean, pushed and
+  unlocked; the rest print as `keep`) and tears down or PRs the orch worktree per **Branch rule**.
 - **Context guard:** if context is getting long, finish the current task cleanly, stop early, and
   print the resume command: `/junkd:orch <mode> [remaining-N] --base <last-finished-branch>`.
 

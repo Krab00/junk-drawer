@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# orch-deps — reap what Claude Code's agent worktrees leave behind. Zero deps (bash + git).
+#   orch-deps reap [--apply] [--branch <b>]
+#                             # agent worktrees (*/.claude/worktrees/agent-*): print each as `remove` or `keep <why>`.
+#                             # Removable = no change and no untracked file, every commit on a remote, not locked by a
+#                             # live process, name not in $ORCH_DEPS_KEEP. --branch: only the ones on <b> or <b>-*.
+#                             # --apply removes them (`git worktree remove --force`: links are unlinked, never
+#                             # followed), prunes, then runs `derived --apply`. Branches stay.
+#   orch-deps derived [--apply]
+#                             # Xcode DerivedData folders whose workspace sat in a worktree (/.claude/worktrees/ or
+#                             # /.worktrees/) that no longer exists; --apply removes them.
+set -euo pipefail
+
+# the main worktree is the first entry; awk reads to the end (an early exit SIGPIPEs git, failing pipefail)
+_main(){ git -C "$1" worktree list --porcelain | awk 'NR==1{sub(/^worktree /,""); print}'; }
+
+_derived(){
+  local apply="${1:-}" dd="$HOME/Library/Developer/Xcode/DerivedData" d ws
+  [ -d "$dd" ] && command -v plutil >/dev/null || return 0
+  for d in "$dd"/*/; do
+    ws=$(plutil -extract WorkspacePath raw "$d/info.plist" 2>/dev/null) || continue
+    case "$ws" in */.claude/worktrees/*|*/.worktrees/*) ;; *) continue;; esac
+    [ ! -e "$ws" ] || continue
+    if [ "$apply" = --apply ]; then rm -rf "${d%/}"; echo "removed ${d%/} ($ws is gone)"; else echo "remove ${d%/} ($ws is gone)"; fi
+  done
+}
+
+_reap(){
+  local apply="" branch="" main path locked why pid n
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --apply) apply=1 ;;
+      --branch) branch="${2:?--branch needs a name}"; shift ;;
+      *) echo "orch-deps: unknown reap flag '$1'" >&2; exit 1 ;;
+    esac; shift
+  done
+  main=$(_main .) || { echo "orch-deps: not inside a git repo" >&2; exit 2; }
+  while IFS=$'\037' read -r path head locked; do
+    case "$path" in */.claude/worktrees/agent-*) ;; *) continue;; esac
+    if [ -n "$branch" ] && [ "$head" != "$branch" ] && [[ "$head" != "$branch"-* ]]; then continue; fi
+    why=""
+    if [[ " ${ORCH_DEPS_KEEP:-} " == *" ${path##*/} "* ]]; then why="in ORCH_DEPS_KEEP"
+    elif [ ! -d "$path" ]; then why="gone (prune drops it)"
+    elif [ -n "$locked" ]; then
+      pid=$(sed -n 's/.*(pid \([0-9][0-9]*\).*/\1/p' <<<"$locked")
+      if [ -z "$pid" ]; then why="locked: $locked"; elif ps -p "$pid" >/dev/null 2>&1; then why="locked by live pid $pid"; fi
+    fi
+    if [ -z "$why" ] && [ -n "$(git -C "$path" status --porcelain 2>/dev/null || echo x)" ]; then why="uncommitted changes"; fi
+    if [ -z "$why" ]; then
+      n=$(git -C "$path" rev-list --count HEAD --not --remotes 2>/dev/null || echo "?")
+      [ "$n" = 0 ] || why="$n commit(s) on no remote"
+    fi
+    if [ -n "$why" ]; then echo "keep $path: $why"; continue; fi
+    if [ -z "$apply" ]; then echo "remove $path"; continue; fi
+    [ -z "$locked" ] || git -C "$main" worktree unlock "$path"
+    git -C "$main" worktree remove --force "$path" && echo "removed $path"
+  done < <(git -C "$main" worktree list --porcelain | awk '
+      /^worktree /{ if (p != "") print p "\037" h "\037" l; p = substr($0, 10); h = ""; l = "" }
+      /^branch /{ h = substr($0, 8); sub(/^refs\/heads\//, "", h) }
+      /^locked/{ l = substr($0, 8); if (l == "") l = "(no reason)" }
+      END{ if (p != "") print p "\037" h "\037" l }')
+  if [ -n "$apply" ]; then git -C "$main" worktree prune; _derived --apply; else _derived; fi
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  reap) _reap "$@" ;;
+  derived) _derived "${1:-}" ;;
+  ""|-h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0" ;;
+  *) echo "orch-deps: unknown command '$cmd'" >&2; exit 1 ;;
+esac

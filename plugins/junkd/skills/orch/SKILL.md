@@ -2,7 +2,7 @@
 name: orch
 description: Orchestrate implementation and independent verification of one task or a backlog using specialized subagents, isolated Git worktrees, evidence gates, fix rounds, and draft pull requests. Use when the user asks to run orch, process task ids, drain a backlog, delegate implementation and verification, or execute batch, chain, all, deep, or single-PR modes.
 argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel | dashboard [close]] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-deps:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
 ---
 
 # Orchestrate tasks

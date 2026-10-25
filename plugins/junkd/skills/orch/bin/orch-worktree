@@ -5,7 +5,8 @@
 # `.worktrees/` goes to .git/info/exclude so it never shows up as untracked.
 #   orch-worktree add <id> <branch> [base]  # create/attach the worktree (detached at <branch> when it
 #                                           # exists: the implementer's own worktree may still hold it);
-#                                           # print dir + slot + ports
+#                                           # print dir + slot + ports; symlink the config's
+#                                           # `worktree_links` dirs from the main checkout (stderr)
 #   orch-worktree remove <id>               # remove the worktree, free its slot
 #   orch-worktree slot <id>                 # print (assigning if needed) the slot for <id>
 set -euo pipefail
@@ -69,6 +70,38 @@ _slot_for(){
   echo "$s"
 }
 
+# _links <dir>: each config `worktree_links` path (globs allowed) the main checkout has, gitignores and does
+# not track, and <dir> lacks, becomes a symlink to the main checkout's copy (+ an info/exclude line: a link
+# is no dir to a `node_modules/` rule). A package whose lockfile differs from the main one's is skipped.
+_links(){
+  local dir="$1" list main pat pats src rel pkg lock
+  list=$("$here/orch-state" cfg worktree_links); list=${list#[}; list=${list%]}
+  [ -n "${list//[ ,]/}" ] || return 0
+  main=$(git -C "$root" worktree list --porcelain | awk 'NR==1{sub(/^worktree /,""); print}')
+  [ "$(cd "$main" && pwd -P)" != "$(cd "$dir" && pwd -P)" ] || return 0
+  IFS=, read -ra pats <<<"$list"
+  for pat in "${pats[@]}"; do
+    pat=$(echo "$pat" | sed 's/^[[:space:]"'"'"']*//; s/[[:space:]"'"'"']*$//'); pat=${pat%/}
+    case "$pat" in ""|/*|..|../*|*/..|*/../*) [ -z "$pat" ] || echo "orch: worktree_links: skip '$pat' (not a repo path)" >&2; continue ;; esac
+    for src in "$main"/$pat; do
+      rel=${src#"$main"/}
+      [ -d "$src" ] && [ ! -e "$dir/$rel" ] && [ ! -L "$dir/$rel" ] || continue
+      if ! git -C "$main" check-ignore -q "$rel" 2>/dev/null; then   # tracked content is never "ignored"
+        echo "orch: worktree_links: skip $rel (tracked or not gitignored)" >&2; continue
+      fi
+      pkg=$(dirname "$rel")
+      for lock in package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb Podfile.lock Gemfile.lock poetry.lock uv.lock; do
+        if [ -f "$main/$pkg/$lock" ] && [ -f "$dir/$pkg/$lock" ] && ! cmp -s "$main/$pkg/$lock" "$dir/$pkg/$lock"; then
+          echo "orch: worktree_links: skip $rel ($pkg/$lock differs from the main checkout's)" >&2; continue 2
+        fi
+      done
+      mkdir -p "$(dirname "$dir/$rel")"; ln -s "$src" "$dir/$rel"
+      grep -qxF "/$rel" "$common/info/exclude" 2>/dev/null || echo "/$rel" >> "$common/info/exclude"
+      echo "linked $rel -> $src" >&2
+    done
+  done
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   add)
@@ -88,6 +121,7 @@ case "$cmd" in
     else
       git -C "$root" worktree add "$dir" -b "$branch" "${base:-HEAD}" >&2
     fi
+    _links "$dir"
     slot=$(_slot_for "$id")
     echo "dir=$dir"
     echo "slot=$slot"

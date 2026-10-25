@@ -878,4 +878,98 @@ for good in '.orch/tasks' '".orch/tasks"' '.orch/new/deep' './.orch/tasks'; do
 done
 rm -f "$fence/.orch/config.md"
 
+# ---------------------------------------------------------------- orch-deps: reap agent worktrees
+bash -n "$plugin/bin/orch-deps" || fail "bash -n orch-deps"
+[ -L "$plugin/skills/junkd/bin/orch-deps" ] || fail "skills/junkd/bin/orch-deps is no link"
+if "$bin/orch-deps" link 2>/dev/null; then fail "orch-deps: link still accepted"; fi
+g() { git -c user.email=t@t -c user.name=t "$@"; }
+dp="$tmp/deps/main"; mkdir -p "$dp/mobile"
+dp=$(cd -P "$dp" && pwd)
+g init -q -b main "$dp"
+printf 'v1\n' > "$dp/mobile/package-lock.json"
+g -C "$dp" add -A; g -C "$dp" commit -qm init
+g init -q --bare "$tmp/deps/remote.git"; g -C "$dp" remote add origin "$tmp/deps/remote.git"; g -C "$dp" push -q origin main
+wt="$dp/.claude/worktrees"
+g -C "$dp" worktree add -q "$wt/agent-clean" -b worktree-agent-clean main
+g -C "$dp" worktree add -q "$wt/agent-dirty" -b worktree-agent-dirty main
+printf 'v2\n' > "$wt/agent-dirty/mobile/package-lock.json"
+# reap: clean + pushed goes; dirty, unpushed, locked by a live pid, ORCH_DEPS_KEEP stay
+g -C "$dp" worktree add -q "$wt/agent-unpushed" -b worktree-agent-unpushed main
+g -C "$wt/agent-unpushed" commit -q --allow-empty -m local
+g -C "$dp" worktree add -q "$wt/agent-locked" -b worktree-agent-locked main
+g -C "$dp" worktree lock --reason "claude agent agent-locked (pid $$ start now)" "$wt/agent-locked"
+g -C "$dp" worktree add -q "$wt/agent-kept" -b worktree-agent-kept main
+g -C "$dp" worktree add -q "$tmp/deps/other" -b other main     # no agent worktree: never listed
+export HOME_SAVED="$HOME"; export HOME="$tmp/deps/home"; dd="$HOME/Library/Developer/Xcode/DerivedData"
+if command -v plutil >/dev/null; then
+    mkdir -p "$dd/App-gone" "$dd/App-live"
+    plutil -create xml1 "$dd/App-gone/info.plist"; plutil -insert WorkspacePath -string "$wt/agent-gone/ios/App.xcworkspace" "$dd/App-gone/info.plist"
+    plutil -create xml1 "$dd/App-live/info.plist"; plutil -insert WorkspacePath -string "$wt/agent-kept" "$dd/App-live/info.plist"
+fi
+dry=$(cd "$dp" && ORCH_DEPS_KEEP="agent-kept" "$bin/orch-deps" reap)
+rg -qx "remove $wt/agent-clean" <<<"$dry" || fail "reap: clean+pushed not removable: $dry"
+rg -qx "keep $wt/agent-dirty: uncommitted changes" <<<"$dry" || fail "reap: dirty not kept: $dry"
+rg -qx "keep $wt/agent-unpushed: 1 commit\(s\) on no remote" <<<"$dry" || fail "reap: unpushed not kept: $dry"
+rg -qx "keep $wt/agent-locked: locked by live pid $$" <<<"$dry" || fail "reap: live lock not kept: $dry"
+rg -qx "keep $wt/agent-kept: in ORCH_DEPS_KEEP" <<<"$dry" || fail "reap: ORCH_DEPS_KEEP not kept: $dry"
+if rg -q "$tmp/deps/other" <<<"$dry"; then fail "reap: listed a non-agent worktree"; fi
+[ -d "$wt/agent-clean" ] || fail "reap without --apply removed something"
+[ "$(cd "$dp" && "$bin/orch-deps" reap --branch worktree-agent-dirty | rg -c "^(keep|remove) $wt/")" = 1 ] || fail "reap --branch: not limited to that branch"
+(cd "$wt/agent-dirty" && ORCH_DEPS_KEEP="agent-kept" "$bin/orch-deps" reap --apply) >/dev/null
+[ ! -e "$wt/agent-clean" ] || fail "reap --apply: clean worktree left"
+for d in agent-dirty agent-unpushed agent-locked agent-kept; do [ -d "$wt/$d" ] || fail "reap --apply removed $d"; done
+[ -f "$wt/agent-dirty/mobile/package-lock.json" ] && [ -d "$tmp/deps/other" ] || fail "reap --apply touched a kept tree"
+git -C "$dp" rev-parse --verify -q worktree-agent-clean >/dev/null || fail "reap --apply deleted the branch"
+if command -v plutil >/dev/null; then
+    [ ! -e "$dd/App-gone" ] || fail "reap --apply: DerivedData of a gone worktree left"
+    [ -d "$dd/App-live" ] || fail "reap --apply: DerivedData of a live worktree removed"
+fi
+export HOME="$HOME_SAVED"
+if "$bin/orch-deps" reap --bogus 2>/dev/null; then fail "reap: unknown flag accepted"; fi
+
+# ---------------------------------------------------------------- orch-worktree: config `worktree_links`
+lk="$tmp/links/main"; mkdir -p "$lk/mobile" "$lk/lib/node_modules" "$lk/packages/a" "$lk/packages/b" "$lk/.orch/tasks"
+lk=$(cd -P "$lk" && pwd)
+g init -q -b main "$lk"
+printf 'node_modules/\n.venv/\n/vendor/bundle\n.orch/\n' > "$lk/.gitignore"
+printf 'v1\n' > "$lk/mobile/package-lock.json"; printf '{}\n' > "$lk/packages/a/package.json"; printf '{}\n' > "$lk/packages/b/package.json"
+printf 'x\n' > "$lk/lib/node_modules/tracked.txt"
+g -C "$lk" add -A; g -C "$lk" add -f lib/node_modules/tracked.txt; g -C "$lk" commit -qm init
+g -C "$lk" switch -qc lockdiff; printf 'v2\n' > "$lk/mobile/package-lock.json"; g -C "$lk" rm -rq lib/node_modules   # main tracks it
+g -C "$lk" commit -qam lock; g -C "$lk" switch -q main
+mkdir -p "$lk/mobile/node_modules/m" "$lk/packages/a/node_modules/a" "$lk/packages/b/node_modules/b" "$lk/.venv/v" "$lk/notignored/n"   # the one real install
+lcfg() { printf -- '---\nbackend: adhoc\ntasks_dir: .orch/tasks\ndefault_base: main\n%s---\n' "$1" > "$lk/.orch/config.md"; }
+# no key -> nothing linked
+lcfg ''
+(cd "$lk" && "$bin/orch-worktree" add L-1 task/L-1 >/dev/null 2>&1) || fail "worktree_links: add without the key failed"
+[ -z "$(find "$lk/.worktrees/L-1" -type l)" ] || fail "worktree_links: links made with no key"
+# listed + gitignored + present in main -> linked; tracked, not ignored, missing, outside the repo -> skipped
+lcfg $'worktree_links:\n  - mobile/node_modules\n  - packages/*/node_modules\n  - .venv/\n  - lib/node_modules\n  - notignored\n  - vendor/bundle\n  - ../escape\n'
+err=$(cd "$lk" && "$bin/orch-worktree" add L-2 task/L-2 2>&1 >"$tmp/links/out")
+w="$lk/.worktrees/L-2"
+for rel in mobile/node_modules packages/a/node_modules packages/b/node_modules .venv; do
+    [ -L "$w/$rel" ] && [ "$(readlink "$w/$rel")" = "$lk/$rel" ] || fail "worktree_links: $rel not linked to the main checkout: $err"
+done
+[ -f "$w/lib/node_modules/tracked.txt" ] && [ ! -L "$w/lib/node_modules" ] || fail "worktree_links: a tracked dir was replaced by a link"
+[ ! -e "$w/notignored" ] || fail "worktree_links: a dir the main checkout does not ignore was linked"
+[ ! -e "$w/vendor/bundle" ] && [ ! -e "$lk/.worktrees/escape" ] || fail "worktree_links: a missing or outside path was linked"
+rg -q "skip notignored \(tracked or not gitignored\)" <<<"$err" || fail "worktree_links: no skip note for a not-ignored dir: $err"
+rg -q "skip '\.\./escape'" <<<"$err" || fail "worktree_links: no skip note for an outside path: $err"
+if rg -q linked "$tmp/links/out"; then fail "worktree_links: link notes on stdout"; fi
+[ -z "$(git -C "$w" status --porcelain)" ] || fail "worktree_links: the links show up in git status"
+(cd "$lk" && "$bin/orch-worktree" add L-2 task/L-2 >/dev/null 2>&1) || fail "worktree_links: a second add failed"
+# a differing lockfile skips that package only; a dir main tracks stays unlinked where the branch lacks it
+err=$(cd "$lk" && "$bin/orch-worktree" add L-3 lockdiff 2>&1 >/dev/null)
+[ ! -e "$lk/.worktrees/L-3/mobile/node_modules" ] || fail "worktree_links: linked despite a differing lockfile"
+[ -L "$lk/.worktrees/L-3/.venv" ] || fail "worktree_links: the lockfile skip dropped other links"
+[ ! -e "$lk/.worktrees/L-3/lib/node_modules" ] || fail "worktree_links: a dir the main checkout tracks was linked"
+rg -q 'skip mobile/node_modules \(mobile/package-lock.json differs' <<<"$err" || fail "worktree_links: no lockfile skip note: $err"
+# the inline list form reads the same
+lcfg $'worktree_links: [".venv", mobile/node_modules]  # note\n'
+(cd "$lk" && "$bin/orch-worktree" add L-4 task/L-4 >/dev/null 2>&1)
+[ -L "$lk/.worktrees/L-4/.venv" ] && [ -L "$lk/.worktrees/L-4/mobile/node_modules" ] || fail "worktree_links: the inline list was not linked"
+[ ! -e "$lk/.worktrees/L-4/packages/a/node_modules" ] || fail "worktree_links: an unlisted dir was linked"
+(cd "$lk" && "$bin/orch-worktree" remove L-2 >/dev/null) && [ -d "$lk/mobile/node_modules/m" ] && [ -d "$lk/.venv/v" ] ||
+    fail "worktree_links: remove followed a link into the main checkout"
+
 echo "orch tests passed"
