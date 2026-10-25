@@ -31,6 +31,7 @@ Gather, quietly:
   `PRD*` and `SPEC*` at the root, the `specs/` folder, `docs/ARCHITECTURE*` and `docs/PLAN*`.
   Propose the ones found as the `specs:` list (a folder as `specs/*.md`); the user confirms or edits it.
   None found → write no `specs:` key and say nothing about it.
+- **Worktree links** — the heavy, git-ignored install dirs this repo actually has (step 6).
 
 ## 2. Pick the backend (ask — this is a real choice)
 
@@ -67,6 +68,7 @@ capabilities:
   security: { severity: high }     # only with a web app, an api, or a security-named file; omit otherwise
 standing_checks_extra: []          # project lessons promoted to standing checks (starts empty)
 specs: [PRD.md, specs/*.md]        # spec files /junkd:direction checks; omit when none were found
+worktree_links: [mobile/node_modules, mobile/ios/Pods]   # step 6; omit when none were approved
 github: { label: "orch" }          # github-issues backend only; drop otherwise
 ---
 Free-form project notes /junkd:orch should know: conventions, gotchas, where the visual spec lives,
@@ -116,3 +118,21 @@ Run it after the config is written (§4), before the "how to start" message.
    Its seventh rule is this step: every binding rule has a test or a row.
    Copy only after the user agrees.
    When the file exists, leave it alone and do not offer.
+
+## 6. Worktree links
+
+A worktree that installs its own dependencies costs GBs each time. Run this after §5, before the "how to start" message.
+
+1. **Detect.** From the languages and frameworks the scan found, list the heavy, git-ignored install dirs a worktree should link from the main checkout instead of installing, e.g. `mobile/node_modules`, `mobile/ios/Pods`, `packages/*/node_modules`, `.venv`, `vendor/bundle`.
+   You decide from the repo; there is no fixed table.
+   List only dirs that exist in the main checkout (or that its install creates) and that `git check-ignore` reports as ignored.
+   Never list build outputs or caches (`build/`, `dist/`, `.next`, `DerivedData`, `target/`).
+2. **Show the list** and write only what the user approves. Nothing approved → skip the rest of this step.
+3. **Write a short "Worktrees" section** in the repo's `AGENTS.md` (create the file if it is missing; if the repo keeps its agent rules only in `CLAUDE.md`, follow that convention).
+   The section says: link these dirs from the main checkout (list them); never run a full install (`npm ci`, `pod install`, `bundle install`, ...) in a worktree.
+   On a re-run, update that section; do not add a second one.
+4. **Write the same list as `worktree_links:`** in `.orch/config.md` (diff + confirm, as in §4).
+   `orch-worktree add` links each listed path from the main checkout when the main checkout has it and gitignores it, and the new worktree does not have it yet.
+5. **Offer `worktree.symlinkDirectories`.** Ask whether to add the same paths to the project's `.claude/settings.json`, so Claude Code's own agent worktrees (`.claude/worktrees/agent-*`) get the links before the agent starts:
+   `{ "worktree": { "symlinkDirectories": ["mobile/node_modules", "mobile/ios/Pods"] } }`.
+   Expand globs to concrete paths there. Merge into an existing file, keep its other keys, and write only after an explicit yes.

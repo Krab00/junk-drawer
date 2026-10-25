@@ -61,10 +61,11 @@ or reinvent their logic):
 - `${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree add <id> <branch> [base] | remove <id> | slot <id>`
   — per-task worktrees under `.worktrees/`; prints `dir=`, `slot=`, and `web_port=`/`api_port=`
   (= the config `port_base` + a stable slot) for every declared capability.
-- `${CLAUDE_PLUGIN_ROOT}/bin/orch-deps link [dir] | reap [--apply] [--branch <b>] | derived [--apply]` — keeps
-  worktrees cheap. **Never `npm ci` / `pod install` in a worktree — symlink from the main checkout**:
-  `link` symlinks every gitignored `node_modules` and `ios/Pods` the main checkout (or `$ORCH_DEPS_FROM`)
-  has (`orch-worktree add` runs it). `reap` removes the agent worktrees Claude Code leaves under
+- `${CLAUDE_PLUGIN_ROOT}/bin/orch-deps reap [--apply] [--branch <b>] | derived [--apply]` — keeps worktrees
+  cheap. **Set up dependencies in a worktree the way the repo's AGENTS.md (or CLAUDE.md) says; if it says
+  nothing, no full install (`npm ci`, `pod install`, `bundle install`, ...) in a worktree — ask the
+  orchestrator.** `/junkd:orch-init` writes that AGENTS.md section, and `orch-worktree add` symlinks the
+  config's `worktree_links` from the main checkout. `reap` removes the agent worktrees Claude Code leaves under
   `.claude/worktrees/agent-*` (one per `isolation: worktree` spawn) — only clean ones with every commit on a
   remote, never a locked one; `derived` drops the Xcode DerivedData of gone worktrees.
 - `${CLAUDE_PLUGIN_ROOT}/bin/orch-sync pull|push [id...]` — the task-store ⇄ backend bridge.
@@ -169,7 +170,7 @@ Per task:
      freezes the shared contract first, fans out to parallel sub-implementers per slice, merges
      them back, and **falls back to flat** if the cut isn't truly disjoint. See **Deep mode**.
    - **`implementer`** (default) otherwise — one agent builds the whole task.
-   Spawn it (worktree isolation) with: the plugin `bin/` path (for `orch-deps link`), task id, branch `<branch_prefix><id>-<slug>`, base branch
+   Spawn it (worktree isolation) with: task id, branch `<branch_prefix><id>-<slug>`, base branch
    (`<base>` in batch; **the previous task's branch** in chain), the plan, the lessons, and the
    **config facts it needs** (dev-server run commands, ports from `orch-worktree`, test commands
    from `capabilities.tests`) — the agent assumes no stack; you feed it from the config. In
