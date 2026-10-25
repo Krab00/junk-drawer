@@ -28,6 +28,7 @@ export const S = {
   clearTries: 0, // retries of a /clear that timed out or threw since one last worked; MAX_CLEAR_RETRIES then gives up
   resumeTries: 0, // turn ends that found the phase at resume with no chain in flight, this cycle; MAX_RESUME_RETRIES then gives up
   inFlight: false, // the clear → handon chain (continueFrom) is running: from its start to its end, the handon command included
+  turnBusy: false, // a loop turn end is deciding (turnEnd): a second one in flight meanwhile skips, so one decision per state
   chain: 0, // the latest continueFrom's number: a chain that is no longer the latest stops (a retry or a reset superseded it)
   since: Date.now(), // when the phase last changed (setPhase)
   epoch: 0, // phase changes so far; the disk-trouble toast says itself once per epoch
