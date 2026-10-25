@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# orch-deps — keep worktrees cheap: link the heavy install dirs from one installed checkout instead of installing
-# them per worktree, and reap what Claude Code's agent worktrees leave behind. Zero deps (bash + git).
-#   orch-deps link [dir]      # in <dir> (default: this checkout) symlink each install dir the source checkout has
-#                             # and <dir> lacks: <pkg>/node_modules for every tracked package.json, and <pkg>/ios/Pods.
-#                             # Source: $ORCH_DEPS_FROM, else the main worktree. Only gitignored dirs of the source; a
-#                             # package whose lockfile differs from the source's is skipped (install that one here).
-#                             # Never replaces or removes anything. Each link goes to info/exclude: a link is no dir to a
-#                             # `node_modules/` rule, so git would list it as untracked.
+# orch-deps — reap what Claude Code's agent worktrees leave behind. Zero deps (bash + git).
 #   orch-deps reap [--apply] [--branch <b>]
 #                             # agent worktrees (*/.claude/worktrees/agent-*): print each as `remove` or `keep <why>`.
 #                             # Removable = no change and no untracked file, every commit on a remote, not locked by a
@@ -20,34 +13,6 @@ set -euo pipefail
 
 # the main worktree is the first entry; awk reads to the end (an early exit SIGPIPEs git, failing pipefail)
 _main(){ git -C "$1" worktree list --porcelain | awk 'NR==1{sub(/^worktree /,""); print}'; }
-_real(){ (cd "$1" && pwd -P); }
-
-_link(){
-  local dir src common rel lock n=0
-  dir=$(git -C "${1:-.}" rev-parse --show-toplevel) || { echo "orch-deps: not inside a git repo" >&2; exit 2; }
-  src="${ORCH_DEPS_FROM:-$(_main "$dir")}"
-  [ -d "$src" ] || { echo "orch-deps: no source checkout '$src'" >&2; exit 1; }
-  src=$(_real "$src"); dir=$(_real "$dir")
-  [ "$src" != "$dir" ] || { echo "orch-deps: $dir is the source checkout; nothing to link" >&2; return 0; }
-  common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir); mkdir -p "$common/info"
-  while IFS= read -r rel; do
-    [ -d "$src/$rel" ] && [ ! -e "$dir/$rel" ] && [ ! -L "$dir/$rel" ] || continue
-    git -C "$src" check-ignore -q "$rel" 2>/dev/null || continue     # never stands in for tracked content
-    for lock in package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lockb bun.lock; do
-      if [ -f "$src/${rel%/node_modules}/$lock" ] && [ -f "$dir/${rel%/node_modules}/$lock" ] &&
-         ! cmp -s "$src/${rel%/node_modules}/$lock" "$dir/${rel%/node_modules}/$lock"; then
-        echo "orch-deps: skip $rel: ${rel%/node_modules}/$lock differs from the source's; install it here" >&2; continue 2
-      fi
-    done
-    mkdir -p "$(dirname "$dir/$rel")"; ln -s "$src/$rel" "$dir/$rel"
-    grep -qxF "/$rel" "$common/info/exclude" 2>/dev/null || echo "/$rel" >> "$common/info/exclude"
-    echo "linked $rel -> $src/$rel"; n=$((n+1))
-  done < <(git -C "$dir" ls-files -- package.json '*/package.json' | while IFS= read -r p; do
-             d=$(dirname "$p"); [ "$d" = . ] && d="" || d="$d/"
-             echo "${d}node_modules"; echo "${d}ios/Pods"
-           done | sort -u)
-  [ "$n" -gt 0 ] || echo "orch-deps: nothing to link from $src" >&2
-}
 
 _derived(){
   local apply="${1:-}" dd="$HOME/Library/Developer/Xcode/DerivedData" d ws
@@ -99,7 +64,6 @@ _reap(){
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
-  link) _link "${1:-.}" ;;
   reap) _reap "$@" ;;
   derived) _derived "${1:-}" ;;
   ""|-h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0" ;;

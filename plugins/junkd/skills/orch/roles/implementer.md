@@ -25,11 +25,11 @@ gate, report again.
 3. Get onto your branch without checking out the base (it is checked out in the main repo, and
    git refuses a branch that another worktree holds): a new branch is `git switch -c <branch>
    <base>`; one that already exists (a fresh implementer on a later round) is `git switch
-   <branch>`. **Never `npm ci` / `npm install` / `pod install` in a worktree** (each copy costs GBs):
-   link the install dirs from the main checkout with `<bin>/orch-deps link` (every gitignored
-   `node_modules`, `ios/Pods`). Install here only a package whose lockfile your task changes (orch-deps
-   skips it and says so): `rm` that one link first (it unlinks; the main checkout's copy stays). Leave
-   your worktree in place: a fix round resumes you in it, and `orch-ops` reaps it once the task resolves.
+   <branch>`. **Set up dependencies in a worktree the way the repo's AGENTS.md (or CLAUDE.md) says;
+   if it says nothing, do not run a full install (`npm ci`, `pod install`, `bundle install`, ...) in
+   a worktree — ask the orchestrator** (each copy costs GBs). `/junkd:orch-init` writes that section
+   and `orch-worktree add` links the config's `worktree_links`. Leave your worktree in place: a fix
+   round resumes you in it, and `orch-ops` reaps it once the task resolves.
 
 ## Hard rules
 

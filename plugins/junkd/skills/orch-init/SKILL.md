@@ -22,6 +22,8 @@ Read `./commands/init.md` from this skill directory as the canonical initializat
 
 Run the spec's "Binding rules → checks" step after the config is written: scan every CLAUDE.md/AGENTS.md for binding rules, show the table (row / covered by test / prose), write only the rows the user confirms, and offer the sibling `orch` skill's `./templates/TEST-POLICY.md` as `.orch/TEST-POLICY.md` only when that file is absent.
 
+Run the spec's "Worktree links" step after that: detect the heavy, git-ignored install dirs, show the list, and after approval write the `AGENTS.md` "Worktrees" section and `worktree_links:` in `.orch/config.md`. Add them to `.claude/settings.json` `worktree.symlinkDirectories` only after an explicit yes, and only on Claude Code.
+
 Some plugin installers strip symlinks, so if `./bin` or `./commands` is missing from this skill directory, use the same files from the sibling `orch` skill's `bin/` and `commands/` directories.
 
 Scan the repository before asking questions. Detect the default branch, package manager, applications, dev commands, ports, health routes, and test commands. Ask only for the real backend choice and confirmation of detected commands and ports.
