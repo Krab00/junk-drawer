@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# harness-codex — the codex adapter of task-probe (/junkd:task-draft's comprehension sub-loop).
+#   harness-codex --model <id> --effort <e> --thinking <level> --pass <suffix|param> --prompt-file <dir>/prompt.md
+# Runs `codex exec` read-only in the current directory (task-probe makes it an empty temp dir and applies the
+# timeout) with the prompt on stdin, and prints the answer, then one JSON line:
+# {"wall_s":<n>,"tokens_in":null,"tokens_out":null,"cost":null}.
+# The effort (not default or none) is -c model_reasoning_effort="<effort>"; the thinking level and pass are ignored.
+# Test status: written from `codex exec --help` and `codex features list`; stub test; no live call.
+# Tools: the tool surfaces codex lists are turned off one by one: the shell tools (--disable shell_tool,
+# --disable unified_exec), web search (-c web_search="disabled" and the older -c tools.web_search=false), MCP servers
+# (-c mcp_servers={}), and apps, browser use, computer use and image generation (--disable each). Any command that
+# still runs is under --sandbox read-only. The read-only sandbox alone does not stop reads or a network call by
+# the model's shell. This is not proof that codex runs with no tool at all (a later codex may add a surface, and no
+# live call has checked these flags), so treat the answer as untrusted text: task-probe only writes it to a file for
+# the judge and never runs it. CODEX_HOME is left alone: an empty one would need a copy of codex's auth file, and
+# no adapter reads a credential file.
+# "No tools": not proven; every listed tool surface is off (see "Tools" above).
+# It creates no temp dir, applies no timeout and reads no credential.
+set -euo pipefail
+
+model="" effort=default thinking=- pass=suffix prompt=""
+while [ $# -gt 0 ]; do
+  [ $# -ge 2 ] || { echo "harness-codex: $1 takes a value" >&2; exit 2; }
+  case "$1" in
+    --model) model="$2" ;;
+    --effort) effort="$2" ;;
+    --thinking) thinking="$2" ;;
+    --pass) pass="$2" ;;
+    --prompt-file) prompt="$2" ;;
+    *) echo "harness-codex: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+  shift 2
+done
+[ -n "$model" ] && [ -n "$prompt" ] || { echo "harness-codex: --model and --prompt-file are required" >&2; exit 2; }
+: "$thinking" "$pass"
+
+start=$(date +%s)
+args=(exec --skip-git-repo-check --sandbox read-only
+  --disable shell_tool --disable unified_exec --disable apps --disable browser_use --disable computer_use --disable image_generation
+  -c 'web_search="disabled"' -c tools.web_search=false -c 'mcp_servers={}'
+  -C . -m "$model")
+case "$effort" in default | none) ;; *) args+=(-c "model_reasoning_effort=\"$effort\"") ;; esac
+args+=(-)
+
+set +e
+codex "${args[@]}" <"$prompt"
+rc=$?
+set -e
+printf '\n{"wall_s":%d,"tokens_in":null,"tokens_out":null,"cost":null}\n' "$(($(date +%s) - start))"
+exit "$rc"

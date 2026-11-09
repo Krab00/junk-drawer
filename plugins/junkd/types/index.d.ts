@@ -10,7 +10,7 @@
 // keys in a manifest's userConfig, so the group and the field are joined by `_`, and the /config row is
 // `junkd.<group>_<field>`. The group is the part before the first `_`.
 
-export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr' | 'ctx' | 'statusline' | 'tools'
+export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr' | 'ctx' | 'statusline' | 'tools' | 'egm'
 export type JunkdHandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
 export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md' | JunkdOrchDashboardField | JunkdOrchWatchdogField | 'lessons'
 // The orch dashboard's two rows (orch_dashboard_refresh, orch_dashboard_window_h), clamped in code.
@@ -25,6 +25,8 @@ export type JunkdCtxField = 'enabled' | 'threshold' | 'action' | 'cmd'
 export type JunkdStatuslineSegment = 'ctx' | 'branch' | 'worktree' | 'model' | 'effort' | 'limits'
 export type JunkdStatuslineField = 'enabled' | JunkdStatuslineSegment
 export type JunkdToolsField = 'enabled' | 'refresh' | 'agents_only'
+// The egm group: EGM while writing tasks (and the egm tab), and the comprehension loop over the model registry.
+export type JunkdEgmField = 'enabled' | 'models'
 export type JunkdKey =
   | `core_${JunkdCoreField}`
   | `handoff_${JunkdHandoffField}`
@@ -33,6 +35,7 @@ export type JunkdKey =
   | `ctx_${JunkdCtxField}`
   | `statusline_${JunkdStatuslineField}`
   | `tools_${JunkdToolsField}`
+  | `egm_${JunkdEgmField}`
 export type JunkdValue = string | number | boolean
 export type JunkdOrchGuard = 'fable' | 'always' | 'off'
 export type JunkdStyle = 'ste' | 'off'
@@ -82,11 +85,12 @@ export type JunkdAhandoff = {
 // unknown pane or route) rejects the promise with the reason.
 export type JunkdGetInput = { key: JunkdKey }
 export type JunkdSetInput = { key: JunkdKey; value: JunkdValue; scope?: 'user' }
-// `open` toggles one pane: `junkd` is the /junkd set (junkd, handoff, orch, statusline, tools and lessons as tabs),
-// `handoff`, `orch`, `statusline`, `tools` and `lessons` the feature's own pane. `route` opens on that tab, or switches to it while the pane
-// is up: each pane takes its own routes (handoff a JunkdHandoffRoute, tools a JunkdToolsRoute) and refuses the others;
-// junkd, orch, statusline and lessons have no tabs.
-export type JunkdPane = 'junkd' | 'handoff' | 'orch' | 'statusline' | 'tools' | 'lessons'
+// `open` toggles one pane: `junkd` is the /junkd set (junkd, handoff, orch, statusline, tools, lessons and egm as tabs),
+// `handoff`, `orch`, `statusline`, `tools`, `lessons` and `egm` the feature's own pane. The egm pane opens only while
+// egm_enabled is on. `route` opens on that tab, or switches to it while the pane is up: each pane takes its own
+// routes (handoff a JunkdHandoffRoute, tools a JunkdToolsRoute) and refuses the others; junkd, orch, statusline,
+// lessons and egm have no tabs.
+export type JunkdPane = 'junkd' | 'handoff' | 'orch' | 'statusline' | 'tools' | 'lessons' | 'egm'
 export type JunkdOpenInput = { pane: JunkdPane; route?: JunkdHandoffRoute | JunkdToolsRoute }
 
 export type Junkd = {

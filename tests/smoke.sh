@@ -6,7 +6,12 @@ tmp=$(cd "$(mktemp -d)" && pwd -P) # the physical path: a TMPDIR ending in `/` g
 trap 'rm -rf "$tmp"' EXIT
 
 for file in $(rg --files "$root/plugins" | rg '/(bin/|[^/]+\.sh$)'); do
-    bash -n "$file"
+    # A python3 helper (skills/task-draft/bin) is parsed by python, every other one by bash.
+    if head -1 "$file" | rg -q '^#!/usr/bin/env python3$'; then
+        python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$file"
+    else
+        bash -n "$file"
+    fi
 done
 for file in $(rg --files -uu "$root/.agents" "$root/plugins" | rg '\.json$'); do
     jq empty "$file"
@@ -102,7 +107,8 @@ handoff_result=$(CODEX_THREAD_ID=codex-id CLAUDE_CODE_SESSION_ID=claude-id CLAUD
 
 # Two plugins: plugins/ holds junkd and junk-drawer (the cheatsheet); every host's marketplace lists those two and
 # nothing else, no plugin that moved into junkd (handoff, orch, tldr, ctx-limit, ctx-tokens, statusline) among them,
-# and junkd depends on nothing.
+# and junkd depends on one plugin only: egm of the egm marketplace (/junkd:task-draft), which the root marketplace
+# allowlists for a cross-marketplace dependency.
 [ "$(ls -1 "$root/plugins" | LC_ALL=C sort | tr '\n' ' ')" = "junk-drawer junkd " ] ||
     { echo "plugins/ holds $(ls -1 "$root/plugins" | tr '\n' ' '), expected junk-drawer junkd"; exit 1; }
 for gone in ctx-limit ctx-tokens statusline; do
@@ -119,7 +125,10 @@ for gone in handoff orch tldr ctx-limit ctx-tokens statusline; do
         { echo "a marketplace still lists $gone"; exit 1; }
 done
 junkd_manifest="$junkd/.claude-plugin/plugin.json"
-jq -e 'has("dependencies") | not' "$junkd_manifest" >/dev/null || { echo "junkd: the manifest has dependencies"; exit 1; }
+jq -e '.dependencies == [{"name":"egm","marketplace":"egm","version":"0.1.1"}]' "$junkd_manifest" >/dev/null ||
+    { echo "junkd: the manifest's dependencies are not the one egm@egm entry"; exit 1; }
+jq -e '.allowCrossMarketplaceDependenciesOn == ["egm"]' "$root/.claude-plugin/marketplace.json" >/dev/null ||
+    { echo "marketplace.json does not allowlist the egm marketplace for cross-marketplace dependencies"; exit 1; }
 jq -e '.plugins[] | select(.name == "junkd" and .source == "./plugins/junkd")' "$root/.claude-plugin/marketplace.json" >/dev/null ||
     { echo "marketplace.json does not list junkd at ./plugins/junkd"; exit 1; }
 for f in .kimi-plugin/plugin.json .codex-plugin/plugin.json; do
@@ -128,7 +137,7 @@ done
 
 # Every command is a skill of junkd's (/junkd:<name>); no plugin-root commands/ (it would add /junkd:init and a
 # second /junkd:orch from skills/orch/commands).
-for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools explain dashboard direction lessons; do
+for skill in junkd tldr handoff handon ahandoff orch orch-init ctx-limit ctx-tokens statusline tools explain dashboard direction lessons task-draft; do
     [ "$(awk -F': *' '$1 == "name" { print $2; exit }' "$junkd/skills/$skill/SKILL.md")" = "$skill" ] ||
         { echo "junkd: skills/$skill/SKILL.md is missing or not named $skill"; exit 1; }
 done
@@ -276,7 +285,7 @@ done
 in_section "$junkd/README.md" '## direction' 'line of the reply is `DIRECTION: <met>/<total> MET — <n> decisions in <path>`.' ||
     { echo "junkd: README's direction section lacks the DIRECTION: line"; exit 1; }
 rg -qF '### The direction check: the sum of the tasks against the specs' "$junkd/docs/orch-guide.md" || { echo "junkd: docs/orch-guide.md lacks the direction check"; exit 1; }
-rg -qF 'all sixteen skills' "$root/README.md" || { echo "junkd: README.md does not count sixteen skills"; exit 1; }
+rg -qF 'all seventeen skills' "$root/README.md" || { echo "junkd: README.md does not count seventeen skills"; exit 1; }
 
 # $.junkd.schema() is a mirror of the manifest's userConfig (a hooks module cannot import JSON): every row's key,
 # type, title and default appear together on one SCHEMA line of settings.ts, a choice row's options too, the group
@@ -299,12 +308,12 @@ done
 schema_keys=$(rg -o "^  \{ key: '[A-Za-z_]+'" "$settings_ts" | rg -o "'[A-Za-z_]+'" | tr -d "'")
 [ "$schema_keys" = "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest")" ] ||
     { echo "settings.ts SCHEMA keys differ from the manifest's userConfig (or their order does)"; exit 1; }
-for group in handoff orch tldr ctx statusline tools; do
+for group in handoff orch tldr ctx statusline tools egm; do
     first=$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | rg "^${group}_" | head -1)
     [ "$first" = "${group}_enabled" ] || { echo "junkd: the $group group's first row is $first, not ${group}_enabled"; exit 1; }
 done
-[ "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | sed 's/_.*//' | uniq | tr '\n' ' ')" = "core handoff orch tldr ctx statusline tools " ] ||
-    { echo "junkd: the rows are not grouped core, handoff, orch, tldr, ctx, statusline, tools in that order"; exit 1; }
+[ "$(jq -r '.userConfig | keys_unsorted[]' "$junkd_manifest" | sed 's/_.*//' | uniq | tr '\n' ' ')" = "core handoff orch tldr ctx statusline tools egm " ] ||
+    { echo "junkd: the rows are not grouped core, handoff, orch, tldr, ctx, statusline, tools, egm in that order"; exit 1; }
 # The manifest keeps type, title, description, default and a choice's options only: a min or max there is enforced
 # by the engine at load (a hand-edited value out of range stops the module), so the bounds live in code.
 jq -e '[.userConfig[] | keys[] | select(. != "type" and . != "title" and . != "description" and . != "default" and . != "options")] == []' "$junkd_manifest" >/dev/null ||
@@ -415,9 +424,15 @@ for copy in tldr/bin/host-lib handon/bin/host-lib ctx-limit/bin/host-lib ctx-tok
         { echo "junkd: skills/$copy differs from skills/handoff/bin/${copy##*/}"; exit 1; }
 done
 [ -x "$junkd/skills/handon/bin/handoff-load" ] || { echo "junkd: skills/handon/bin/handoff-load is not executable"; exit 1; }
+# The task-draft roles: the agent types live in skills/orch/roles (agents -> skills/orch/roles), and the skill
+# ships byte-identical copies in skills/task-draft/roles for the hosts that read ./roles/<file>.
+for r in task-egm task-elephant task-judge task-goldfish; do
+    cmp -s "$junkd/skills/orch/roles/$r.md" "$junkd/skills/task-draft/roles/$r.md" ||
+        { echo "junkd: skills/task-draft/roles/$r.md differs from skills/orch/roles/$r.md"; exit 1; }
+done
 # The helpers of ctx-limit, ctx-tokens and statusline: real executables in their skill, reached from the plugin root
 # through bin -> skills/junkd/bin -> ../../<skill>/bin (the hooks and /junkd's module call them there).
-for pair in ctx-limit:ctx-limit ctx-limit:ctx-limit-hook ctx-tokens:ctx-tokens statusline:statusline.sh statusline:statusline-setup; do
+for pair in ctx-limit:ctx-limit ctx-limit:ctx-limit-hook ctx-tokens:ctx-tokens statusline:statusline.sh statusline:statusline-setup task-draft:task-probe task-draft:task-from-spec task-draft:task-draft-state task-draft:harness-omp task-draft:harness-opencode task-draft:harness-codex task-draft:harness-kimi; do
     skill=${pair%%:*} name=${pair#*:}
     real="$junkd/skills/$skill/bin/$name"
     [ -f "$real" ] && [ ! -L "$real" ] && [ -x "$real" ] || { echo "junkd: skills/$skill/bin/$name is not a real executable"; exit 1; }
@@ -566,10 +581,10 @@ for skill in "$root"/plugins/*/skills/*/; do
     cp -RL "$skill" "$installed/$(basename "$skill")"
 done
 
-# Sixteen skills: junk-drawer's one and junkd's fifteen (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
-# ctx-limit, ctx-tokens, statusline, tools, explain, dashboard, direction, lessons). skills/junkd also holds the real home of the plugin-root bin/
+# Seventeen skills: junk-drawer's one and junkd's sixteen (junkd, tldr, handoff, handon, ahandoff, orch, orch-init,
+# ctx-limit, ctx-tokens, statusline, tools, explain, dashboard, direction, lessons, task-draft). skills/junkd also holds the real home of the plugin-root bin/
 # and scripts/ links, as the layout invariant above asks.
-[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 16 ] || { echo "the skills-only install holds $(ls -1 "$installed" | wc -l | tr -d ' ') skills, expected 16"; exit 1; }
+[ "$(ls -1 "$installed" | wc -l | tr -d ' ')" = 17 ] || { echo "the skills-only install holds $(ls -1 "$installed" | wc -l | tr -d ' ') skills, expected 17"; exit 1; }
 for f in SKILL.md commands/direction.md agents/openai.yaml; do
     [ -f "$installed/direction/$f" ] || { echo "the skills-only install of direction lacks $f"; exit 1; }
 done
@@ -625,7 +640,7 @@ cmp -s "$installed/handon/bin/handoff-load" "$installed/handoff/bin/handoff-load
     { echo "handon/bin/handoff-load differs from handoff/bin/handoff-load"; exit 1; }
 
 # Every host map names all four hosts; handoff tells the resume command of each; tldr says OpenCode has no hook.
-for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools explain dashboard direction lessons; do
+for skill in handoff tldr orch orch-init ctx-limit ctx-tokens statusline tools explain dashboard direction lessons task-draft; do
     for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do
         rg -qF "$host" "$root/plugins/junkd/skills/$skill/SKILL.md" || { echo "junkd: skills/$skill/SKILL.md does not name $host"; exit 1; }
     done
@@ -666,6 +681,16 @@ rg -q '\$orch' <<<"$standalone_catalog"
 
 # The orch_claude_md switch: scripts/orch-claude-md.sh on|off and its session-start run, over a temp config dir.
 bash "$root/tests/claude-md.sh" >/dev/null 2>&1 || { echo "tests/claude-md.sh failed; run it alone for the reason"; exit 1; }
+
+# /junkd:task-draft: its helpers over a temp repo with a stub omp (no model is called).
+bash "$root/tests/task-draft.sh" >/dev/null 2>&1 || { echo "tests/task-draft.sh failed; run it alone for the reason"; exit 1; }
+bash "$root/tests/egm-dep.sh" >/dev/null 2>&1 || { echo "tests/egm-dep.sh failed; run it alone for the reason"; exit 1; }
+# The registry's enum lists: the egm tab (hooks/egm.ts) and task-probe validate models.json against the same lists.
+for name in CLASSES HARNESSES EFFORTS LEVELS PASSES; do
+    a=$(rg -m1 "^export const $name = " "$junkd/hooks/egm.ts" | rg -o "'[^']*'" | tr -d "'" | tr '\n' ' ')
+    b=$(rg -m1 "^$name = " "$junkd/skills/task-draft/bin/task-probe" | rg -o "'[^']*'" | tr -d "'" | tr '\n' ' ')
+    [ -n "$a" ] && [ "$a" = "$b" ] || { echo "junkd: $name differs between egm.ts and task-probe"; exit 1; }
+done
 
 # The prompt-cache check: scripts/cache-check.sh over fixture transcripts in a temp project folder.
 bash "$root/tests/cache-check.sh" >/dev/null 2>&1 || { echo "tests/cache-check.sh failed; run it alone for the reason"; exit 1; }

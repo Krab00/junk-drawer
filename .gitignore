@@ -1,1 +1,5 @@
 plugins/handoff/PLAN-ahandoff.md
+.egm/
+.orch/taskdraft/
+.orch/
+docs/designs/

@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# harness-kimi — the kimi adapter of task-probe (/junkd:task-draft's comprehension sub-loop).
+#   harness-kimi --model <id> --effort <e> --thinking <level> --pass <suffix|param> --prompt-file <dir>/prompt.md
+# Targets Kimi Code 2.4.1 (`kimi --version` 2.4.1, docs https://moonshotai.github.io/kimi-code/). kimi-cli, the legacy
+# Python CLI (--quiet, YAML agent files, --mcp-config-file), is not supported: 2.4.1 rejects those flags.
+# Runs, in the current directory (task-probe makes it an empty temp dir and applies the timeout):
+#   kimi --agent-file ./kimi-goldfish.md --skills-dir ./kimi-skills -m <id> --output-format text -p "<prompt>" </dev/null
+# The prompt goes in the -p argument (prompt mode, non-interactive, no TUI); the docs do not say -p reads stdin, so
+# kimi's stdin is /dev/null. The prompt is passed in argv, so it is visible to local users in the process list
+# (/proc/<pid>/cmdline): the docs show no stdin or file form for -p.
+# -m takes a model alias from kimi's config.toml. Text output is transcript style: the answer lines start with "• "
+# and wrapped lines are indented; thinking and tool progress go to stderr. It prints the answer, then one JSON line: {"wall_s":<n>,"tokens_in":null,"tokens_out":null,"cost":null}. Effort, thinking level
+# and pass are ignored.
+# A prompt above 120 KiB (122880 bytes) exits 2 before kimi is called: one argv string is capped at 128 KiB.
+# "No tools": advisory: the agent file cuts the tools; the MCP servers of the user's config are not isolated (MCP below).
+# The adapter writes kimi-goldfish.md, a Markdown
+# agent file (frontmatter: name, description, `tools: []`, which the docs say "disables all tools", and a
+# disallowedTools list of every built-in tool on the tools page plus `mcp__*`, since a bare `*` there disables
+# nothing; the body is the whole system prompt, without ${base_prompt}, so AGENTS.md and skills are not injected),
+# and an empty kimi-skills dir for --skills-dir, which replaces the user and project skill dirs.
+# MCP: no flag or agent-file key turns MCP off. Servers in ~/.kimi-code/mcp.json and in plugins may still connect
+# (stdio servers start a process); their tools are cut by `tools: []` and `mcp__*`, which kimi enforces again
+# before execution. Project-level servers stay off: the temp dir has no .git and a -p run skips the trust prompt.
+# -p runs under the auto permission policy (no approval asked; --yolo and --auto are rejected with -p), so the
+# empty tool set is the guard. HOME and the kimi config dir are left alone: kimi keeps its own login there.
+# The adapter refuses to start if kimi-goldfish.md or kimi-skills exists, and removes both afterwards.
+# Test status: argv and agent file from the Kimi Code docs and `kimi --help` of 2.4.1; stub test. Live runs: the
+# first hit the TUI (no print flag), the second hit `unknown option '--quiet'` (kimi-cli flags); this argv ran live
+# on 2026-11-09 (exit 0, transcript-style text, kimi accepted the agent file); MCP isolation is not confirmed live.
+# Session: Kimi Code stores every run as a session in the user's Kimi home (stderr: `To resume this session: kimi -r session_<id>`), so the prompt text stays there; the adapter does not delete it: it never touches the user's home or credential files.
+# It creates no temp dir, applies no timeout and reads no credential.
+set -euo pipefail
+
+model="" effort=default thinking=- pass=suffix prompt=""
+while [ $# -gt 0 ]; do
+  [ $# -ge 2 ] || { echo "harness-kimi: $1 takes a value" >&2; exit 2; }
+  case "$1" in
+    --model) model="$2" ;;
+    --effort) effort="$2" ;;
+    --thinking) thinking="$2" ;;
+    --pass) pass="$2" ;;
+    --prompt-file) prompt="$2" ;;
+    *) echo "harness-kimi: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+  shift 2
+done
+[ -n "$model" ] && [ -n "$prompt" ] || { echo "harness-kimi: --model and --prompt-file are required" >&2; exit 2; }
+: "$effort" "$thinking" "$pass"
+
+start=$(date +%s)
+if [ "$(stat -c %s -- "$prompt")" -gt 122880 ]; then
+  echo "harness-kimi: prompt over 120 KiB" >&2
+  printf '{"wall_s":%d,"tokens_in":null,"tokens_out":null,"cost":null}\n' "$(($(date +%s) - start))"
+  exit 2
+fi
+
+# The probe prompt inlines repo files, which are untrusted text: the run gets an agent with no tool.
+agent=./kimi-goldfish.md
+skills=./kimi-skills
+for f in "$agent" "$skills"; do
+  if [ -e "$f" ] || [ -L "$f" ]; then
+    echo "harness-kimi: $f exists; run the adapter in an empty directory" >&2
+    printf '{"wall_s":%d,"tokens_in":null,"tokens_out":null,"cost":null}\n' "$(($(date +%s) - start))"
+    exit 2
+  fi
+done
+mkdir -- "$skills"
+# No dollar-brace variables in the body: kimi renders it as a template (${base_prompt}, ${cwd}, ...).
+cat >"$agent" <<'MD'
+---
+name: kimi-goldfish
+description: Answers five questions about a spec from the message alone, with no tools
+tools: []
+disallowedTools:
+  - Read
+  - Write
+  - Edit
+  - Grep
+  - Glob
+  - ReadMediaFile
+  - Bash
+  - WebSearch
+  - FetchURL
+  - ExitPlanMode
+  - TodoList
+  - Agent
+  - AgentSwarm
+  - AskUserQuestion
+  - NotifyUser
+  - Skill
+  - TaskList
+  - TaskOutput
+  - TaskStop
+  - WaitFor
+  - CronCreate
+  - CronList
+  - CronDelete
+  - mcp__*
+---
+
+You have no tools and no history. Answer the five questions about the spec in the message, under the headings (a) to (e). Do not ask questions back.
+MD
+
+text=$(cat -- "$prompt")
+set +e
+kimi --agent-file "$agent" --skills-dir "$skills" -m "$model" --output-format text -p "$text" </dev/null
+rc=$?
+set -e
+rm -rf -- "$agent" "$skills"
+printf '\n{"wall_s":%d,"tokens_in":null,"tokens_out":null,"cost":null}\n' "$(($(date +%s) - start))"
+exit "$rc"

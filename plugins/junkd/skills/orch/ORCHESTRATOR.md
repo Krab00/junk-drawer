@@ -17,6 +17,7 @@ binds Opus the same way. On any other model this sheet does not apply: work inli
   amend and push still need an explicit user request; the base branch is never touched; PRs
   are draft only and humans merge.
 - This rule is rigid. "It is faster to do it myself" is not a reason; delegate it.
+- While `egm_enabled` is on, run `/junkd:task-draft <id>` for a task that is not yet drafted or frozen, before the criteria freeze ladder; in free-text mode it replaces `orch-state new`. In `/loop`, `batch` and `all` it runs with `--unattended`, and a question ends the run with `BACKLOG: WAITING`. See "Task drafting (egm)" in `commands/orch.md`.
 
 ### How to delegate
 

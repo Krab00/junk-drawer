@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# harness-opencode — the opencode adapter of task-probe (/junkd:task-draft's comprehension sub-loop).
+#   harness-opencode --model <id> --effort <e> --thinking <level> --pass <suffix|param> --prompt-file <dir>/prompt.md
+# Runs `opencode run --pure` in the current directory (task-probe makes it an empty temp dir and applies the timeout)
+# with the prompt attached as a file, and prints the answer, then one JSON line:
+# {"wall_s":<n>,"tokens_in":null,"tokens_out":null,"cost":null}.
+# Thinking `on` is --variant high; low/medium/high is --variant <level> (either pass); `off` adds nothing; the
+# effort (not default or none) is --variant <effort> only when the thinking level is `-` or `off`.
+# Test status: flags checked against `opencode run --help`; stub test. "No tools": enforced by config, not only the
+# prompt header: OPENCODE_CONFIG_CONTENT denies every permission ("*", plus edit, bash, webfetch, websearch,
+# external_directory, skill and task by name) and turns every tool off ("*": false, which covers the MCP tools of the
+# user's global config, plus each built-in by name); the attached file needs no tool. That config is written from opencode's config schema
+# (the keys are in the opencode binary); no live call has checked it.
+# It creates no temp dir, applies no timeout and reads no credential.
+set -euo pipefail
+
+model="" effort=default thinking=- pass=suffix prompt=""
+while [ $# -gt 0 ]; do
+  [ $# -ge 2 ] || { echo "harness-opencode: $1 takes a value" >&2; exit 2; }
+  case "$1" in
+    --model) model="$2" ;;
+    --effort) effort="$2" ;;
+    --thinking) thinking="$2" ;;
+    --pass) pass="$2" ;;
+    --prompt-file) prompt="$2" ;;
+    *) echo "harness-opencode: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+  shift 2
+done
+[ -n "$model" ] && [ -n "$prompt" ] || { echo "harness-opencode: --model and --prompt-file are required" >&2; exit 2; }
+: "$pass"
+
+start=$(date +%s)
+args=(run --pure --dir . -m "$model")
+case "$thinking" in
+  on) args+=(--variant high) ;;
+  low | medium | high) args+=(--variant "$thinking") ;;
+  - | off) case "$effort" in default | none) ;; *) args+=(--variant "$effort") ;; esac ;;
+esac
+args+=("Answer as the attached file asks." -f "$prompt")
+
+# The probe prompt inlines repo files, which are untrusted text: the run gets no tool at all.
+# The wildcards turn off every tool, MCP tools of the user's global config included; the names repeat it for an
+# opencode that reads no wildcard.
+no_tools='{"permission":{"*":"deny","edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","skill":"deny","task":"deny"},"tools":{"*":false,"bash":false,"edit":false,"write":false,"patch":false,"apply_patch":false,"multiedit":false,"read":false,"grep":false,"glob":false,"list":false,"lsp":false,"webfetch":false,"websearch":false,"codesearch":false,"skill":false,"batch":false,"question":false,"todowrite":false,"todoread":false,"task":false}}'
+
+set +e
+OPENCODE_CONFIG_CONTENT="$no_tools" opencode "${args[@]}" </dev/null
+rc=$?
+set -e
+printf '\n{"wall_s":%d,"tokens_in":null,"tokens_out":null,"cost":null}\n' "$(($(date +%s) - start))"
+exit "$rc"

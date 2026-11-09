@@ -6,7 +6,7 @@
 import type { JunkdGroup, JunkdKey, JunkdSchemaEntry, JunkdValue } from '../types'
 
 export const PLUGIN = 'junkd'
-export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools']
+export const GROUPS: readonly JunkdGroup[] = ['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools', 'egm']
 
 export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'core_output_style', group: 'core', field: 'output_style', type: 'string', title: 'Output style', default: 'ste', main: true, options: ['ste', 'off'] },
@@ -50,6 +50,8 @@ export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'tools_enabled', group: 'tools', field: 'enabled', type: 'boolean', title: 'Tools pane: enabled', default: true, main: true },
   { key: 'tools_refresh', group: 'tools', field: 'refresh', type: 'number', title: 'Tools pane: refresh every N seconds', default: 60, main: false },
   { key: 'tools_agents_only', group: 'tools', field: 'agents_only', type: 'boolean', title: 'Tools pane: only worktrees with an agent', default: false, main: false },
+  { key: 'egm_enabled', group: 'egm', field: 'enabled', type: 'boolean', title: 'EGM przy pisaniu tasków', default: false, main: true },
+  { key: 'egm_models', group: 'egm', field: 'models', type: 'boolean', title: 'EGM bierze pod uwagę modele (pętla rozumienia)', default: false, main: true },
 ]
 
 export const isKey = (key: unknown): key is JunkdKey => SCHEMA.some(f => f.key === key)

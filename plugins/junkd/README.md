@@ -18,6 +18,7 @@ One plugin for six tools and the frame over them. Every command is a skill of ju
 | `/junkd:statusline [on \| off \| status]` | The colored status line in settings.json, a switch per segment; no argument toggles its pane (Claude Code only) |
 | `/junkd:tools [agents \| tools \| mcp \| skills]` | Open or close the tools pane: this session's agents over the repo's worktrees, and the tools, MCP servers and skills it used (Claude Code only) |
 | `/junkd:lessons [list \| promote <id> \| drop <id> \| up <id>]` | Show the pending orch lessons of the three stores (local, repo, global) to promote, drop or move up a store; an orch run does not end while one is pending (Claude Code tab) |
+| `/junkd:task-draft <id> [input] [--unattended]` | Turn a task into a reviewed EGM spec (the `egm` plugin) and an orch task file; with `egm_models` on, first check that the lowest class of the model registry understands it; off until `egm_enabled` (Claude Code) ([egm](#egm)) |
 | `/junkd:explain <topic>` | Explain a topic from the repo in the format that fits: a slider page for parameters, a Mermaid diagram for structure or flow, STE text otherwise |
 | `/junkd:junkd` (`/junkd` where the host resolves it) | Open or close the junkd set of panes (Claude Code only) |
 
@@ -122,15 +123,16 @@ closes them together:
 4. **statusline** — the status line's pane ([below](#statusline)).
 5. **tools** — the tools pane ([below](#tools)), only while `tools_enabled` is on.
 6. **lessons** — the pending orch lessons ([below](#lessons)), only while `orch_enabled` and `orch_lessons` are on.
+7. **egm** — the model registry ([below](#the-egm-tab)), only while `egm_enabled` is on.
 
-All six are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
+All seven are panes of the one hooks module, so the set opens them directly, marked as the set's. A feature pane
 already open on its own closes first and opens again behind junkd's tab, so its tab never comes first, and from
 then on it is the set's. The set closes as one: `q` or `×` in any of its panes (the engine draws one on each pane and
 gives the module no single control for the set, so the module answers a close of any member by closing every member),
 a second `/junkd:junkd`, or closing a tab by hand closes junkd and every feature pane that is still the set's, in one
 action, with no leftover and no second press. A feature pane that is not the set's closes alone, and the set stays:
 one you closed and opened again on your own (`/junkd:handoff panel`, `/junkd:orch panel`, `/junkd:ahandoff panel`,
-`/junkd:statusline`, `/junkd:tools`, `/junkd:lessons`, the 🪃 or 📒 click), or one a `settings ▸` press left open
+`/junkd:statusline`, `/junkd:tools`, `/junkd:lessons`, the 🪃 or 📒 click, the egm tab's `settings ▸`), or one a `settings ▸` press left open
 (that press closes junkd and the other panes, so the pane left is the only one up). Its own `×` closes just that pane.
 The same command that opened a member (`/junkd:orch panel`, say) still toggles that pane alone.
 
@@ -147,13 +149,13 @@ a git checkout). The junkd pane has three sections, their titles in junk-drawer'
   (`$CLAUDE_CONFIG_DIR/settings.json`) says; the title names the file it writes. A plugin on in this project only
   is marked. Keys `1`–`9` flip one; the pane then says to run `/reload-plugins`. handoff, orch, tldr, ctx-limit and
   statusline are no plugins of their own anymore: each group's `enabled` row in Settings is their on/off.
-- **Settings** — the groups core, handoff, orch, tldr, ctx, statusline and tools, in that order, each with its `main` rows and `enabled`
+- **Settings** — the groups core, handoff, orch, tldr, ctx, statusline, tools and egm, in that order, each with its `main` rows and `enabled`
   first, with their current values. A letter flips a boolean; a number is typed and saved with `enter`, a choice
   (`orch_guard`, `core_output_style`, `ctx_action`) is picked with `tab` and `enter`. The group's own rules validate what it
   gets, and a refusal shows in the note line. Each row: the field, its title, the control on the right (a switch
   as an `on`/`off` pill and its letter, a choice as its options with the current one inverse, a number as a
-  field). `settings ▸` on handoff, orch, statusline and tools opens that pane (handoff on its Settings tab, tools on
-  its Agents tab), closes junkd and the set's other feature panes (while they are still the set's), then asks again
+  field). `settings ▸` on handoff, orch, statusline, tools and egm (egm only while `egm_enabled` is on) opens that pane
+  (handoff on its Settings tab, tools on its Agents tab), closes junkd and the set's other feature panes (while they are still the set's), then asks again
   for the keys, so the feature pane ends alone with them; it is yours from then on. core, tldr and ctx have no pane
   and no button.
 - **Commands** — the enabled plugins' slash commands with their one-line descriptions, as the engine lists them
@@ -174,7 +176,7 @@ a git checkout). The junkd pane has three sections, their titles in junk-drawer'
 
 Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/config` row `junkd.<group>_<field>`
 (Claude Code takes only identifier keys in a manifest's `userConfig`, so the group and the field are joined by
-`_`). Seven groups, each feature group with its `enabled` row first:
+`_`). Eight groups, each feature group with its `enabled` row first:
 
 | Group | Rows | Details |
 |---|---|---|
@@ -185,6 +187,7 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 | ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
 | statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
 | tools | `tools_enabled`, `tools_refresh`, `tools_agents_only` | [tools settings](#settings-6) |
+| egm | `egm_enabled`, `egm_models` | [egm settings](#settings-9) |
 
 The `enabled` rows: `handoff_enabled` off is no auto handoff loop and no 🪃 segment (`/junkd:handoff`,
 `/junkd:handon` and the pane still work); `orch_enabled` off is no main-loop guard and no rule sheet at session
@@ -1608,6 +1611,271 @@ The stores are read again at session start, at the end of each main-loop turn, a
 The row is in the /junkd pane (orch's main rows), the orch pane and `/config` (`junkd.orch_lessons`); `true`,
 `'true'` and `'on'` are on.
 
+## egm
+
+The egm group turns on EGM-backed task drafting: `/junkd:task-draft` drafts and reviews a task as an EGM spec with
+the [egm plugin](https://github.com/google/elephant-goldfish-model) (a dependency of junkd), checks, when
+`egm_models` is on, that the lowest class of the model registry understands it, and writes the orch task file. With
+`egm_enabled` on, `/junkd:orch` runs it before the criteria freeze of a task that is not drafted yet. The egm tab
+(Claude Code only) edits the model registry, `~/.claude/junkd/models.json`.
+
+### Settings
+
+| Row | Type | Default | Meaning |
+|---|---|---|---|
+| `egm_enabled` | boolean | `false` | On: `/junkd:orch` runs `/junkd:task-draft <id>` before the criteria freeze of a task that is not yet drafted (EGM draft + review), and the egm tab shows in the /junkd set. Off: orch writes task files as before, and `/junkd:task-draft` on Claude Code prints `task-draft is off: turn on egm_enabled in the /junkd pane (Settings, egm) or /config` and stops |
+| `egm_models` | boolean | `false` | On (needs `egm_enabled`): `/junkd:task-draft` checks that the first model of each class in `models.json` understands the spec before the task file is written (the comprehension sub-loop). Off: EGM only |
+
+Both are main rows of the /junkd pane (Settings, egm, last, after tools; `egm.enabled` takes the letter `n`,
+`egm.models` the letter `o`) and `/config` rows (`junkd.egm_enabled`, `junkd.egm_models`); `true`, `'true'` and
+`'on'` are on. While `egm_enabled` is off, the `egm.models` row is dim with the title suffix ` · wymaga enabled`, its
+pill shows the stored value, and a flip (pane or `/config`) is refused with
+`✗ egm.models działa dopiero przy egm.enabled = on`. Turning `egm_enabled` off keeps the stored `egm_models`, but
+every reader takes `egm_models` as off while `egm_enabled` is off (`task-draft-state settings` prints
+`models=false`). The skill reads both rows with `bin/task-draft-state settings` from `settings.json`
+(`pluginConfigs`, the first `junkd@` entry, `.options.egm_enabled` / `.options.egm_models`). The other hosts have no
+userConfig: see [Hosts](#hosts-2).
+
+### The egm tab
+
+The tab is the `junkd-egm` pane, titled `egm`, the last tab of the /junkd set, open only while `egm_enabled` is on.
+Turning `egm_enabled` on while the set is open adds the tab without focus (the junkd pane keeps the keys); turning it
+off closes the tab wherever it is. `settings ▸` on the egm group header opens the pane (drawn only while
+`egm_enabled` is on). On a terminal narrower than 144 columns, a tab opened this way may stay undrawn until the next
+frame. The labels of the tab are Polish, verbatim.
+
+Three views:
+
+- **List** — the header `egm · modele ~/.claude/junkd/models.json` with the buttons `s: settings ▸`,
+  `n: Dodaj model` and `q: ×`; one row per entry (columns `klasa`, `id`, `harness`, `effort`, `thinking`), the
+  selected row marked `▸` with the action line `enter: Edytuj   x: Usuń` under it; the dim line
+  `D, E: rezerwa · klasy: A haiku · B sonnet · C opus · F frontier (kimi, fable)`, and the effective `egm_models`
+  value: `egm.models = true: pętla rozumienia bierze modele z tej listy` or
+  `egm.models = false: EGM pisze taski bez modeli z tej listy`. An empty list reads `brak modeli · n dodaje pierwszy`.
+- **Form** (`sposób: formularz`) — `Dodaj model` or `Edytuj model`: `a: klasa` (A B C F), `b: id`, `c: harness`
+  (claude omp opencode codex kimi), `d: effort` (default none low medium high xhigh max), `e: thinking` (— off on
+  low medium high), and `f: jak przekazać` (`sufiks :level` or `parametr`, drawn only for thinking on, low, medium or
+  high). A new entry starts as class B, harness claude, effort default, thinking —. An empty id is refused with
+  `✗ id jest puste: wpisz id (b)`.
+- **JSON** (`sposób: wklej JSON`) — one object in a one-line input, prefilled for a new entry with
+  `{"class":"B","id":"openrouter/<vendor>/<model>","harness":"omp","effort":"default","thinking":{"level":"high","pass":"suffix"}}`.
+  A multi-line paste is joined to one line before it is parsed, so a pretty-printed object works. A bad object shows
+  one `✗ JSON: …` note and the view stays open.
+
+The add key is `n` and the cancel key `z`, not `+` and `esc`: a Button's `hotkey` takes one digit or one lowercase
+letter.
+
+| Key | View | Does |
+|---|---|---|
+| `j` / `k`, arrows | list | Move the selection |
+| `enter` | list | Edit the selected entry (the form) |
+| `x` | list | Start a delete (`x jeszcze raz usuwa <id>`); a second `x` on the same row deletes it (`✓ usunięto <id>`) |
+| `n` | list | Add an entry (the form) |
+| `s` | list | `settings ▸`: focus the junkd pane of the set, or open the set |
+| `a`–`f` | form | Move that field's choice to its next option (`b` focuses the id field) |
+| `s` | form, JSON | Validate and save (`✓ dodano <id> (klasa <class>) w ~/.claude/junkd/models.json`; `✓ zapisano …` for an edit; `… z JSON w …` from the JSON view) |
+| `z` | form, JSON | Cancel (`anulowano`), nothing written |
+| `q` | all | Close the set, or the pane alone when it is not the set's |
+
+| Label | Means |
+|---|---|
+| `klasa` | the capability class: A haiku-class, B sonnet-class, C opus-class, F frontier; D and E are reserved (`rezerwa`) |
+| `harness` | the CLI that runs the model (`tak junkd wywołuje inne harnessy · klucze i endpointy trzyma sam harness`) |
+| `effort` | the reasoning effort passed to the harness (`default: jak harness · none: brak`) |
+| `thinking` | the thinking level; `—` = the model has no thinking control (`— = nie obsługuje`) |
+| `jak przekazać` | how the level is passed: `sufiks :level` (`<id>:<level>`) or `parametr` (`parametr w żądaniu`) |
+| `sposób` | the form (`formularz`) or a pasted object (`wklej JSON`) |
+
+### models.json
+
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/models.json` is a flat JSON array of entries, with no wrapper object,
+written as `JSON.stringify(list, null, 2)` plus a newline. Every key is written:
+
+```json
+{"class":"A|B|C|F","id":"<non-empty string>","harness":"claude|omp|opencode|codex|kimi",
+ "effort":"default|none|low|medium|high|xhigh|max",
+ "thinking":{"level":"-|off|on|low|medium|high","pass":"suffix|param"}}
+```
+
+- **Seed.** When the file is missing, the first show of the egm tab creates the folder and writes A haiku, B sonnet,
+  C opus, each with harness `claude`, effort `default` and thinking `{"level":"-","pass":"suffix"}`. A deleted file
+  is seeded again on the next show. An entry with harness `claude` ignores `effort` and `thinking`.
+- **Sort.** The list and the file are sorted by class (A, B, C, F), then by `id`. Two entries may share a class; an
+  entry with the same `class`, `id` and `harness` as another is refused (`✗ taki model już jest: <id> (klasa <class>, <harness>)`).
+- **Validation.** The form and the JSON view share one function (`parseEntry` in `hooks/egm.ts`); a missing
+  `effort` is `default`, a missing `thinking` is `{"level":"-","pass":"suffix"}`, and a bare string `"high"` is
+  `{"level":"high","pass":"suffix"}`. Each error is one `✗ JSON: …` note.
+- **`.bak`.** Every write (add, edit, delete) copies the old file to `models.json.bak`, then moves a temp file onto
+  `models.json`.
+- **A broken file is never overwritten.** A file that does not parse or validate stays as it is; the list shows
+  `✗ models.json: <reason> · popraw plik ręcznie` and refuses `n`, `enter` and `x` with the same note.
+- **The fence.** A `models.json` link is resolved first, and the write is refused (`✗ models.json wskazuje poza <cfg>/junkd: <real>`)
+  when the real path is not inside `<config dir>/junkd/`.
+
+The skill reads the ladder with `bin/task-draft-state models`: for A, B, C and F, the first entry in sorted order,
+one JSON line each. The registry is plain JSON, readable on every host; outside Claude Code you edit it by hand.
+
+### The EGM dependency
+
+On Claude Code, junkd's `plugin.json` declares `"dependencies": [{"name":"egm","marketplace":"egm","version":"0.1.1"}]`
+(pinned at exactly `0.1.1`) and the root `marketplace.json` allows it with
+`"allowCrossMarketplaceDependenciesOn": ["egm"]`, so installing junkd installs egm once the `egm` marketplace is known:
+
+```bash
+claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm
+```
+
+The EGM skills appear in a new session or after `/reload-plugins`. Nothing is printed at session start on any host,
+and nothing in junkd installs egm: the install hint shows only in the `/junkd:task-draft` gate.
+
+`bin/task-draft-state egm` finds the EGM root with one rule on every host:
+
+1. `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json`, `.plugins["egm@egm"]`: the record with
+   `"scope":"user"`, else the first; its `installPath` is the root when `<installPath>/skills/egm-draft/SKILL.md`
+   exists.
+2. Else `$EGM_ROOT`, when `$EGM_ROOT/skills/egm-draft/SKILL.md` exists.
+3. Else one hint line, exit 1.
+
+Found, it prints `egm: installed` and `root=<abs>` (exit 0). The hint line per host:
+
+| Host | Line |
+|---|---|
+| Claude Code | `egm is not installed: claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm` |
+| Codex | `egm is not installed: codex plugin marketplace add google/elephant-goldfish-model && codex plugin add egm@egm, then set EGM_ROOT to the folder that holds skills/egm-draft/SKILL.md` |
+| Kimi Code | `junkd: egm has no Kimi package; set EGM_ROOT to an EGM checkout (git clone https://github.com/google/elephant-goldfish-model)` |
+| OpenCode | `junkd: egm has no OpenCode package; set EGM_ROOT to an EGM checkout (git clone https://github.com/google/elephant-goldfish-model)` |
+
+### Hosts
+
+| Capability | Claude Code | Codex, Kimi Code, OpenCode |
+|---|---|---|
+| `egm_enabled`, `egm_models` | userConfig rows, `/junkd` pane and `/config` | none; an explicit `/junkd:task-draft` skips the gate; `egm_models` = `JUNKD_EGM_MODELS=1` (default off) |
+| `egm` tab | yes | no |
+| `models.json` | edited in the tab | read only; the user edits the file by hand |
+| EGM detection | `installed_plugins.json`, else `EGM_ROOT` | `installed_plugins.json` (when Claude Code is also installed), else `EGM_ROOT` |
+| Roles | agent types `junkd:task-egm`, `junkd:task-elephant`, `junkd:task-judge`, `junkd:task-goldfish` | the skill reads `./roles/<file>` and inlines its text into a generic subagent; with no subagents, it follows the role in its own thread |
+| EGM reviewers | agent types `egm:egm-*` | generic subagents with `<root>/agents/<file>.md` inlined |
+| Harness `claude` entries | `junkd:task-goldfish` with `model: <id>` | skipped, no message |
+| orch rule | yes | the text ships, but the rule is off (no junkd userConfig); task-draft runs only when the user invokes it |
+| helper path | `${CLAUDE_PLUGIN_ROOT}/bin/<name>` | `./bin/<name>` inside the skill folder |
+
+The four roles live in `skills/orch/roles/` (the plugin-root `agents/` link); `skills/task-draft/roles/` holds
+byte-identical copies for the hosts that read `./roles/<file>`, and `tests/smoke.sh` checks them with `cmp`.
+
+### /junkd:task-draft
+
+`/junkd:task-draft <id> [input] [--unattended]` (`$task-draft` on Codex, `/skill:task-draft` on Kimi Code,
+`/task-draft` on OpenCode). The skill runs in the main loop: it runs the helpers, dispatches the roles, asks the user,
+and writes only through the helpers. With no input and an existing `.orch/taskdraft/<id>/input.md`, that file is the
+input. An input under `docs/designs/` is taken as an EGM spec (review only); any other input is context for a new
+draft.
+
+1. **Gate.** `task-draft-state settings` (off on Claude Code: one line, stop), `task-draft-state egm` (absent: the
+   hint line, stop), then the resume check of `questions.md` (below).
+2. **EGM spec.** One `junkd:task-egm` reads EGM's `SKILL.md` and persona files from the EGM root and follows them (it
+   never calls an EGM skill through the Skill tool): it drafts or reviews the spec under `docs/designs/` and
+   dispatches the EGM reviewers. Its artifacts go to `.orch/taskdraft/<id>/egm/`. It ends with `spec <path>` or
+   `failed: <reason>`.
+3. **Acceptance criteria.** The spec must have `## Acceptance criteria` with items
+   `AC<n>: … (modality: ui|api|test|data)`; `task-probe <spec> --ac-hash` keeps their hash.
+4. **Comprehension sub-loop** (only with `egm_models` on). The ladder is the first registry entry per class. Before a
+   non-claude harness gets the spec, the skill lists the repo files the prompt would inline
+   (`task-probe --list`, `inline-files.txt`) and asks `Send these <n> files to non-local harnesses?` (`send` or
+   `skip non-local`) on every such run. One `junkd:task-elephant` runs the probes up the ladder: the goldfish (a
+   model with no tools and no history) answers five questions on the spec (what changes, where, which tests, what is
+   out of scope, what is unclear), and `junkd:task-judge` scores the answer against the acceptance criteria
+   (`understood N/M`). The elephant may add a `## Clarifications` section or split the task (`<id>a`, `<id>b`), never
+   change an acceptance criterion; when one must change, it appends `## Unresolved comprehension` and stops. A
+   changed acceptance criteria hash also stops the run.
+5. **Task file.** `task-from-spec <spec> <id> [--probe <answer>] [--worker-class <X>] [--understood N/M] [--deps <ids>] [--root <dir>] [--force]`
+   writes `.orch/tasks/<id>.md` (or the config's `tasks_dir`) in the format `orch-state new` writes: frontmatter with
+   `status: todo`, `criteria_source: verbatim`, `spec:` and, with `--worker-class`, `worker_class:` (the class that understood it),
+   `## Description`, `## Acceptance criteria` (`- [ ] AC<n>: ...`), `## Test matrix` when the spec has one, and, with `--probe`,
+   `## Evidence: comprehension`. `--root` names the repo root (default: the git top level, else the current folder).
+   `--force` keeps `deps`, `status`, `critical`, `source`, `source_updated_at` and the
+   `## Verification` section of an existing file. It refuses (exit 4) while `questions.md` exists. The run ends
+   with `task-draft <id>: <understood N/M on class X | EGM only> -> <task file>` and the host's orch command.
+
+The files under `.orch/taskdraft/<id>/` (git-ignored): `input.md` (the free-text input orch writes), `egm/` (EGM's
+artifacts and `gate_log.md`), `inline-files.txt`, the probes `probe-r<n>-<class>-<model>.prompt.md`, `.md`,
+`.meta.json` and `.judge.md`, and `questions.md` while a question is open.
+
+**Every question reaches the user.** The skill never answers a question for the user and never takes a default: an
+EGM draft gate, the review preset, an egm-resolve choice, a comprehension clarification and the inline-file
+confirmation all go to the user (AskUserQuestion on Claude Code, a plain question on the other hosts), and the run
+waits. In `/loop`, `batch` and `all`, orch passes `--unattended`, which changes only where a question goes, never its
+answer: the open questions go to `.orch/taskdraft/<id>/questions.md` (each `## Q<n>` with its question, context and
+options, and an empty `A:` line), no task file is written, and the orch run ends with
+`BACKLOG: WAITING — <id>: <N> questions in .orch/taskdraft/<id>/questions.md`. You answer on the `A:` line under each
+question (one of the options, your own text, or `ok` for the proposed answer, the first option), then run the orch
+command or `/junkd:task-draft <id>` again: the next run reads the answers, hands them to the role, continues, and
+deletes `questions.md` once the role has consumed them.
+
+**The decisions register.** A point that is already decided is not asked again. The register has two parts: the
+`## Decisions` section of the task's own spec, and the tracked file `.orch/decisions.md` (not git-ignored), one block
+per decision:
+
+    ## R<n> (<YYYY-MM-DD>) <the question, one line>
+    A: <the answer>
+    source: <spec D<n> | questions.md of task <id> | chat>
+
+Before a role returns a question, it checks the register (the spec's `## Decisions` first, then
+`task-draft-state decisions --match "<key words>"`). A covered question is answered from that decision and logged as
+`answered from <decision id>: <question>` in `.orch/taskdraft/<id>/egm/gate_log.md`; when the spec and the file
+disagree, the spec wins; when in doubt, the question is not covered. The open questions of one gate come as one
+batch: one numbered list, each with its proposed answer first, where `ok` takes every proposed answer and
+`<n>: <answer>` changes single ones. Every answer is appended to `.orch/decisions.md`: a session's answers with
+`task-draft-state decisions add <id> --source chat`, the answers of `questions.md` by `task-draft-state questions <id> done`
+before it deletes the file. The roles only read the register. The inline-file confirmation is never answered from
+the register and never recorded in it. `task-draft-state` writes `questions.md` and `.orch/decisions.md` through one
+checked safe-write function: a failed step exits 2 and leaves the target unchanged.
+
+### Harnesses
+
+`task-probe` runs a non-claude entry through `bin/harness-<name>` in an empty temp folder, under `--timeout` seconds
+(default 300), with `CLAUDE*`, `ORCA_*`, `AWS_*`, `HF_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`,
+`GOOGLE_APPLICATION_CREDENTIALS` and `SSH_AUTH_SOCK` removed from the environment. An adapter writes the answer, then
+one JSON line (`wall_s`, `tokens_in`, `tokens_out`, `cost`). No adapter reads a credential file. Harness `claude` has
+no adapter: `task-probe` writes the prompt file and exits 10, and the elephant hands it to a `junkd:task-goldfish`
+(`tools: []`) with the entry's model (haiku, sonnet, opus or fable).
+
+| | omp | opencode | codex | kimi |
+|---|---|---|---|---|
+| base argv | `omp -p --no-tools --no-session --no-title --no-extensions --no-skills --no-rules --no-lsp --no-context-files --cwd .` | `opencode run --pure --dir .` | `codex exec --skip-git-repo-check --sandbox read-only -C .` | Kimi Code 2.4.1: `kimi --agent-file ./kimi-goldfish.md --skills-dir ./kimi-skills -m <id> --output-format text -p <prompt> </dev/null` (`-p` is prompt mode, no TUI; `./kimi-skills` is an empty dir; kimi-cli, the legacy CLI, is not supported) |
+| model | `--model=<id>` | `-m <id>` | `-m <id>` | `-m <id>` |
+| prompt | `@prompt.md` | `-f prompt.md` plus the message `Answer as the attached file asks.` | stdin (`-`) | the `-p` argument (the docs do not say `-p` reads stdin; kimi's stdin is `/dev/null`); the prompt is passed in argv; visible to local users in the process list; a prompt above 120 KiB exits 2 before `kimi` is called (an argv string is capped at 128 KiB) |
+| thinking `on` | `--thinking=auto` | `--variant high` | ignored | ignored |
+| thinking low/medium/high | `pass=suffix`: model `<id>:<level>`; `pass=param`: `--thinking=<level>` | `--variant <level>` | ignored | ignored |
+| thinking `off` | `--thinking=off` | nothing | ignored | ignored |
+| effort (not `default`, not `none`) | `--thinking=<effort>` only when thinking is `-` | `--variant <effort>` only when thinking is `-` or `off` | `-c model_reasoning_effort="<effort>"` | ignored |
+| "no tools" | enforced (`--no-tools`) | enforced by config, no live call: `OPENCODE_CONFIG_CONTENT` with `"permission":{"*":"deny",…}` and `"tools":{"*":false,…}` | best effort, not a guarantee: `--sandbox read-only --disable shell_tool,unified_exec,apps,browser_use,computer_use,image_generation -c tools.web_search=false -c 'mcp_servers={}'` | agent file allows no tools; MCP from the user's config is not isolated; advisory. Live (2026-11-09): kimi accepted the agent file and the model stated that it has no shell or file tools; MCP isolation is not confirmed. The adapter passes a temporary Markdown agent file `./kimi-goldfish.md` with `--agent-file`: frontmatter `name`, `description`, `tools: []` (the docs: "disables all tools") and `disallowedTools` listing the 23 built-in tools of the tools page plus `mcp__*`; the body is the whole system prompt. No flag turns MCP off: servers from `~/.kimi-code/mcp.json` and plugins may still connect, their tools cut by the agent file. `-p` runs under the `auto` permission policy (no approval) |
+| tokens / cost | null / null | null / null | null / null | null / null |
+| test status | flags checked against `omp --help` (v18.17.0); stub test | flags checked against `opencode run --help`; stub test; the no-tools config has had no live call | written from `codex exec --help`; stub test; **no live call** | argv and agent file from the Kimi Code docs and `kimi --help` (2.4.1); stub test; two live runs failed (the TUI, then `unknown option '--quiet'`); the 2.4.1 argv was confirmed live on 2026-11-09 |
+
+The codex flags are given in short form: the adapter passes each `--disable` on its own, and also
+`-c 'web_search="disabled"'`. Codex may add a tool surface these flags do not cover, so its answer is untrusted text:
+`task-probe` only writes it to a file for the judge and never runs it.
+
+### Untested
+
+`tests/task-draft.sh` runs every harness through a stub, and no test calls a model. Live calls so far: omp was
+confirmed live (no tools, the answer in prose). kimi (Kimi Code 2.4.1) was called live twice before the current argv:
+the first run had no print flag and opened its interactive UI (the TUI bug the `tui output` check now answers), the
+second used kimi-cli flags and stopped at `error: unknown option '--quiet'`. The 2.4.1 argv (`-p` prompt mode, a
+Markdown agent file with `tools: []`) is confirmed live: on 2026-11-09, run
+through `task-probe`, it exited 0. The answer was plain text in transcript style (a `• ` prefix, wrapped lines
+indented by two spaces), with no TUI output; thinking went to stderr; the relative `--agent-file` and `--skills-dir`
+paths worked. The model stated that it has no shell or file tools: it did not create the file the test spec asked
+it to create and printed no directory listing. MCP isolation is not confirmed: MCP servers from the user's config
+are still not isolated, so kimi's no-tools stays advisory. Kimi Code stores a session for every run in the
+user's Kimi home (stderr prints `To resume this session: kimi -r session_<id>`), so the prompt text stays there; the
+adapter does not delete it, because adapters never handle the user's home or credential files. opencode and codex
+have had no live call. The omp, opencode and codex flags come from each CLI's `--help` (omp v18.17.0,
+`opencode run`, `codex exec`), the kimi argv and agent file from the Kimi Code docs and `kimi --help` of 2.4.1; the
+opencode no-tools settings, the codex tool switches and kimi's MCP isolation are unchecked until a live run. The
+whole agent flow (EGM gates, the comprehension sub-loop, the `questions.md` resume) is checked by hand, not by a
+test.
+
 ## Files
 
 - `hooks/index.tsx` — the one hooks module: `$.junkd` and the hooks more than one feature needs (session start,
@@ -1629,6 +1897,9 @@ The row is in the /junkd pane (orch's main rows), the orch pane and `/config` (`
 - `hooks/tools-pane.tsx`, `tools.ts`, `tools-views.tsx` — tools: the pane, its poll and the settings group; the
   counters, the worktree parser and the agents tree; the four tabs.
 - `hooks/panel.tsx`, `junkd-views.tsx` — the /junkd frame and the set.
+- `hooks/egm.ts` — the egm registry schema, `parseEntry`, sort and seed, and the tab state (`$`-free).
+- `hooks/egm-views.tsx` — the egm tab's list, form and JSON views (`$`-free).
+- `hooks/egm-pane.tsx` — the egm settings group and the egm tab: get/set, show/hide/open, `models.json` reads and writes.
 - `hooks/lessons.tsx`, `lessons.ts`, `lessons-views.tsx` — the lessons loop: the tab, 📒, the dialog and its context
   line, `/junkd:lessons`; the reader of the three stores, the stack filter and the pending rule; the tab's drawing.
 - `hooks/dashboard.tsx`, `dashboard.ts` — the orch dashboard: `/junkd:dashboard`, the phases, `status.js`; the task
@@ -1636,7 +1907,7 @@ The row is in the /junkd pane (orch's main rows), the orch pane and `/config` (`
 - `skills/orch/dashboard/` — the dashboard page (`orch-dashboard.html`), its timeline scale (`scale.js`) and the
   demo data with the data contract (`status.sample.js`); `skills/orch/bin/orch-status` its shell writer.
 - `skills/<name>/SKILL.md` — one per command (`junkd`, `handoff`, `handon`, `ahandoff`, `orch`, `orch-init`,
-  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `explain`, `dashboard`, `direction`, `lessons`); the real helpers live inside their skill (`skills/handoff/bin`,
+  `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`, `tools`, `explain`, `dashboard`, `direction`, `lessons`, `task-draft`); the real helpers live inside their skill (`skills/handoff/bin`, `skills/task-draft/bin`,
   `skills/orch/bin` (with `orch-watch`, and `orch-state lesson`), `skills/orch/scripts`, `skills/orch/roles`, `skills/tldr/bin`, `skills/ctx-limit/bin`
   (`ctx-limit`, `ctx-limit-hook`), `skills/ctx-tokens/bin`, `skills/statusline/bin` (`statusline.sh`,
   `statusline-setup`), `skills/junkd/scripts/setup.sh`, `skills/junkd/scripts/cache-check.sh`). `host-lib` has a
