@@ -80,12 +80,14 @@ Codex notes:
 handoff, orch, tldr, ctx-limit, ctx-tokens and statusline are part of junkd; every command is `/junkd:<name>`
 (`/junkd:handoff`, `/junkd:handon`, `/junkd:ahandoff`, `/junkd:orch`, `/junkd:orch-init`, `/junkd:tldr`,
 `/junkd:ctx-limit`, `/junkd:ctx-tokens`, `/junkd:statusline`, `/junkd:direction`, `/junkd:tools`, `/junkd:dashboard`,
-`/junkd:lessons`, `/junkd:explain`). Coming from the separate `handoff`, `orch`, `tldr`,
+`/junkd:lessons`, `/junkd:explain`, `/junkd:task-draft`). Coming from the separate `handoff`, `orch`, `tldr`,
 `ctx-limit`, `ctx-tokens` or `statusline` plugins: uninstall them and see "Moving from the handoff, orch, tldr,
 ctx-limit, ctx-tokens and statusline plugins" in [`plugins/junkd/README.md`](plugins/junkd/README.md) for the renamed
 commands, settings keys and state files.
 
 After installing or updating: `/plugin marketplace update junk-drawer`, then `/reload-plugins`.
+
+`/junkd:task-draft <id>` (off until `egm_enabled` on Claude Code) turns a task into a reviewed EGM spec and an orch task file, and with `egm_models` on checks that the lowest class of the model registry understands it; it needs the `egm` plugin, a dependency of junkd (`claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm`), see [egm](plugins/junkd/README.md#egm).
 
 ### Develop from a checkout
 
@@ -122,7 +124,7 @@ any FAIL. Run it through the Bash tool of a session, so it sees `CLAUDE_CODE_SES
 
 One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens and the status line, and the frame over the marketplace.
 Its skills (`handoff`, `handon`, `ahandoff`, `orch`, `orch-init`, `direction`, `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`,
-`junkd`, `tools`, `explain`, `dashboard`, `lessons`) run on every host; on Claude Code each is `/junkd:<name>`, and the hooks module adds
+`junkd`, `tools`, `explain`, `dashboard`, `lessons`, `task-draft`) run on every host; on Claude Code each is `/junkd:<name>`, and the hooks module adds
 the automatic handoff loop, the orch main-loop guard, the panes (the tools pane among them: this session's agents over
 the repo's worktrees, and the tools, MCP servers and skills it used), the live orch dashboard (a local page with the
 task board and the agents' timeline; `bin/orch-status` writes a snapshot of it on the other hosts), the lessons tab
@@ -204,7 +206,7 @@ lifecycle hooks, so `tldr` and `ctx-limit` lose their automatic hook behavior an
 them explicitly instead.
 
 ```bash
-npx skills add Krab00/junk-drawer                     # all sixteen skills
+npx skills add Krab00/junk-drawer                     # all seventeen skills
 npx skills add Krab00/junk-drawer --skill orch        # just one
 npx skills add Krab00/junk-drawer --list              # preview, install nothing
 ```

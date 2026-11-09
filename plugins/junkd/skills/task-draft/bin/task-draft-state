@@ -1,0 +1,439 @@
+#!/usr/bin/env bash
+# task-draft-state — the reads and the two small stores of /junkd:task-draft. Bash and jq; nothing here installs
+# anything or reads a credential.
+#   task-draft-state settings [--host <h>]   # enabled=<bool>, models=<bool>, host=<h>. On claude: pluginConfigs of
+#                                            # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json, the first junkd@ key,
+#                                            # options.egm_enabled / egm_models (true, "true" or "on" is true; models is
+#                                            # false while enabled is); defaults false. Other hosts: enabled=false,
+#                                            # models=true only with JUNKD_EGM_MODELS=1.
+#   task-draft-state egm [--host <h>]        # egm: installed + root=<abs> (exit 0), else one install hint (exit 1).
+#                                            # installed_plugins.json egm@egm (the user record, else the first), then
+#                                            # EGM_ROOT; either counts only when skills/egm-draft/SKILL.md is there.
+#   task-draft-state models                  # the ladder of ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/models.json:
+#                                            # for A, B, C, F the first entry by id, one compact JSON line each.
+#   task-draft-state questions <id> put --role <task-egm|task-elephant|task-draft> --spec <path|none>
+#   task-draft-state questions <id> answers|done
+#                                            # .orch/taskdraft/<id>/questions.md: put writes it from QUESTION: /
+#                                            # CONTEXT: / OPTIONS: blocks on stdin; answers prints A<n>:/Q<n>: lines
+#                                            # (exit 0 all answered, 4 not, 1 no file); done copies the answers of a
+#                                            # task-egm/task-elephant file into .orch/decisions.md, then deletes it.
+#   task-draft-state decisions [--match "<text>"]
+#   task-draft-state decisions add <id> --source <chat|questions|D<n>>
+#                                            # .orch/decisions.md, the tracked register: print it, print the blocks
+#                                            # that match (exit 1 none), or append one R<n> block per A<n>: stdin line.
+# The host is --host, else JUNK_DRAWER_RUNTIME, else codex (CODEX_THREAD_ID), kimi (KIMI_PLUGIN_ROOT), opencode
+# (OPENCODE or OPENCODE_PID), else claude. Every write goes through _safe_write: a temp file in the target's folder,
+# mv'd onto it; a target or folder that is a symlink, or a folder that resolves outside the repo, is refused (exit 2),
+# and every content is read in full, each read checked, before the write starts.
+set -euo pipefail
+
+CFG="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+ID_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+
+die() { echo "task-draft-state: $*" >&2; exit 2; }
+
+# _host [<explicit>]: the host name, checked against the four.
+_host() {
+  local h="${1:-}"
+  if [ -z "$h" ]; then
+    if [ -n "${JUNK_DRAWER_RUNTIME:-}" ]; then h="$JUNK_DRAWER_RUNTIME"
+    elif [ -n "${CODEX_THREAD_ID:-}" ]; then h=codex
+    elif [ -n "${KIMI_PLUGIN_ROOT:-}" ]; then h=kimi
+    elif [ -n "${OPENCODE:-}${OPENCODE_PID:-}" ]; then h=opencode
+    else h=claude
+    fi
+  fi
+  case "$h" in
+    claude | codex | kimi | opencode) echo "$h" ;;
+    *) die "unknown host '$h' (claude, codex, kimi or opencode)" ;;
+  esac
+}
+
+# _host_arg <cmd> "$@": the value of --host, or empty; any other argument exits 2.
+_host_arg() {
+  local cmd="$1" h=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --host) [ $# -ge 2 ] || die "$cmd: --host takes a value"; h="$2"; shift 2 ;;
+      *) die "$cmd: unknown argument '$1'" ;;
+    esac
+  done
+  printf '%s' "$h"
+}
+
+_settings() {
+  local explicit host out
+  explicit=$(_host_arg settings "$@")
+  host=$(_host "$explicit")
+  if [ "$host" != claude ]; then
+    if [ "${JUNKD_EGM_MODELS:-}" = 1 ]; then out=$'enabled=false\nmodels=true'; else out=$'enabled=false\nmodels=false'; fi
+    printf '%s\nhost=%s\n' "$out" "$host"
+    return 0
+  fi
+  out=$(jq -rs '
+    def sw($k): .[$k] == true or .[$k] == "true" or .[$k] == "on";
+    (if length == 1 then .[0] else error end).pluginConfigs
+    | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
+    | sw("egm_enabled") as $e
+    | "enabled=\($e)", "models=\($e and sw("egm_models"))"
+  ' "$CFG/settings.json" 2>/dev/null) || out=$'enabled=false\nmodels=false'
+  printf '%s\nhost=%s\n' "$out" "$host"
+}
+
+_egm() {
+  local explicit host root="" f="$CFG/plugins/installed_plugins.json"
+  explicit=$(_host_arg egm "$@")
+  host=$(_host "$explicit")
+  root=$(jq -r '.plugins["egm@egm"] // [] | (map(select(.scope == "user")) + .)[0].installPath // empty' "$f" 2>/dev/null) || root=""
+  if [ -z "$root" ] || [ ! -f "$root/skills/egm-draft/SKILL.md" ]; then
+    root=""
+    if [ -n "${EGM_ROOT:-}" ] && [ -f "$EGM_ROOT/skills/egm-draft/SKILL.md" ]; then root="$EGM_ROOT"; fi
+  fi
+  if [ -n "$root" ]; then
+    echo "egm: installed"
+    echo "root=$(cd -P "$root" && pwd)"
+    return 0
+  fi
+  case "$host" in
+    claude) echo 'egm is not installed: claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm' ;;
+    codex) echo 'egm is not installed: codex plugin marketplace add google/elephant-goldfish-model && codex plugin add egm@egm, then set EGM_ROOT to the folder that holds skills/egm-draft/SKILL.md' ;;
+    kimi) echo 'junkd: egm has no Kimi package; set EGM_ROOT to an EGM checkout (git clone https://github.com/google/elephant-goldfish-model)' ;;
+    opencode) echo 'junkd: egm has no OpenCode package; set EGM_ROOT to an EGM checkout (git clone https://github.com/google/elephant-goldfish-model)' ;;
+  esac
+  return 1
+}
+
+_models() {
+  local f="$CFG/junkd/models.json" out
+  [ $# -eq 0 ] || die "models: unknown argument '$1'"
+  [ -e "$f" ] || return 0
+  if ! out=$(jq -c '
+      def bad($m): error($m);
+      if type != "array" then bad("not an array")
+      else
+        (to_entries[] | .key as $i | .value
+          | if type != "object" then bad("entry \($i + 1): not an object") else . end
+          | . as $e
+          | ["class", "id", "harness"][] as $k
+          | if ($e[$k] | type) != "string" or ($e[$k] | gsub("^\\s+|\\s+$"; "")) == "" then
+              bad("entry \($i + 1): \($k) is not a non-empty string") else empty end),
+        (. as $all | ["A", "B", "C", "F"][] as $c
+          | [$all[] | select(.class == $c)] | sort_by(.id) | .[0] // empty)
+      end
+    ' "$f" 2>&1); then
+    out=$(printf '%s\n' "$out" | tail -1)
+    case "$out" in
+      *"parse error"*) out="does not parse (${out#*parse error: })" ;;
+      *) out=$(printf '%s' "$out" | sed 's/^jq: error (at [^)]*): //; s/^jq: error: //') ;;
+    esac
+    echo "task-draft-state: models.json: $out" >&2
+    exit 1
+  fi
+  [ -z "$out" ] || printf '%s\n' "$out"
+}
+
+# _root: the repo root (git's toplevel), physical.
+_root() {
+  local r
+  r=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  (cd -P "$r" && pwd)
+}
+
+_check_id() {
+  [[ "$1" =~ $ID_RE && "$1" != *..* ]] || die "$2: bad task id '$1' (letters, digits, . _ -; not starting with _)"
+}
+
+# _fence <what> <dir> <root>: the folder must resolve inside the repo root.
+_fence() {
+  local real
+  real=$(cd -P "$2" 2>/dev/null && pwd) || die "$1: cannot enter $2"
+  case "$real/" in
+    "$3"/*) ;;
+    *) die "$1: $2 resolves outside the repo" ;;
+  esac
+}
+
+# _no_links <what> <root> <path>: <path> and every folder above it, strictly below <root>, must not be a symlink.
+_no_links() {
+  local p="$3"
+  while [ "$p" != "$2" ]; do
+    case "$p" in "$2"/*) ;; *) die "$1: ${3#"$2"/} resolves outside the repo" ;; esac
+    [ ! -L "$p" ] || die "$1: ${p#"$2"/} is a symlink; left unchanged"
+    p=${p%/*}
+  done
+}
+
+# _sw_fail <what> <tmp> <message>: remove the temp file, then exit 2.
+_sw_fail() { rm -f -- "$2"; die "$1: $3"; }
+
+# _safe_write <what> <root> <rel>: the one writer of this script; stdin (never empty) becomes <root>/<rel>. Every
+# step is checked; a failure exits 2 with its own line, removes the temp file and leaves the target as it was:
+#   1. the nearest existing folder resolves inside the repo (nothing is made outside it);
+#   2. the target and each folder above it (below the root) are not symlinks;
+#   3. mkdir -p the rest;
+#   4. the folder is fenced again and step 1 runs again (a link planted during mkdir is refused);
+#   5. mktemp in the target's folder;
+#   6. stdin is written into the temp file (a failed write, or an empty file, is refused);
+#   7. chmod to the umask's mode (mktemp makes 0600);
+#   8. mv -fT onto the target (never into a folder of that name).
+_safe_write() {
+  local what="$1" root="$2" rel="$3" target dir reldir base up mode tmp=""
+  target="$root/$rel"
+  dir=${target%/*}
+  reldir=${rel%/*}
+  base=${rel##*/}
+  up="$dir"
+  while [ ! -e "$up" ] && [ ! -L "$up" ]; do up=${up%/*}; done
+  _fence "$what" "$up" "$root"
+  _no_links "$what" "$root" "$target"
+  mkdir -p -- "$dir" 2>/dev/null || die "$what: cannot make $reldir"
+  _fence "$what" "$dir" "$root"
+  _no_links "$what" "$root" "$target"
+  mode=$(printf '%04o' $(( 0666 & ~0$(umask) ))) || die "$what: cannot read the umask"
+  # a path mktemp did not make is never removed
+  tmp=$(mktemp "$dir/.${base%.md}.XXXXXX" 2>/dev/null) && [ -f "$tmp" ] && [ ! -L "$tmp" ] || die "$what: cannot write in $reldir/"
+  cat > "$tmp" 2>/dev/null || _sw_fail "$what" "$tmp" "cannot write $rel"
+  [ -s "$tmp" ] || _sw_fail "$what" "$tmp" "nothing was written for $rel; left unchanged"
+  chmod "$mode" -- "$tmp" 2>/dev/null || _sw_fail "$what" "$tmp" "cannot set the mode of $rel"
+  mv -fT -- "$tmp" "$target" 2>/dev/null || _sw_fail "$what" "$tmp" "cannot replace $rel"
+}
+
+# _qparse <file>: the questions file as lines `H role <v>`, `H spec <v>`, then `Q <n>\t<question>\t<options>\t<answer>`.
+_qparse() {
+  awk '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    { sub(/\r$/, "") }
+    /^Role:/ && !n { print "H\trole\t" trim(substr($0, 6)); next }
+    /^Spec:/ && !n { print "H\tspec\t" trim(substr($0, 6)); next }
+    /^## Q[0-9]+[ \t]*$/ { if (n) emit(); n = substr(trim($0), 5) + 0; q = ""; o = ""; a = ""; next }
+    n && /^Question:/ { q = trim(substr($0, 10)); next }
+    n && /^Options:/ { o = trim(substr($0, 9)); next }
+    n && /^A:/ { a = trim(substr($0, 3)); next }
+    function emit() { print "Q\t" n "\t" q "\t" o "\t" a }
+    END { if (n) emit() }
+  ' "$1"
+}
+
+# _qanswers <parsed>: print the answers view of _qparse's output; return 0 when all answered, 4 otherwise.
+_qanswers() {
+  local kind f2 f3 f4 f5 open=0 first
+  while IFS=$'\t' read -r kind f2 f3 f4 f5; do
+    [ -n "$kind" ] || continue
+    if [ "$kind" = H ]; then printf '%s: %s\n' "$f2" "$f3"; continue; fi
+    # f2 = n, f3 = question, f4 = options, f5 = answer text
+    if [ -n "$f5" ] && [ "${f5,,}" = ok ]; then
+      if [ "$f4" = '(free text)' ]; then f5=""; else
+        first="${f4%%|*}"; first="${first#"${first%%[![:space:]]*}"}"; first="${first%"${first##*[![:space:]]}"}"
+        f5="$first"
+      fi
+    fi
+    if [ -n "$f5" ]; then printf 'A%s: %s => %s\n' "$f2" "$f3" "$f5"
+    else printf 'Q%s: %s | %s\n' "$f2" "$f3" "$f4"; open=1
+    fi
+  done < <(printf '%s\n' "$1")
+  [ "$open" = 0 ] || return 4
+}
+
+_questions() {
+  local id="${1:-}" sub="${2:-}" root dir file rel
+  [ -n "$id" ] || die "questions: usage: task-draft-state questions <id> put|answers|done"
+  _check_id "$id" questions
+  root=$(_root)
+  dir="$root/.orch/taskdraft/$id"
+  file="$dir/questions.md"
+  rel=".orch/taskdraft/$id/questions.md"
+  shift 2 || shift $#
+  case "$sub" in
+    put) _qput "$id" "$root" "$rel" "$@" ;;
+    answers)
+      [ $# -eq 0 ] || die "questions: answers takes no argument"
+      [ -f "$file" ] || return 1
+      local parsed rc=0
+      parsed=$(_qparse "$file") || die "questions: cannot read $rel"
+      _qanswers "$parsed" || rc=$?
+      return "$rc"
+      ;;
+    done)
+      [ $# -eq 0 ] || die "questions: done takes no argument"
+      [ -e "$file" ] || [ -L "$file" ] || return 0
+      [ ! -L "$file" ] || die "questions: $rel is a symlink; left unchanged"
+      _fence questions "$dir" "$root"
+      local parsed role="" view line lines="" rc=0 kind f2 f3
+      # every read runs before any write, each checked: a failed read never reaches the copy or the rm
+      parsed=$(_qparse "$file") || die "questions: cannot read $rel"
+      while IFS=$'\t' read -r kind f2 f3; do
+        if [ "$kind" = H ] && [ "$f2" = role ]; then role="$f3"; break; fi
+      done < <(printf '%s\n' "$parsed")
+      if [ "$role" = task-egm ] || [ "$role" = task-elephant ]; then
+        view=$(_qanswers "$parsed") || rc=$?
+        [ "$rc" = 0 ] || [ "$rc" = 4 ] || die "questions: cannot read the answers of $rel"
+        while IFS= read -r line; do
+          if [[ "$line" =~ ^A[0-9]+:\  ]]; then lines+="$line"$'\n'; fi
+        done < <(printf '%s\n' "$view")
+        if [ -n "$lines" ]; then
+          # the copy first: _dadd checks each of its steps itself and exits 2 on a failure, so questions.md is
+          # removed only after it returned 0
+          _dadd "$id" questions "$root" < <(printf '%s' "$lines") >/dev/null ||
+            die "questions: the answers were not copied; $rel kept"
+        fi
+      fi
+      rm -f -- "$file" 2>/dev/null && [ ! -e "$file" ] || die "questions: cannot remove $rel"
+      echo "questions: removed $rel"
+      ;;
+    *) die "questions: usage: task-draft-state questions <id> put|answers|done" ;;
+  esac
+}
+
+_qput() {
+  local id="$1" root="$2" rel="$3" role="" spec="" have_spec="" body n
+  shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --role) [ $# -ge 2 ] || die "questions: --role takes a value"; role="$2"; shift 2 ;;
+      --spec) [ $# -ge 2 ] || die "questions: --spec takes a value"; spec="$2"; have_spec=1; shift 2 ;;
+      *) die "questions: unknown argument '$1'" ;;
+    esac
+  done
+  case "$role" in
+    task-egm | task-elephant | task-draft) ;;
+    *) die "questions: --role must be task-egm, task-elephant or task-draft, not '$role'" ;;
+  esac
+  [ -n "$have_spec" ] && [ -n "$spec" ] || die "questions: --spec takes a path or none"
+  # The blocks, three lines each, in order; blank lines, a WAITING <N> line and any other text are skipped.
+  body=$(awk '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    function bad(m) { print "ERR\t" m; err = 1; exit }
+    { sub(/\r$/, "") }
+    /^QUESTION:/ { if (st != 0) bad("a block lacks its OPTIONS: line"); q = trim(substr($0, 10)); if (q == "") bad("a QUESTION: line is empty"); st = 1; next }
+    /^CONTEXT:/ { if (st != 1) bad("a CONTEXT: line has no QUESTION: line before it"); c = trim(substr($0, 9)); if (c == "") bad("a CONTEXT: line is empty"); st = 2; next }
+    /^OPTIONS:/ { if (st != 2) bad("an OPTIONS: line has no CONTEXT: line before it"); o = trim(substr($0, 9)); if (o == "") bad("an OPTIONS: line is empty"); n++
+                  printf "\n## Q%d\nQuestion: %s\nContext: %s\nOptions: %s\nA:\n", n, q, c, o; st = 0; next }
+    END { if (err) exit; if (st != 0) { print "ERR\ta block lacks one of its three lines"; exit } if (n == 0) print "ERR\tno QUESTION: block on stdin"; else print "N\t" n }
+  ') || die "questions: cannot read the blocks on stdin"
+  case "$body" in
+    ERR*) die "questions: ${body#ERR$'\t'}" ;;
+    *ERR$'\t'*) die "questions: ${body##*ERR$'\t'}" ;;
+  esac
+  case "$body" in *N$'\t'*) ;; *) die "questions: the blocks on stdin gave no count" ;; esac
+  n=${body##*N$'\t'}
+  body=${body%N$'\t'*}
+  _safe_write questions "$root" "$rel" < <(
+    printf '# task-draft %s: open questions\nRole: %s\nSpec: %s\n\n' "$id" "$role" "$spec"
+    printf 'Write each answer after `A:` on the line under its question (one of the options, or your own text; `ok` takes the first option, the proposed answer). Then run `/junkd:task-draft %s` or the orch command again.\n' "$id"
+    printf '%s' "$body"
+  )
+  echo "$n questions in $rel"
+}
+
+# _dadd <id> <source> <root>: append the A<n>: lines of stdin to .orch/decisions.md.
+_dadd() {
+  local id="$1" source="$2" root="$3" file src max old have_old blocks n today
+  file="$root/.orch/decisions.md"
+  case "$source" in
+    chat) src=chat ;;
+    questions) src="questions.md of task $id" ;;
+    D[0-9]*) [[ "$source" =~ ^D[0-9]+$ ]] || die "decisions: --source must be chat, questions or D<n>, not '$source'"; src="spec $source" ;;
+    *) die "decisions: --source must be chat, questions or D<n>, not '$source'" ;;
+  esac
+  [ ! -L "$file" ] || die "decisions: .orch/decisions.md is a symlink; left unchanged"
+  # every read runs before the write, each checked: a failed read never reaches _safe_write
+  max=0 old="" have_old=""
+  if [ -f "$file" ]; then
+    have_old=1
+    max=$(awk 'match($0, /^## R[0-9]+[ \t]/) { v = substr($0, 5, RLENGTH - 5) + 0; if (v > m) m = v } END { print m + 0 }' "$file") ||
+      die "decisions: cannot read .orch/decisions.md"
+    [[ "$max" =~ ^[0-9]+$ ]] || die "decisions: .orch/decisions.md gave no R number"
+    # the old text with its trailing blank lines cut
+    old=$(awk '{ sub(/\r$/, ""); line[NR] = $0 } END { last = NR; while (last > 0 && line[last] ~ /^[ \t]*$/) last--; for (i = 1; i <= last; i++) print line[i] }' "$file") ||
+      die "decisions: cannot read .orch/decisions.md"
+  fi
+  today=$(date +%F) && [ -n "$today" ] || die "decisions: cannot read today's date"
+  blocks=$(awk -v start="$max" -v day="$today" -v src="$src" '
+    { sub(/\r$/, "") }
+    /^A[0-9]+: / {
+      rest = $0; sub(/^A[0-9]+: /, "", rest)
+      i = index(rest, " => "); if (i == 0) next
+      q = substr(rest, 1, i - 1); a = substr(rest, i + 4)
+      k++; printf "%s## R%d (%s) %s\nA: %s\nsource: %s\n", (k > 1 ? "\n" : ""), start + k, day, q, a, src
+    }
+    END { print "N\t" k + 0 }
+  ') || die "decisions: cannot read the A<n>: lines on stdin"
+  case "$blocks" in *N$'\t'*) ;; *) die "decisions: the A<n>: lines on stdin gave no count" ;; esac
+  n=${blocks##*N$'\t'}
+  blocks=${blocks%N$'\t'*}
+  [ "$n" -gt 0 ] || die "decisions: no A<n>: <question> => <answer> line on stdin"
+  # the old text (if any), a blank line, then the new blocks; a register with no file starts with its title
+  _safe_write decisions "$root" .orch/decisions.md < <(
+    if [ -n "$have_old" ]; then
+      if [ -n "$old" ]; then printf '%s\n' "$old"; fi
+      printf '\n'
+    else
+      printf '# Decisions\n\n'
+    fi
+    printf '%s' "$blocks"
+  )
+  echo "decisions: $n added to .orch/decisions.md"
+}
+
+_decisions() {
+  local root file
+  if [ "${1:-}" = add ]; then
+    shift
+    local id="${1:-}" source="" have=""
+    [ -n "$id" ] || die "decisions: usage: task-draft-state decisions add <id> --source <chat|questions|D<n>>"
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --source) [ $# -ge 2 ] || die "decisions: --source takes a value"; source="$2"; have=1; shift 2 ;;
+        *) die "decisions: unknown argument '$1'" ;;
+      esac
+    done
+    _check_id "$id" decisions
+    [ -n "$have" ] || die "decisions: --source must be chat, questions or D<n>"
+    root=$(_root)
+    _dadd "$id" "$source" "$root"
+    return
+  fi
+  local match="" have_match=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --match) [ $# -ge 2 ] || die "decisions: --match takes a text"; match="$2"; have_match=1; shift 2 ;;
+      *) die "decisions: unknown argument '$1'" ;;
+    esac
+  done
+  root=$(_root)
+  file="$root/.orch/decisions.md"
+  if [ ! -f "$file" ]; then
+    [ -z "$have_match" ] || return 1
+    return 0
+  fi
+  if [ -z "$have_match" ]; then cat -- "$file"; return 0; fi
+  awk -v needle="$match" '
+    function flush(   i, last) {
+      if (nb == 0) return
+      if (hit) {
+        last = nb; while (last > 1 && blk[last] ~ /^[ \t]*$/) last--
+        if (found) print ""
+        for (i = 1; i <= last; i++) print blk[i]
+        found = 1
+      }
+      nb = 0; hit = 0
+    }
+    BEGIN { lneedle = tolower(needle) }
+    { sub(/\r$/, "") }
+    /^## / { flush(); nb = 1; blk[1] = $0; if (index(tolower($0), lneedle)) hit = 1; next }
+    nb { blk[++nb] = $0; if ($0 ~ /^A:/ && index(tolower($0), lneedle)) hit = 1 }
+    END { flush(); exit found ? 0 : 1 }
+  ' "$file"
+}
+
+case "${1:-}" in
+  settings) shift; _settings "$@" ;;
+  egm) shift; _egm "$@" ;;
+  models) shift; _models "$@" ;;
+  questions) shift; _questions "$@" ;;
+  decisions) shift; _decisions "$@" ;;
+  "" | -h | --help | help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0" ;;
+  *) die "unknown command '$1'" ;;
+esac

@@ -1,0 +1,473 @@
+#!/usr/bin/env python3
+"""task-probe — one comprehension probe of /junkd:task-draft (the goldfish half of the sub-loop).
+
+  task-probe <spec> --entry '<json>' --round <n> --out <dir> [--root <dir>] [--files-from <file>] [--cap-bytes 204800] [--timeout 300]
+  task-probe <spec> --list --out <dir> [--root <dir>] [--files-from <file>] [--cap-bytes 204800]
+  task-probe <spec> --judge-input <answer> --entry '<json>' --round <n> --out <dir> [--root <dir>]
+  task-probe <spec> --ac-hash
+
+The prompt is a fixed header, the spec, the repo files the spec names (backticked or linked tokens that are existing
+paths; inlined only when tracked, not git-ignored, inside the root, not the spec, on the extension allowlist or an
+extensionless #! script, not matched by DENY, in --files-from when given, and within --cap-bytes in all), then the
+five-question questionnaire. It is written to <out>/probe-r<n>-<class>-<slug>.prompt.md.
+
+- harness claude: the prompt path is printed, exit 10 (the elephant hands it to a junkd:task-goldfish).
+- any other harness: bin/harness-<name> runs in an empty temp dir under --timeout with a scrubbed env, the prompt
+  on stdin and in prompt.md. The answer goes to <stem>.md, the adapter's JSON line to <stem>.meta.json, the judge
+  input to <stem>.judge.md; the answer path is printed, exit 0. A non-zero adapter exit, a timeout, an empty
+  answer or an answer that is a terminal-UI screen dump (an ESC byte, a rounded box corner on 2 or more lines,
+  or `Esc exit` / `Enter select`) is exit 20 (`adapter exit <rc>` / `timeout` / `empty answer` / `tui output` on
+  stderr).
+--list writes <out>/inline-files.txt and prints the inlined paths, the `(omitted: size cap) <path>` lines and
+`total <bytes>`. --judge-input writes <stem>.judge.md from the spec and the answer file. --ac-hash prints the
+SHA-256 of the `## Acceptance criteria` section. Exit 2: bad arguments or entry, or an <out> outside the repo or a
+symlinked target; exit 3: the spec has no acceptance criteria. Nothing here reads a credential.
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+CLASSES = ['A', 'B', 'C', 'F']
+RESERVED = ['D', 'E']
+HARNESSES = ['claude', 'omp', 'opencode', 'codex', 'kimi']
+EFFORTS = ['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']
+LEVELS = ['-', 'off', 'on', 'low', 'medium', 'high']
+PASSES = ['suffix', 'param']
+CLAUDE_MODELS = ('haiku', 'sonnet', 'opus', 'fable')
+DEFAULT_CAP = 204800
+CLAUDE_EXIT = 10
+INFRA_EXIT = 20
+# An answer that is a terminal-UI screen dump (a CLI that opened its interactive UI), not prose: rejected as `tui output`.
+# TUI frames use rounded corners; `tree` output (├── └── │) does not, so a file tree in an answer passes.
+TUI_CORNERS = frozenset("╭╮╰╯")
+TUI_CORNER_LINES = 2
+TUI_MARKERS = ("Esc exit", "Enter select")
+# Never inlined, whatever the spec names: credentials and key material, even inside the repo.
+DENY = re.compile(r"(^|/)(\.env(\..*)?|.*token.*|.*secret.*|.*credential.*|id_[a-z0-9]+|.*\.(pem|key|p12|pfx))$", re.I)
+ALLOWED_EXT = ('.md', '.txt', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.py', '.sh', '.bash', '.go', '.rs',
+               '.rb', '.java', '.kt', '.swift', '.c', '.h', '.cpp', '.hpp', '.cs', '.css', '.scss', '.html', '.toml',
+               '.yml', '.yaml', '.sql')
+SCRUB_PREFIXES = ('CLAUDE', 'ORCA_', 'AWS_')
+SCRUB_KEYS = ('HF_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'GOOGLE_APPLICATION_CREDENTIALS', 'SSH_AUTH_SOCK')
+TOKEN_RE = re.compile(r"`([^`\n]+)`|\]\(([^)\s]+)\)")
+HEADER = "You have no tools and no history. Read the spec and the files below, then answer the five questions."
+QUESTIONNAIRE = ("(a) What do I change?  (b) Where (files, functions)?  (c) Which tests prove it?\n"
+                 "(d) What is out of scope?  (e) What is unclear or contradictory?")
+
+
+class Refused(Exception):
+    """An exit-2 refusal with its message."""
+
+
+def parse_entry(raw):
+    """The entry JSON checked with the rules of egm.ts parseEntry; (entry, None) or (None, error)."""
+    try:
+        value = json.loads(re.sub(r"\s*\r?\n\s*", " ", raw))
+    except ValueError as e:
+        return None, "JSON: " + re.sub(r"\s+", " ", str(e)).strip()
+    if not isinstance(value, dict):
+        return None, "JSON: oczekiwany jeden obiekt {…}"
+    for key in ('class', 'id', 'harness'):
+        v = value.get(key)
+        if v is None or (isinstance(v, str) and v.strip() == ''):
+            return None, f"JSON: brak pola {key}"
+    cls = value['class']
+    if isinstance(cls, str) and cls in RESERVED:
+        return None, f"JSON: class {cls} to rezerwa, użyj A, B, C albo F"
+    if not (isinstance(cls, str) and cls in CLASSES):
+        return None, f"JSON: class musi być A, B, C albo F, jest {json.dumps(cls, ensure_ascii=False)}"
+    if not isinstance(value['id'], str):
+        return None, "JSON: id musi być tekstem"
+    if not (isinstance(value['harness'], str) and value['harness'] in HARNESSES):
+        return None, "JSON: harness spoza listy: " + ", ".join(HARNESSES)
+    effort = value.get('effort', 'default')
+    if not (isinstance(effort, str) and effort in EFFORTS):
+        return None, "JSON: effort spoza listy: " + ", ".join(EFFORTS)
+    t = value.get('thinking')
+    if 'thinking' not in value:
+        level, pas = '-', None
+    elif isinstance(t, dict):
+        level, pas = t.get('level'), t.get('pass')
+    else:
+        level, pas = t, None
+    if not (isinstance(level, str) and level in LEVELS):
+        return None, "JSON: thinking.level spoza listy: " + ", ".join(LEVELS)
+    pas = 'suffix' if pas is None else pas
+    if not (isinstance(pas, str) and pas in PASSES):
+        return None, "JSON: thinking.pass musi być suffix albo param"
+    return {'class': cls, 'id': value['id'].strip(), 'harness': value['harness'], 'effort': effort,
+            'thinking': {'level': level, 'pass': pas}}, None
+
+
+def under(path, root):
+    path, root = os.path.realpath(path), os.path.realpath(root)
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def git_root():
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def ac_section(text):
+    """The `## Acceptance criteria` section's lines, heading included, to the next `## ` heading; None when absent."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if re.match(r"^##\s+Acceptance criteria\s*$", line.rstrip("\r"), re.I):
+            j = i + 1
+            while j < len(lines) and not lines[j].startswith("## "):
+                j += 1
+            return lines[i:j]
+    return None
+
+
+def has_acs(section):
+    return section is not None and any(re.search(r"\bAC\d+:", line) for line in section)
+
+
+def named_section(text, pattern):
+    """The body of the first `## ` section whose heading matches pattern, verbatim and trimmed; None when absent."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("## ") and re.match(pattern, line[3:].strip(), re.I):
+            j = i + 1
+            while j < len(lines) and not lines[j].startswith("## "):
+                j += 1
+            return "\n".join(lines[i + 1:j]).strip()
+    return None
+
+
+def tracked(root):
+    r = subprocess.run(["git", "-C", root, "ls-files", "-z"], capture_output=True, check=False)
+    return set(p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p) if r.returncode == 0 else set()
+
+
+def ignored(root, rel):
+    r = subprocess.run(["git", "-C", root, "check-ignore", "--no-index", "-q", "--", rel], capture_output=True, check=False)
+    return r.returncode != 1
+
+
+def ext_ok(real):
+    ext = os.path.splitext(real)[1].lower()
+    if ext:
+        return ext in ALLOWED_EXT
+    try:
+        with open(real, "rb") as f:
+            return f.readline().startswith(b"#!")
+    except OSError:
+        return False
+
+
+def named_files(spec_text, spec_path, root):
+    """The existing repo files the spec names (backticked or linked tokens), first mention first: (rel, real)."""
+    seen, out = set(), []
+    root_real = os.path.realpath(root)
+    for m in TOKEN_RE.finditer(spec_text):
+        word = (m.group(1) or m.group(2) or "").strip()
+        if not word or "://" in word:
+            continue
+        for base in (root, os.path.dirname(os.path.abspath(spec_path))):
+            cand = os.path.normpath(os.path.join(base, word))
+            if not os.path.isfile(cand):
+                continue
+            real = os.path.realpath(cand)
+            if real not in seen:
+                seen.add(real)
+                out.append((os.path.relpath(real, root_real), real))
+            break
+    return out
+
+
+def select_files(spec_text, spec_path, root, cap, files_from):
+    """(inlined [(rel, real, size)], omitted [rel], named [rel]): the inline-file rules."""
+    spec_real = os.path.realpath(spec_path)
+    in_git = tracked(root)
+    inlined, omitted, named, left = [], [], [], cap
+    for rel, real in named_files(spec_text, spec_path, root):
+        if not under(real, root):
+            continue
+        named.append(rel)
+        if real == spec_real or rel not in in_git or ignored(root, rel) or not ext_ok(real) or DENY.search(rel):
+            continue
+        if files_from is not None and rel not in files_from:
+            continue
+        size = os.path.getsize(real)
+        if size > left:
+            omitted.append(rel)
+            continue
+        left -= size
+        inlined.append((rel, real, size))
+    return inlined, omitted, named
+
+
+def fence_for(body):
+    longest = max((len(r) for r in re.findall(r"`+", body)), default=0)
+    return "`" * max(3, longest + 1)
+
+
+def build_prompt(spec_text, inlined, omitted):
+    parts = [HEADER, "", spec_text.rstrip(), ""]
+    for rel, real, _ in inlined:
+        with open(real, encoding="utf-8", errors="replace") as f:
+            body = f.read().rstrip()
+        fence = fence_for(body)
+        parts += [f"{rel}:", fence, body, fence, ""]
+    for rel in omitted:
+        parts.append(f"(omitted: size cap) {rel}")
+    if omitted:
+        parts.append("")
+    parts.append(QUESTIONNAIRE)
+    return "\n".join(parts) + "\n"
+
+
+def judge_text(spec_text, inlined, named, answer):
+    section = ac_section(spec_text)
+    acs = "\n".join(section[1:]).strip()
+    first = [rel for rel, _, _ in inlined]
+    files = first + [rel for rel in named if rel not in first]
+    oos = named_section(spec_text, r"^(non-goals|out of scope)$")
+    return "\n".join(["## Acceptance criteria", acs, "", "## Files", "\n".join(f"- `{r}`" for r in files) or "(none)", "",
+                      "## Out of scope", oos or "(none)", "", "## Answer", answer.rstrip(), ""])
+
+
+def safe_write(path, text, root):
+    """Write text to path through a mkstemp file in its folder; a symlink there or a folder outside the root refuses."""
+    d = os.path.dirname(path)
+    if not under(d, root):
+        raise Refused(f"task-probe: {path} resolves outside the repo")
+    if os.path.islink(path):
+        raise Refused(f"task-probe: {path} is a symlink; left unchanged")
+    if os.path.lexists(path):
+        try:
+            os.close(os.open(path, os.O_RDONLY | os.O_NOFOLLOW))
+        except OSError:
+            raise Refused(f"task-probe: {path} is a symlink or cannot be read; left unchanged")
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(tmp, 0o666 & ~mask)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def scrubbed_env():
+    return {k: v for k, v in os.environ.items() if not k.startswith(SCRUB_PREFIXES) and k not in SCRUB_KEYS}
+
+
+def run_adapter(entry, prompt, timeout):
+    """(rc, stdout, argv, wall): the harness adapter in an empty temp dir; rc 124 on a timeout."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    adapter = os.path.join(here, "harness-" + entry['harness'])
+    work = tempfile.mkdtemp(prefix='junkd-probe-')
+    try:
+        pfile = os.path.join(work, "prompt.md")
+        with open(pfile, "w", encoding="utf-8") as f:
+            f.write(prompt)
+        argv = [adapter, "--model", entry['id'], "--effort", entry['effort'], "--thinking", entry['thinking']['level'],
+                "--pass", entry['thinking']['pass'], "--prompt-file", pfile]
+        t0 = time.monotonic()
+        try:
+            p = subprocess.Popen(argv, cwd=work, env=scrubbed_env(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 start_new_session=True)
+        except OSError:
+            return 127, "", argv, 0
+        try:
+            out, _ = p.communicate(prompt.encode("utf-8"), timeout=timeout)
+            rc = p.returncode
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            out, _ = p.communicate()
+            rc = 124
+        return rc, out.decode("utf-8", "replace"), argv, round(time.monotonic() - t0, 2)
+    finally:
+        for name in os.listdir(work):
+            try:
+                os.unlink(os.path.join(work, name))
+            except OSError:
+                pass
+        try:
+            os.rmdir(work)
+        except OSError:
+            pass
+
+
+def split_meta(stdout):
+    """(answer, meta fields): the adapter's last stdout line as JSON, or null fields and meta_error."""
+    lines = stdout.rstrip("\n").split("\n")
+    keys = ("wall_s", "tokens_in", "tokens_out", "cost")
+    if lines and lines[-1].strip():
+        try:
+            data = json.loads(lines[-1])
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            return "\n".join(lines[:-1]), {k: data.get(k) for k in keys}
+    meta = {k: None for k in keys}
+    meta["meta_error"] = "no json line"
+    return stdout, meta
+
+
+def tui_output(answer):
+    """True when the answer looks like a terminal-UI screen dump rather than an answer."""
+    if "\x1b" in answer:
+        return True
+    if any(m in answer for m in TUI_MARKERS):
+        return True
+    return sum(1 for line in answer.split("\n") if TUI_CORNERS.intersection(line)) >= TUI_CORNER_LINES
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="task-probe", description="one comprehension probe of /junkd:task-draft")
+    ap.add_argument("spec")
+    ap.add_argument("--entry")
+    ap.add_argument("--round", dest="round_")
+    ap.add_argument("--out")
+    ap.add_argument("--root")
+    ap.add_argument("--files-from")
+    ap.add_argument("--cap-bytes", default=str(DEFAULT_CAP))
+    ap.add_argument("--timeout", default="300")
+    ap.add_argument("--list", action="store_true")
+    ap.add_argument("--judge-input")
+    ap.add_argument("--ac-hash", action="store_true")
+    try:
+        a = ap.parse_args(argv)
+    except SystemExit as e:
+        return 2 if e.code else 0
+
+    def bad(msg):
+        print(f"task-probe: {msg}", file=sys.stderr)
+        return 2
+
+    if sum(bool(x) for x in (a.list, a.judge_input is not None, a.ac_hash)) > 1:
+        return bad("--list, --judge-input and --ac-hash exclude each other")
+    if not os.path.isfile(a.spec):
+        return bad(f"no spec file {a.spec}")
+    with open(a.spec, encoding="utf-8", errors="replace") as f:
+        spec_text = f.read()
+    section = ac_section(spec_text)
+
+    if a.ac_hash:
+        if not has_acs(section):
+            print(f"task-probe: {a.spec} has no ## Acceptance criteria list", file=sys.stderr)
+            return 3
+        print(hashlib.sha256("\n".join(section).encode("utf-8")).hexdigest())
+        return 0
+
+    if not re.fullmatch(r"\d+", a.cap_bytes or ""):
+        return bad("--cap-bytes takes a whole number")
+    if not re.fullmatch(r"[1-9]\d*", a.timeout or ""):
+        return bad("--timeout takes a whole number of seconds, 1 or more")
+    cap, timeout = int(a.cap_bytes), int(a.timeout)
+    if not a.out:
+        return bad("--out is required")
+    root = a.root or git_root()
+    if not root or not os.path.isdir(root):
+        return bad("no repo root (run inside a git repository or pass --root)")
+    root = os.path.realpath(root)
+    if not under(a.out, root):
+        return bad(f"{a.out} resolves outside the repo")
+    files_from = None
+    if a.files_from is not None:
+        try:
+            with open(a.files_from, encoding="utf-8") as f:
+                files_from = {line.strip() for line in f if line.strip()}
+        except OSError:
+            return bad(f"cannot read --files-from {a.files_from}")
+
+    entry = None
+    if not a.list:
+        if a.entry is None:
+            return bad("--entry is required")
+        entry, err = parse_entry(a.entry)
+        if err:
+            return bad(err)
+        if a.round_ is None or not re.fullmatch(r"[1-9]\d*", a.round_):
+            return bad("--round takes a whole number, 1 or more")
+        if entry['harness'] == 'claude' and entry['id'] not in CLAUDE_MODELS:
+            return bad(f"harness claude takes haiku, sonnet, opus or fable, not {entry['id']}")
+        if not has_acs(section):
+            print(f"task-probe: {a.spec} has no ## Acceptance criteria list", file=sys.stderr)
+            return 3
+
+    try:
+        os.makedirs(a.out, exist_ok=True)
+    except OSError as e:
+        return bad(f"cannot make {a.out}: {e.strerror}")
+    if not under(a.out, root):
+        return bad(f"{a.out} resolves outside the repo")
+    out = a.out
+    inlined, omitted, named = select_files(spec_text, a.spec, root, cap, files_from)
+
+    try:
+        if a.list:
+            safe_write(os.path.join(out, "inline-files.txt"), "".join(rel + "\n" for rel, _, _ in inlined), root)
+            for rel, _, _ in inlined:
+                print(rel)
+            for rel in omitted:
+                print(f"(omitted: size cap) {rel}")
+            print(f"total {sum(size for _, _, size in inlined)}")
+            return 0
+
+        stem = os.path.join(out, f"probe-r{int(a.round_)}-{entry['class']}-{re.sub(r'[^A-Za-z0-9]+', '-', entry['id'])}")
+        if a.judge_input is not None:
+            if not os.path.isfile(a.judge_input):
+                return bad(f"no answer file {a.judge_input}")
+            with open(a.judge_input, encoding="utf-8", errors="replace") as f:
+                answer = f.read()
+            safe_write(stem + ".judge.md", judge_text(spec_text, inlined, named, answer), root)
+            print(stem + ".judge.md")
+            return 0
+
+        prompt = build_prompt(spec_text, inlined, omitted)
+        safe_write(stem + ".prompt.md", prompt, root)
+        if entry['harness'] == 'claude':
+            print(stem + ".prompt.md")
+            return CLAUDE_EXIT
+        # the targets are checked before the adapter runs, so a refusal never costs a call
+        for suffix in (".md", ".meta.json", ".judge.md"):
+            if os.path.islink(stem + suffix):
+                raise Refused(f"task-probe: {stem + suffix} is a symlink; left unchanged")
+        rc, stdout, run_argv, wall = run_adapter(entry, prompt, timeout)
+        answer, meta = split_meta(stdout)
+        record = {"entry": entry, "round": int(a.round_), "argv": run_argv, "exit": rc,
+                  "files": [rel for rel, _, _ in inlined], "probe_wall_s": wall, **meta}
+        safe_write(stem + ".meta.json", json.dumps(record, indent=2, ensure_ascii=False) + "\n", root)
+        reason = None
+        if rc == 124:
+            reason = "timeout"
+        elif rc != 0:
+            reason = f"adapter exit {rc}"
+        elif not answer.strip():
+            reason = "empty answer"
+        elif tui_output(answer):
+            reason = "tui output"
+        if reason:
+            print(f"task-probe: {reason}", file=sys.stderr)
+            return INFRA_EXIT
+        safe_write(stem + ".md", answer.rstrip("\n") + "\n", root)
+        safe_write(stem + ".judge.md", judge_text(spec_text, inlined, named, answer), root)
+        print(stem + ".md")
+        return 0
+    except Refused as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

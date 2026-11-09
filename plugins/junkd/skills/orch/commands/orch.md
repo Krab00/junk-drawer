@@ -1,7 +1,7 @@
 ---
 description: "Project-agnostic orchestration loop: pick tasks from the canonical store, delegate implementation + verification to subagents, gate every acceptance criterion on tool evidence, round-cap the fix loop, open draft PRs. Config-driven via .orch/config.md. Usage: /junkd:orch <free text> | <ID...> | batch [N] | chain [N] | all [--base <b>] [--rounds R] [--deep] [--single-pr[=<b>]]"
 argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel | watchdog [on|off]] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-deps:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-deps:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit, Bash(${CLAUDE_PLUGIN_ROOT}/bin/task-draft-state:*), Skill, AskUserQuestion, SendMessage
 ---
 
 # /junkd:orch — project-agnostic orchestration loop
@@ -98,7 +98,7 @@ for a human — never merge it yourself, or the run's record is lost when the wo
 ## Modes (parse from `$ARGUMENTS`)
 
 - **`/junkd:orch <free text>`** — *adhoc single task*: `orch-state new <ID> <title>` (ID like
-  `ADHOC-1`), write the description from the prompt, run the freeze ladder (§2)
+  `ADHOC-1`) (while egm_enabled is on: see §1b Task drafting (egm); orch-state new is then not run), write the description from the prompt, run the freeze ladder (§2)
   **interactively** (show criteria, get approval), then the standard loop for that one task.
 - **`/junkd:orch <ID> [<ID>...]`** — explicit tasks from the store (skip selection; still enforce deps).
 - **`/junkd:orch batch [N]`** — up to N independent tasks in parallel (default N=3). Pick tasks with
@@ -113,7 +113,7 @@ instead of config `default_base`); `--deep` (force `lead-implementer` fan-out �
 **Single-PR mode**).
 
 Full autonomous drain: **`/loop /junkd:orch all`** — each iteration a fresh cycle, state in the task
-files + git; the loop keys off the final `BACKLOG:` line and stops on `DRAINED` or `BLOCKED`.
+files + git; the loop keys off the final `BACKLOG:` line and stops on `DRAINED`, `BLOCKED` or `WAITING`.
 
 ## Loop
 
@@ -131,6 +131,46 @@ files + git; the loop keys off the final `BACKLOG:` line and stops on `DRAINED` 
    a known task id is a human prerequisite → list it in the summary, don't auto-run it.
 4. **Never batch two tasks that would touch the same files** — split them across batches or run
    `chain`. Pick up to N eligible tasks; `orch-state set <id> in_progress` for each.
+
+### 1b. Task drafting (egm)
+
+On Claude Code, run
+`${CLAUDE_PLUGIN_ROOT}/bin/task-draft-state settings` once per run. On a host
+without junkd userConfig (Codex, Kimi Code, OpenCode) this rule is off; there
+task-draft runs only when the user invokes it. While `enabled=true`, a task is drafted before the freeze ladder reads it when its
+task file is missing, or when it was `todo` when §1 picked it (§1 step 4 has
+just set it `in_progress`) and it has no `spec:` key and no
+`## Verification` section. Any other task is frozen or drafted; never draft
+it again.
+
+*   Free-text mode: pick the id the mode picks (`ADHOC-n`, one above the
+    highest existing), do **not** run `orch-state new`, write the prompt to
+    `.orch/taskdraft/<id>/input.md`, and run
+    `/junkd:task-draft <id> .orch/taskdraft/<id>/input.md`.
+*   A task file that exists (hand-written, or from `orch-sync pull`): copy its
+    `## Description` body to `.orch/taskdraft/<id>/input.md` and run
+    `/junkd:task-draft <id> .orch/taskdraft/<id>/input.md`.
+*   In `/loop`, `batch` and `all`, append `--unattended`. In every other
+    mode, task-draft asks its open questions through you, one batch per
+    gate: ask the user and wait for the answer. Never answer a task-draft
+    question yourself.
+*   Draft one task at a time. When a task-draft stops (unresolved, failed,
+    no EGM) and the task file exists, set the task `blocked`, append the stop
+    line under the reason `needs-spec`, and report it under
+    `BACKLOG: BLOCKED`. In free-text mode, show the stop line and end the run.
+*   When a task-draft ends with
+    `task-draft <id>: waiting: <N> questions in .orch/taskdraft/<id>/questions.md`,
+    stop the run cleanly: run `orch-state set <id> todo`, set every other
+    task this run picked that has not reached the freeze ladder back to
+    `todo` too, start no further task, print the summary, and end with
+    `BACKLOG: WAITING — <id>: <N> questions in .orch/taskdraft/<id>/questions.md`.
+    WAITING wins over REMAINING and BLOCKED. On the next run the task is
+    picked again and task-draft reads the answers. On resume the roles read
+    the decisions register, `.orch/decisions.md`, so a question already
+    answered there or in the spec's `## Decisions` is not asked again. Never
+    write `.orch/decisions.md` yourself; task-draft does.
+
+While `enabled=false`, nothing changes.
 
 ### 2. Criteria freeze ladder (runs BEFORE any implementation — criteria are immutable after)
 
@@ -343,9 +383,11 @@ When §6 ran the direction check, quote its `DIRECTION:` line verbatim in the su
 BACKLOG: DRAINED — no `todo` tasks remain
 BACKLOG: REMAINING — <count> (<ids>); resume: /junkd:orch <mode> [N] --base <last-finished-branch>
 BACKLOG: BLOCKED — remaining tasks need a human: <ids + one-line reasons>
+BACKLOG: WAITING — <id>: <N> questions in .orch/taskdraft/<id>/questions.md
 ```
 
 `BLOCKED` (not `REMAINING`) when every remaining non-`done` task is ineligible for human reasons
-— `blocked` after the round cap, or a non-task-id `deps` prerequisite. A `/loop` driver must STOP
-on both `DRAINED` and `BLOCKED`; a human may ask for a retry (then §1 runs `reset-stale --blocked`,
+— `blocked` after the round cap, or a non-task-id `deps` prerequisite. A `/loop` driver must STOP on `DRAINED`, `BLOCKED` and `WAITING`; a human may ask for a retry (then §1 runs `reset-stale --blocked`,
 which turns `blocked` back to `todo` for another attempt).
+
+`WAITING` (wins over `REMAINING` and `BLOCKED`) when a task-draft stopped on open questions (§1b): the user answers them on the `A:` lines of the named file, or runs `/junkd:task-draft <id>` in a session, then resumes the run.

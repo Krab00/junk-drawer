@@ -273,8 +273,9 @@ const MAIN_ROWS = [
   'setting:ctx:enabled', 'setting:ctx:threshold', 'setting:ctx:action',
   'setting:statusline:enabled',
   'setting:tools:enabled',
+  'setting:egm:enabled', 'setting:egm:models',
 ]
-const GROUP_BOXES = ['group:core', 'group:handoff', 'group:orch', 'group:tldr', 'group:ctx', 'group:statusline', 'group:tools']
+const GROUP_BOXES = ['group:core', 'group:handoff', 'group:orch', 'group:tldr', 'group:ctx', 'group:statusline', 'group:tools', 'group:egm']
 
 test('paths: CLAUDE_CONFIG_DIR and HOME unset -> `sh -c echo $HOME`, trimmed, then /.claude', W, async ($, on) => {
   const files: Record<string, string> = {
@@ -723,7 +724,7 @@ test('AC5: the header is ✚ junkd, the marketplace and the short sha of its che
     // its own box that never shrinks, so a long subtitle cannot wrap it ("Plugin" / "s")
     expect((await pane.find({ type: 'Box', key: `title:${heading}` }))?.props.flexShrink, heading).toBe(0)
   }
-  expect((await pane.find({ type: 'Text', text: /^the main settings of/ }))?.text).toBe('the main settings of core, handoff, orch, tldr, ctx, statusline, tools')
+  expect((await pane.find({ type: 'Text', text: /^the main settings of/ }))?.text).toBe('the main settings of core, handoff, orch, tldr, ctx, statusline, tools, egm')
   const mark = (await pane.findAll({ type: 'Text' })).find(t => t.text === '✚ junkd')
   expect(mark?.props.color).toBe('claude')
   expect(mark?.props.bold).toBe(true)
@@ -835,7 +836,7 @@ test('AC2: a tenth plugin has no hotkey; 1-9 stay with the first nine; the pane 
   world(on, files)
   const pane = await openPane($)
   for (const [i, n] of names.entries()) expect((await pane.find({ type: 'Button', key: `plugin:${n}` }))?.props.hotkey, n).toBe(i < 9 ? String(i + 1) : undefined)
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-9 plugin  a-m setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-9 plugin  a-o setting  tab move  q close')
 })
 
 // Values away from the defaults where a default drawn in a value's place would show.
@@ -848,7 +849,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   // Each group: a blank row (marginTop), a dim rule, its name bold in the accent colour; handoff, orch,
   // statusline and tools have `settings ▸`, core, tldr and ctx have no pane.
   expect(await keysOf(pane, 'group:')).toEqual(GROUP_BOXES)
-  for (const group of ['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools']) {
+  for (const group of ['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools', 'egm']) {
     expect((await pane.find({ type: 'Box', key: `group:${group}` }))?.props.marginTop, group).toBe(1)
     const nodes = await pane.findAll({ type: 'Text' })
     const at = nodes.findLastIndex(t => t.text === group)
@@ -896,7 +897,7 @@ test("AC3: Settings draws every group's main rows (enabled first) with their val
   expect((await pane.find({ type: 'Button', key: 'set:orch:guard=always' }))?.text).toBe('always')
   expect((await pane.find({ key: 'set:core:output_style=ste' }))?.text).toBe(' ste ')
   expect((await pane.find({ type: 'Button', key: 'set:core:output_style=off' }))?.text).toBe('off')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-m setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-o setting  tab move  q close')
 
   // Each write goes to its group's row through the group's set: a flip sends the other state, a number as typed
   // (the group coerces and validates it), a choice its option.
@@ -1034,7 +1035,7 @@ test('AC5: with no other plugin on, /junkd opens the set with Plugins, every set
   expect(await pane.find({ key: 'no-settings' })).toBeUndefined()
   expect((await pane.find({ type: 'Text', text: '/junkd' }))?.text).toBe('/junkd')
   expect((await pane.find({ key: 'note' }))?.text).toBe('')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-m setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys 1-4 plugin  a-o setting  tab move  q close')
 })
 
 test('AC6: PromptHint with nothing beneath (next throws) -> the toggle alone, and it still opens', withOptions({ handoff_segment: false }), async ($, on) => {
@@ -1099,7 +1100,7 @@ test('AC2: no marketplace.json anywhere -> the error note and no plugin rows; Se
   expect(await keysOf(pane, 'setting:')).toEqual(MAIN_ROWS)
   expect(await pane.find({ key: 'no-settings' })).toBeUndefined()
   expect((await pane.find({ type: 'Text', text: 'No commands.' }))?.text).toBe('No commands.')
-  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-m setting  tab move  q close')
+  expect((await pane.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-o setting  tab move  q close')
 })
 
 test('AC2: a broken marketplace.json is the note; an empty object draws no rows and the default name', W, async ($, on) => {
@@ -1118,7 +1119,7 @@ test('AC2: a broken marketplace.json is the note; an empty object draws no rows 
   expect((await pane3.find({ key: 'note' }))?.text).toBe('')
   expect(await keysOf(pane3, 'plugin-row:')).toEqual([])
   expect((await pane3.find({ type: 'Text', text: /junk-drawer$/ }))?.text).toBe('✚ junkd  junk-drawer')
-  expect((await pane3.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-m setting  tab move  q close')
+  expect((await pane3.find({ type: 'Text', text: /^keys/ }))?.text).toBe('keys a-o setting  tab move  q close')
 })
 
 test('AC2: no settings.json yet -> created with enabledPlugins only, the temp file gone', W, async ($, on) => {
@@ -1474,6 +1475,7 @@ const MANIFEST_KEYS = [
   'ctx_enabled', 'ctx_threshold', 'ctx_action', 'ctx_cmd',
   'statusline_enabled', 'statusline_ctx', 'statusline_branch', 'statusline_worktree', 'statusline_model', 'statusline_effort', 'statusline_limits',
   'tools_enabled', 'tools_refresh', 'tools_agents_only',
+  'egm_enabled', 'egm_models',
 ]
 
 test('$.junkd.schema() is the manifest rows: keys, groups and fields, in order, each feature group led by enabled', W, async ($, on) => {
@@ -1486,8 +1488,8 @@ test('$.junkd.schema() is the manifest rows: keys, groups and fields, in order, 
     expect(typeof f.default, f.key).toBe(f.type)
     expect(f.title, f.key).toMatch(/\S/)
   }
-  expect([...new Set(schema.map(f => f.group))]).toEqual(['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools'])
-  for (const g of ['handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools']) expect(schema.find(f => f.group === g)?.field, g).toBe('enabled')
+  expect([...new Set(schema.map(f => f.group))]).toEqual(['core', 'handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools', 'egm'])
+  for (const g of ['handoff', 'orch', 'tldr', 'ctx', 'statusline', 'tools', 'egm']) expect(schema.find(f => f.group === g)?.field, g).toBe('enabled')
   expect(schema.find(f => f.key === 'core_output_style')).toMatchObject({ type: 'string', default: 'ste', options: ['ste', 'off'], main: true })
   expect(schema.find(f => f.key === 'core_cache_check_sessions')).toEqual({ key: 'core_cache_check_sessions', group: 'core', field: 'cache_check_sessions', type: 'number', title: 'Cache check: sessions read', default: 10, main: true })
 })

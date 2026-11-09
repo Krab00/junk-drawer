@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# harness-omp — the omp adapter of task-probe (/junkd:task-draft's comprehension sub-loop).
+#   harness-omp --model <id> --effort <e> --thinking <level> --pass <suffix|param> --prompt-file <dir>/prompt.md
+# Runs one omp one-shot in the current directory (task-probe makes it an empty temp dir and applies the timeout) and
+# prints the answer, then one JSON line: {"wall_s":<n>,"tokens_in":null,"tokens_out":null,"cost":null}.
+# The prompt goes in as an @file (an argv string is capped at 128 KiB). Thinking `on` is --thinking=auto; a level
+# with pass=suffix makes the model <id>:<level>, with pass=param --thinking=<level>; `off` is --thinking=off; the
+# effort (not default or none) is --thinking=<effort> only when the thinking level is `-`.
+# Test status: flags checked against `omp --help` (v18.17.0); stub test. "No tools": enforced (--no-tools).
+# It creates no temp dir, applies no timeout and reads no credential.
+set -euo pipefail
+
+model="" effort=default thinking=- pass=suffix prompt=""
+while [ $# -gt 0 ]; do
+  [ $# -ge 2 ] || { echo "harness-omp: $1 takes a value" >&2; exit 2; }
+  case "$1" in
+    --model) model="$2" ;;
+    --effort) effort="$2" ;;
+    --thinking) thinking="$2" ;;
+    --pass) pass="$2" ;;
+    --prompt-file) prompt="$2" ;;
+    *) echo "harness-omp: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+  shift 2
+done
+[ -n "$model" ] && [ -n "$prompt" ] || { echo "harness-omp: --model and --prompt-file are required" >&2; exit 2; }
+
+start=$(date +%s)
+args=(-p --no-tools --no-session --no-title --no-extensions --no-skills --no-rules --no-lsp --no-context-files --cwd .)
+m="$model"
+case "$thinking" in
+  on) args+=(--thinking=auto) ;;
+  low | medium | high)
+    if [ "$pass" = param ]; then args+=("--thinking=$thinking"); else m="$model:$thinking"; fi ;;
+  off) args+=(--thinking=off) ;;
+  -) case "$effort" in default | none) ;; *) args+=("--thinking=$effort") ;; esac ;;
+esac
+args+=("--model=$m" "@$prompt")
+
+set +e
+omp "${args[@]}" </dev/null
+rc=$?
+set -e
+printf '\n{"wall_s":%d,"tokens_in":null,"tokens_out":null,"cost":null}\n' "$(($(date +%s) - start))"
+exit "$rc"

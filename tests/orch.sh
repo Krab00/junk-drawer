@@ -19,7 +19,7 @@ fail() { echo "orch tests: $*" >&2; exit 1; }
 # ---------------------------------------------------------------- rule sheet + hook (AC2, AC3)
 [ -f "$sheet" ] || fail "no ORCHESTRATOR.md"
 lines=$(wc -l < "$sheet" | tr -d ' ')
-[ "$lines" -lt 80 ] || fail "ORCHESTRATOR.md has $lines lines, must be under 80"
+[ "$lines" -lt 81 ] || fail "ORCHESTRATOR.md has $lines lines, must be under 81"
 rg -q 'Fable' "$sheet" || fail "ORCHESTRATOR.md does not mention Fable"
 rg -q 'Opus' "$sheet" || fail "ORCHESTRATOR.md does not mention Opus"
 

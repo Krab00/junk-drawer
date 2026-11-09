@@ -1,7 +1,8 @@
-// The /junkd frame: /junkd, ✚ junkd and q open and close junkd, handoff, orch, statusline, tools and lessons together as
-// tabs (tools only while tools_enabled is on, lessons while orch_enabled and orch_lessons are); the junkd pane has the marketplace's plugins (on/off at user scope), every
-// settings group of this plugin (core, handoff, orch, tldr, ctx, statusline, tools) and the commands. The drawing is
-// junkd-views.tsx, fed closures over `$`.
+// The /junkd frame: /junkd, ✚ junkd and q open and close junkd, handoff, orch, statusline, tools, lessons and egm together
+// as tabs (tools only while tools_enabled is on, lessons while orch_enabled and orch_lessons are, egm while egm_enabled
+// is); the junkd pane has the marketplace's plugins (on/off at user scope), every settings group of this plugin (core,
+// handoff, orch, tldr, ctx, statusline, tools, egm) and the commands. The drawing is junkd-views.tsx, fed closures over
+// `$`. egm.models is drawn dim, titled ` · wymaga enabled`, while egm.enabled is off; its pill shows the stored value.
 // - Plugins: the marketplace's plugins, each on or off in the user's settings.json; junkd is this pane. handoff,
 //   orch, tldr, ctx and statusline are no plugins of their own: each is switched by its group's `enabled` row.
 // - The set: each feature pane through dispatch.ts's showPane/hidePane, marked as the set's (SET_OWNER), so closing
@@ -9,7 +10,7 @@
 //   and q of any pane still the set's, and the engine's close of its tab, call it, so one press closes the whole set.
 // - Settings: the `main` rows of each group in settings.ts order (`enabled` first), read and written through
 //   dispatch.ts; a refusal is the note. `settings ▸` opens the group's pane (handoff on its Settings tab, orch,
-//   statusline, tools on its Agents tab).
+//   statusline, tools on its Agents tab, egm while egm_enabled is on).
 // - Commands: the enabled plugins' slash commands (junkd's own /junkd:* among them) as $.command.list() names them.
 import type { JunkdGroup } from '../types'
 import type { On, RenderInput } from 'claude-code'
@@ -20,14 +21,17 @@ import { panelView, type Command, type Els, type Field, type PluginRow, type Sec
 import { GROUPS, isKey, keyOf, rowsOf } from './settings'
 import { T as Tools } from './tools'
 import { O as Orch } from './orch-lib'
+import { E as EGM } from './egm'
 
 type Json = Record<string, any>
 
 const MARKETPLACE = 'junk-drawer'
 // The groups with a pane of their own, which `settings ▸` opens (the feature panes of the set, set.ts).
 const hasPane = (group: string): group is FeaturePane => (SET as readonly string[]).includes(group)
-// The feature panes the set opens now: tools only while tools_enabled is on, lessons while orch and orch_lessons are.
-const opensNow = (): FeaturePane[] => SET.filter(p => (p !== 'tools' || Tools.enabled) && (p !== 'lessons' || (Orch.enabled && Orch.lessons)))
+// The feature panes the set opens now: tools only while tools_enabled is on, lessons while orch and orch_lessons are,
+// egm while egm_enabled is.
+const opensNow = (): FeaturePane[] =>
+  SET.filter(p => (p !== 'tools' || Tools.enabled) && (p !== 'lessons' || (Orch.enabled && Orch.lessons)) && (p !== 'egm' || EGM.enabled))
 
 let isChanged = false
 let note = ''
@@ -98,9 +102,11 @@ async function readGroups($: $): Promise<Section[]> {
     const fields: Field[] = []
     for (const f of rowsOf(group).filter(f => f.main)) {
       const value = await getSetting($, f.key).catch(() => f.default)
-      fields.push({ key: f.field, type: f.type, title: f.title, ...(f.options ? { options: [...f.options] } : {}), value })
+      const dim = group === 'egm' && f.field === 'models' && !EGM.enabled // works only with egm.enabled on
+      const title = dim ? `${f.title} · wymaga enabled` : f.title
+      fields.push({ key: f.field, type: f.type, title, ...(f.options ? { options: [...f.options] } : {}), value, ...(dim ? { dim } : {}) })
     }
-    groups.push({ group, fields, hasPane: hasPane(group) })
+    groups.push({ group, fields, hasPane: hasPane(group) && (group !== 'egm' || EGM.enabled) })
   }
   return groups
 }

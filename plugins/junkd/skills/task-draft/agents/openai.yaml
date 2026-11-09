@@ -1,0 +1,4 @@
+interface:
+  display_name: "Task draft"
+  short_description: "An orch task through EGM's draft and review, an optional comprehension check, and into the task file"
+  default_prompt: "Use $task-draft to draft orch task T1 through EGM and write its task file."

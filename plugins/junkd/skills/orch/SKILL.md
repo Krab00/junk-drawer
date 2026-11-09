@@ -2,7 +2,7 @@
 name: orch
 description: Orchestrate implementation and independent verification of one task or a backlog using specialized subagents, isolated Git worktrees, evidence gates, fix rounds, and draft pull requests. Use when the user asks to run orch, process task ids, drain a backlog, delegate implementation and verification, or execute batch, chain, all, deep, or single-PR modes.
 argument-hint: "[<free text> | <ID...> | batch [N] | chain [N] | all | panel | dashboard [close]] [--rounds R] [--base <branch>] [--deep] [--single-pr[=<branch>]]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-deps:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-state:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-deps:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-sync:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/orch-watch:*), Bash(git:*), Bash(gh:*), Task, Read, Write, Edit, Bash(${CLAUDE_PLUGIN_ROOT}/bin/task-draft-state:*), Skill, AskUserQuestion, SendMessage
 ---
 
 # Orchestrate tasks
@@ -23,6 +23,7 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 - `watchdog` is a mode of its own, not a run: on a host with no hooks module (Codex, Kimi Code, OpenCode), run `./bin/orch-watch --once` and show its table of this session's agents (agent, role, status, idle, verdict). It only reports: these hosts have no agent stop command, so the live agents it marks `stop, report only` are the ones to stop by hand. `watchdog on|off` there is no mode; say in one line that the switch is the Claude Code module's `orch_watchdog` row.
 - Replace Claude's `Task` operation with your host's subagent mechanism (see below).
 - Read the matching role file under `./roles/` and include its full task-relevant instructions in each agent prompt (Claude Code has them as agent types, see below).
+- While `egm_enabled` is on, run `/junkd:task-draft <id>` for a task that is not yet drafted or frozen, before the criteria freeze ladder; in free-text mode it replaces `orch-state new`. In `/loop`, `batch` and `all` it runs with `--unattended`, and a question ends the run with `BACKLOG: WAITING`. See "Task drafting (egm)" in `commands/orch.md`.
 
 ## Claude Code rules
 
@@ -31,6 +32,7 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 - `/junkd:orch watchdog [on|off]` never reaches this text either: the hooks module prints the agent watchdog's verdict table, or flips `orch_watchdog`. Without the hooks module loaded, run `${CLAUDE_PLUGIN_ROOT}/bin/orch-watch --once` and show its table (report only).
 - The helpers are `${CLAUDE_PLUGIN_ROOT}/bin/orch-state`, `${CLAUDE_PLUGIN_ROOT}/bin/orch-worktree` and `${CLAUDE_PLUGIN_ROOT}/bin/orch-sync`, spelled exactly so wherever the spec says `${CLAUDE_PLUGIN_ROOT}`: on a Fable main loop the junkd guard runs only that bin/ path, with plain arguments.
 - The roles are agent types: `junkd:implementer`, `junkd:lead-implementer`, `junkd:verify-coordinator`, `junkd:ui-reviewer`, `junkd:test-planner`, `junkd:orch-ops`. Spawn them by type without a `model` (theirs is pinned); any other agent needs `model: opus|sonnet|haiku`.
+- task-draft's roles are agent types too: `junkd:task-egm`, `junkd:task-elephant` and `junkd:task-judge` (spawn without a model), and `junkd:task-goldfish` (spawned by the elephant with the model of the registry entry).
 - The settings are the junkd plugin's `orch_*` rows (`/config` under junkd, or `/junkd:orch panel`); `orch-state settings` prints them without the prefix.
 
 ## Codex delegation rules
@@ -45,7 +47,7 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 
 - Subagents = the `Agent` tool (`coder` for implementation/verification, `explore` for read-only scans); parallel batches via `AgentSwarm`. A `coder` subagent can spawn its own children, so `lead-implementer` fan-out (deep mode) works — keep the max depth orchestrator → lead → sub.
 - Subagents have a fixed 30-minute timeout; resume the same agent id on timeout instead of starting over.
-- `/loop /junkd:orch all` has no native equivalent: use `CronCreate` in the same session to re-trigger the loop, or resume manually with the spec's `BACKLOG:` resume line.
+- `/loop /junkd:orch all` has no native equivalent: use `CronCreate` in the same session to re-trigger the loop, or resume manually with the spec's `BACKLOG:` resume line; on `BACKLOG: WAITING`, answer the named questions.md first.
 - Browser-based UI verification (`ui-reviewer`) needs a browser tool (e.g. Playwright MCP); if none is available, state the gap and gate on the remaining checks — never fabricate screenshots.
 - Git mutations (commit, push, `gh pr create`) require explicit user confirmation on this host: ask ONCE per run for a blanket approval covering task branches and draft PRs, then proceed. Never touch the base branch regardless.
 
@@ -55,6 +57,6 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 - Keep the root as the fan-out owner in every mode, deep included — do not assume a subagent can spawn grandchildren.
 - Parallelize by issuing multiple `task` calls in one message, only when the implementers' expected files do not overlap; one `verify-coordinator` task per implemented task, independent from implementation.
 - Browser-based UI verification (`ui-reviewer`) needs a browser tool (e.g. Playwright MCP); if none is available, state the gap and gate on the remaining checks — never fabricate screenshots.
-- `/loop /junkd:orch all` has no native equivalent: resume manually with the spec's `BACKLOG:` resume line.
+- `/loop /junkd:orch all` has no native equivalent: resume manually with the spec's `BACKLOG:` resume line; on `BACKLOG: WAITING`, answer the named questions.md first.
 
 Preserve the specification's immutable-criteria ladder, capability-gated checks, maximum fix rounds, draft-only PR rule, cleanup, lessons, and final `BACKLOG:` state line. Never merge a PR or mark it ready.

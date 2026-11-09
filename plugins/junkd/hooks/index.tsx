@@ -1,4 +1,4 @@
-// Plugin junkd's one hooks module: handoff, orch, tldr, ctx, statusline and tools, the core setting and the /junkd
+// Plugin junkd's one hooks module: handoff, orch, tldr, ctx, statusline, tools and egm, the core setting and the /junkd
 // frame, each in its own files, composed here. A feature file exports `register<Feature>(on, options)` for the hooks only it has, and plain
 // named functions for the rest (see feature.ts); this file holds what is shared:
 // - `$.junkd`, the noun other mods call (types/index.d.ts): schema answers here; get, set, config, open and
@@ -12,9 +12,10 @@
 // - statusline.tsx: the statusline rows, /junkd:statusline, its pane, and bin/statusline-setup on|off.
 // - tools-pane.tsx (with tools.ts and tools-views.tsx): /junkd:tools and its pane, this session's agents over the
 //   repo's worktrees and the tools, MCP servers and skills it used (counted by tool.call and command.run here).
+// - egm-pane.tsx (with egm.ts, egm-views.tsx): the egm settings group and the egm tab (models.json).
 // - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
 // - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
-// - panel.tsx (with set.ts): /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools, lessons);
+// - panel.tsx (with set.ts): /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools, lessons, egm);
 //   a × or q on any pane of the set closes the whole set.
 // - dashboard.tsx (with dashboard.ts): /junkd:dashboard, the orch dashboard's status.js beside a copy of its page.
 // - watchdog.tsx (with watchdog.ts): the agent watchdog of orch, its timer, its ⚠ segment and its prompt.submit line.
@@ -38,6 +39,7 @@ import { registerTools, toolsCommandRan, toolsCount, toolsStart } from './tools-
 import { dashboardStart, dashboardToolCall, registerDashboard } from './dashboard.tsx'
 import { registerWatchdog, watchCallEnd, watchCallStart, watchdogKeep, watchdogLines, watchdogSegment, watchdogStart } from './watchdog.tsx'
 import { lessonsPromptLine, lessonsSegment, lessonsStart, registerLessons } from './lessons.tsx'
+import { egmStart, registerEgm } from './egm-pane'
 
 const NO_HOOK = 'junkd: the hooks module did not answer'
 const ROUTES: readonly JunkdHandoffRoute[] = ['auto', 'handoffs', 'settings']
@@ -88,14 +90,14 @@ export const register: Register = (on, options) => {
   on('junkd.open', async ($, e) => {
     const pane = e?.pane
     const route = e?.route
-    // Each pane its own routes: the tools tabs on the tools pane, handoff's on the others (which refuse them).
-    const known: readonly string[] = pane === 'tools' ? TOOLS_ROUTES : ROUTES
+    // Each pane its own routes: the tools tabs on the tools pane, none on egm, handoff's on the others (which refuse them).
+    const known: readonly string[] = pane === 'tools' ? TOOLS_ROUTES : pane === 'egm' ? [] : ROUTES
     if (route !== undefined && !known.includes(route)) return { deny: `junkd: no tab ${String(route)}` }
     try {
       if (pane === 'junkd') {
         if (route !== undefined) return { deny: `junkd: the junkd pane has no tab ${String(route)}` }
         await panelToggle($)
-      } else if (pane === 'handoff' || pane === 'orch' || pane === 'statusline' || pane === 'tools' || pane === 'lessons') await openPane($, pane, route === undefined ? {} : { route })
+      } else if (pane === 'handoff' || pane === 'orch' || pane === 'statusline' || pane === 'tools' || pane === 'lessons' || pane === 'egm') await openPane($, pane, route === undefined ? {} : { route })
       else return { deny: `junkd: no pane ${String(pane)}` }
     } catch (err) {
       return { deny: reason(err) }
@@ -107,7 +109,7 @@ export const register: Register = (on, options) => {
   // Every feature's start, side by side; one that fails leaves the others started, and its error is raised after.
   on('session.start', async ($, e, next) => {
     const watched = watchdogStart($).catch(() => undefined) // the watchdog's timer, beside the features
-    const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), ctxStart($), statuslineStart($), toolsStart($), panelStart($)])).find(
+    const failed = (await Promise.allSettled([coreStart($), handoffStart($), orchStart($), tldrStart($), ctxStart($), statuslineStart($), toolsStart($), egmStart($), panelStart($)])).find(
       r => r.status === 'rejected',
     )
     await watched
@@ -179,6 +181,7 @@ export const register: Register = (on, options) => {
   registerCtx(on, options)
   registerStatusline(on, options)
   registerTools(on, options)
+  registerEgm(on, options)
   registerPanel(on, options)
   registerDashboard(on, options)
   registerWatchdog(on, options)

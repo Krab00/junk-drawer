@@ -1,11 +1,12 @@
 // The /junkd pane's drawing, `$`-free: panel.tsx hands it the surface's elements, the pane's data and its actions
 // as closures. Three sections: the marketplace's plugins (on/off at user scope), the main settings of every group of
-// junkd (core, handoff, orch, tldr, ctx, statusline), the enabled plugins' commands.
+// junkd (core, handoff, orch, tldr, ctx, statusline, tools, egm), the enabled plugins' commands. A dim row (egm.models
+// while egm.enabled is off) keeps its hotkey: the press reaches its group's set, which refuses it.
 import type { ElementTable, RenderChildren, RenderInput } from 'claude-code'
 
 export type PluginRow = { name: string; description: string; isSelf: boolean; isUserOn: boolean; isActive: boolean }
 // One `main` row of a group (settings.ts), by its field, with its current value beside it.
-export type Field = { key: string; type: string; title: string; options?: readonly string[]; value: unknown }
+export type Field = { key: string; type: string; title: string; options?: readonly string[]; value: unknown; dim?: boolean }
 export type Section = { group: string; fields: Field[]; hasPane: boolean }
 export type Command = { name: string; description: string }
 export type PanelData = {
@@ -29,7 +30,7 @@ export type Els = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button' | 'In
 
 const EDGE = 2 // a docked pane's last column may not show
 // Theme keys only, never a hex value: the text follows the person's theme. The accent is junk-drawer's orange.
-export const P = { accent: 'claude', secondary: 'inactive', dim: 'subtle', ok: 'success', warn: 'warning', bad: 'error' } as const
+export const P = { accent: 'claude', secondary: 'inactive', dim: 'subtle', ok: 'success', warn: 'warning', bad: 'error', bg: 'userMessageBackground' } as const
 export const LETTERS = 'abcdefghijklmnoprstuvwxyz' // q closes
 export const PLUGIN_KEYS = 9 // 1-9 flip a plugin; the tenth on has no hotkey
 
@@ -39,7 +40,7 @@ export const fieldKey = (id: string) => (entered[id] ? `${id}~${entered[id]}` : 
 
 // A choice as Buttons, not the engine's Select: the current option an inverse block, every other a dim Button that
 // picks it (the terminal Select opens on focus with the current option highlighted, so Enter picks it again).
-const choices = (els: Els, id: string, options: readonly string[], current: unknown, pick: (value: string) => void) =>
+export const choices = (els: Els, id: string, options: readonly string[], current: unknown, pick: (value: string) => void) =>
   [...new Set(options.map(String))].map(o =>
     o === String(current) ? (
       <els.Box key={`${id}=${o}`} flexShrink={0}>
@@ -80,11 +81,11 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
     </Box>
   )
   // One line: indent, a fixed name column, the middle cut to fit, the controls on the right.
-  const row = (key: string, name: string, middle: RenderChildren, right?: RenderChildren, nameColor?: string) => (
+  const row = (key: string, name: string, middle: RenderChildren, right?: RenderChildren, nameColor?: string, dim?: boolean) => (
     <Box key={key} flexDirection="row" height={1}>
       <Box width={2} flexShrink={0} />
       <Box width={nameWidth} flexShrink={0} overflow="hidden">
-        <Text color={nameColor} wrap="truncate-end">
+        <Text color={nameColor} dimColor={dim || undefined} wrap="truncate-end">
           {name}
         </Text>
       </Box>
@@ -99,9 +100,9 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
     </Box>
   )
   // The state as an inverse pill, then a dim Button for the other state.
-  const switcher = (key: string, isOn: boolean, hotkey: string | undefined, flip: () => void) => [
+  const switcher = (key: string, isOn: boolean, hotkey: string | undefined, flip: () => void, dim?: boolean) => [
     <Box key={`${key}-pill`} width={5}>
-      <Text inverse color={isOn ? P.ok : P.secondary}>
+      <Text inverse color={dim ? P.dim : isOn ? P.ok : P.secondary}>
         {isOn ? ' on ' : ' off '}
       </Text>
     </Box>,
@@ -114,7 +115,7 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
   const control = (group: string, f: Field) => {
     const id = `set:${group}:${f.key}`
     if (f.type === 'boolean') {
-      return switcher(id, f.value === true, LETTERS[switches.indexOf(`${group}:${f.key}`)], () => act.set(group, f.key, f.value !== true))
+      return switcher(id, f.value === true, LETTERS[switches.indexOf(`${group}:${f.key}`)], () => act.set(group, f.key, f.value !== true), f.dim)
     }
     if (f.options && f.options.length > 0) return choices(els, id, f.options, f.value, v => act.set(group, f.key, v))
     if (f.type === 'number' || f.type === 'string') {
@@ -199,7 +200,9 @@ export function panelView(els: Els, props: RenderInput<'Pane'>['props'], data: P
                 </Box>
                 {s.hasPane && <Button key={`pane:${s.group}`} plain dimColor label="settings ▸" onPress={() => act.openPane(s.group)} />}
               </Box>
-              {s.fields.map(f => row(`setting:${s.group}:${f.key}`, f.key, <Text wrap="truncate-end">{f.title}</Text>, control(s.group, f)))}
+              {s.fields.map(f =>
+                row(`setting:${s.group}:${f.key}`, f.key, <Text dimColor={f.dim || undefined} wrap="truncate-end">{f.title}</Text>, control(s.group, f), undefined, f.dim),
+              )}
             </Box>
           ))}
         </Box>

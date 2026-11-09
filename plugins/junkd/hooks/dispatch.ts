@@ -11,8 +11,9 @@ import { statuslineGet, statuslineHide, statuslineOpen, statuslineSet, statuslin
 import { tldrGet, tldrSet } from './tldr'
 import { toolsGet, toolsHide, toolsOpen, toolsSet, toolsShow } from './tools-pane'
 import { lessonsHide, lessonsOpen, lessonsShow } from './lessons.tsx'
+import { egmGet, egmSet, egmShow, egmHide, egmOpen } from './egm-pane'
 
-export type FeaturePane = 'handoff' | 'orch' | 'statusline' | 'tools' | 'lessons'
+export type FeaturePane = 'handoff' | 'orch' | 'statusline' | 'tools' | 'lessons' | 'egm'
 
 // One row's current value. The key is a row of SCHEMA (the caller checked).
 export async function getSetting($: $, key: JunkdKey): Promise<JunkdValue> {
@@ -23,6 +24,7 @@ export async function getSetting($: $, key: JunkdKey): Promise<JunkdValue> {
   if (group === 'ctx') return ctxGet($, field)
   if (group === 'statusline') return statuslineGet($, field)
   if (group === 'tools') return toolsGet($, field)
+  if (group === 'egm') return egmGet($, field)
   return tldrGet($, field)
 }
 
@@ -35,6 +37,7 @@ export async function setSetting($: $, key: JunkdKey, raw: unknown): Promise<Set
   if (group === 'ctx') return ctxSet($, field, raw)
   if (group === 'statusline') return statuslineSet($, field, raw)
   if (group === 'tools') return toolsSet($, field, raw)
+  if (group === 'egm') return egmSet($, field, raw)
   return tldrSet($, field, raw)
 }
 
@@ -50,6 +53,7 @@ export async function showPane($: $, pane: FeaturePane, input: ShowInput = {}): 
   if (pane === 'statusline') return statuslineShow($, input)
   if (pane === 'tools') return toolsShow($, input)
   if (pane === 'lessons') return lessonsShow($, input)
+  if (pane === 'egm') return egmShow($, input)
   return orchShow($, input)
 }
 export async function hidePane($: $, pane: FeaturePane, input: HideInput = {}): Promise<void> {
@@ -57,6 +61,7 @@ export async function hidePane($: $, pane: FeaturePane, input: HideInput = {}): 
   if (pane === 'statusline') return statuslineHide($, input)
   if (pane === 'tools') return toolsHide($, input)
   if (pane === 'lessons') return lessonsHide($, input)
+  if (pane === 'egm') return egmHide($, input)
   return orchHide($, input)
 }
 export async function openPane($: $, pane: FeaturePane, input: OpenInput = {}): Promise<void> {
@@ -64,5 +69,6 @@ export async function openPane($: $, pane: FeaturePane, input: OpenInput = {}): 
   if (pane === 'statusline') return statuslineOpen($, input)
   if (pane === 'tools') return toolsOpen($, input)
   if (pane === 'lessons') return lessonsOpen($, input)
+  if (pane === 'egm') return egmOpen($, input)
   return orchOpen($, input)
 }

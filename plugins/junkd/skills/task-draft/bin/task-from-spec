@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""task-from-spec — the last step of /junkd:task-draft: an EGM spec into an orch task file.
+
+  task-from-spec <spec-file> <task-id> [--probe <answer-file>] [--worker-class A|B|C|F] [--understood N/M]
+                 [--deps <id[,id...]>] [--root <dir>] [--force]
+
+Writes <tasks_dir>/<id>.md (tasks_dir from `orch-state tasks-dir` when it prints a path, else .orch/tasks) in the
+format `orch-state new` writes: the frontmatter (id, title, status todo, deps, source adhoc, source_updated_at,
+criteria_source verbatim, spec, worker_class with --worker-class), `## Description`, `## Acceptance criteria` (the
+spec's own list, each item `- [ ] AC<n>: ...`), `## Test matrix` when the spec has one, and with --probe
+`## Evidence: comprehension` (`understood <N/M> on class <X>`, then the agreed answer). Without --force the same
+inputs always give a byte-identical file. With --force on an existing file, its deps, status, critical, source and
+source_updated_at values and its whole `## Verification` section are kept.
+
+Writes are safe: the target's real path must be inside the repo root, an existing target is opened with O_NOFOLLOW
+(a symlink is refused), and the text goes to a mkstemp file in the target's folder that is os.replace'd onto it.
+Exit codes: 0 written; 1 the task file exists (no --force); 2 bad arguments, or a target outside the repo or a
+symlink; 3 the spec has no acceptance criteria; 4 .orch/taskdraft/<id>/questions.md exists (a question is open).
+"""
+import argparse
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+HEAD_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.*\S)\s*$")
+AC_ID_RE = re.compile(r"^\**(AC[-\s]?(\d+))\**\s*[:.)-]\s*(.*)$", re.I)
+CLASSES = ('A', 'B', 'C', 'F')
+# The frontmatter keys --force takes from the existing file, in the order they are written.
+KEPT = ('status', 'deps', 'source', 'source_updated_at', 'critical')
+
+
+def headings(lines):
+    out = []
+    in_fence = False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        m = None if in_fence else HEAD_RE.match(line)
+        if m:
+            out.append((i, len(m.group(1)), m.group(2)))
+    return out
+
+
+def section(lines, heads, pattern):
+    """The body lines of the first heading matching pattern, up to the next heading of the same or a higher level."""
+    for n, (i, level, text) in enumerate(heads):
+        if re.search(pattern, text, re.I):
+            end = len(lines)
+            for j, lv, _ in heads[n + 1:]:
+                if lv <= level:
+                    end = j
+                    break
+            return lines[i + 1:end]
+    return None
+
+
+def criteria(body):
+    items, n = [], 0
+    for line in body:
+        m = ITEM_RE.match(line)
+        indent = len(line) - len(line.lstrip())
+        if not m or indent >= 2:
+            # an indented line (a wrapped sentence or a nested item) belongs to the item above it
+            if items and line.strip() and indent >= 2:
+                items[-1] = (items[-1][0], items[-1][1] + " " + line.strip())
+            continue
+        text = m.group(1)
+        a = AC_ID_RE.match(text)
+        if a:
+            num, text = int(a.group(2)), a.group(3).strip()
+        else:
+            num = n + 1
+        n = max(n, num)
+        items.append((num, text))
+    return [f"- [ ] AC{num}: {text}" for num, text in items]
+
+
+def title_of(lines, heads, fallback):
+    for _, level, text in heads:
+        if level == 1:
+            return re.sub(r"^(design|spec)\s*[:\-]\s*", "", text, flags=re.I).strip() or fallback
+    return fallback
+
+
+def summary_of(lines, heads):
+    """The first paragraph of the first Summary, Overview or Objective section; empty when there is none."""
+    body = section(lines, heads, r"^(summary|overview|objective)\b")
+    if body:
+        text = "\n".join(body).strip()
+        if text:
+            return text.split("\n\n")[0].strip()
+    return ""
+
+
+def tasks_dir(root):
+    here = os.path.dirname(os.path.realpath(__file__))
+    for cand in (os.environ.get("ORCH_STATE"), os.path.join(here, "..", "..", "orch", "bin", "orch-state"), os.path.join(here, "orch-state")):
+        if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
+            r = subprocess.run([cand, "tasks-dir"], cwd=root, capture_output=True, text=True, check=False)
+            if r.returncode == 0 and r.stdout.strip():
+                return os.path.join(root, r.stdout.strip())
+            break
+    return os.path.join(root, ".orch", "tasks")
+
+
+def yaml_str(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"' if re.search(r"[:#\[\]{}&*!|>'\"%@`,]|^\s|\s$", s) else s
+
+
+def under(path, root):
+    path, root = os.path.realpath(path), os.path.realpath(root)
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def read_nofollow(path):
+    """The text of an existing file, refusing a symlink (OSError)."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def front_values(text):
+    """The raw values of the first --- block's top-level keys, as written."""
+    out = {}
+    lines = text.splitlines()
+    if not lines or lines[0].rstrip() != "---":
+        return out
+    for line in lines[1:]:
+        if line.rstrip() == "---":
+            break
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):(.*)$", line)
+        if m:
+            out.setdefault(m.group(1), m.group(2).strip())
+    return out
+
+
+def safe_write(target, text, root):
+    d = os.path.dirname(target)
+    tmp_fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(target) + ".")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(tmp, 0o666 & ~mask)
+        if os.path.islink(target) or not under(d, root):
+            raise OSError("the target changed under us")
+        os.replace(tmp, target)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="task-from-spec", description="an EGM spec into an orch task file")
+    ap.add_argument("spec")
+    ap.add_argument("task_id")
+    ap.add_argument("--probe")
+    ap.add_argument("--worker-class")
+    ap.add_argument("--understood")
+    ap.add_argument("--deps")
+    ap.add_argument("--root")
+    ap.add_argument("--force", action="store_true")
+    try:
+        a = ap.parse_args(argv)
+    except SystemExit as e:
+        return 2 if e.code else 0
+    if not ID_RE.match(a.task_id) or ".." in a.task_id:
+        print(f"task-from-spec: bad task id '{a.task_id}' (letters, digits, . _ -; not starting with _)", file=sys.stderr)
+        return 2
+    if not os.path.isfile(a.spec):
+        print(f"task-from-spec: no spec file {a.spec}", file=sys.stderr)
+        return 2
+    if a.probe and not os.path.isfile(a.probe):
+        print(f"task-from-spec: no probe answer {a.probe}", file=sys.stderr)
+        return 2
+    if a.understood and not re.match(r"^\d+/\d+$", a.understood):
+        print("task-from-spec: --understood takes N/M", file=sys.stderr)
+        return 2
+    if a.worker_class is not None and a.worker_class not in CLASSES:
+        print(f"task-from-spec: --worker-class takes A, B, C or F, not '{a.worker_class}'", file=sys.stderr)
+        return 2
+    deps = []
+    if a.deps is not None:
+        deps = [d.strip() for d in a.deps.split(",")]
+        if not deps or any(not ID_RE.match(d) or ".." in d for d in deps):
+            print(f"task-from-spec: --deps takes task ids separated by commas, not '{a.deps}'", file=sys.stderr)
+            return 2
+    root = a.root
+    if not root:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+        root = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else os.getcwd()
+    root = os.path.realpath(root)
+
+    # No task file while a question is open (a file or a link there counts).
+    if os.path.lexists(os.path.join(root, ".orch", "taskdraft", a.task_id, "questions.md")):
+        print(f"task-from-spec: questions are open in .orch/taskdraft/{a.task_id}/questions.md", file=sys.stderr)
+        return 4
+
+    with open(a.spec, encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    heads = headings(lines)
+    acs = criteria(section(lines, heads, r"acceptance criteria") or [])
+    if not acs:
+        print(f"task-from-spec: {a.spec} has no '## Acceptance criteria' list; add one (egm-resolve) and run again", file=sys.stderr)
+        return 3
+    matrix = section(lines, heads, r"test matrix")
+    title = title_of(lines, heads, a.task_id)
+    spec_rel = os.path.relpath(os.path.realpath(a.spec), root)
+
+    out_dir = tasks_dir(root)
+    target = os.path.join(out_dir, a.task_id + ".md")
+    if not under(target, root):
+        print(f"task-from-spec: {target} resolves outside the repo", file=sys.stderr)
+        return 2
+    kept, keep_ver = {}, ""
+    if os.path.lexists(target):
+        if not a.force:
+            print(f"task-from-spec: {target} exists; pass --force to overwrite it", file=sys.stderr)
+            return 1
+        try:
+            old = read_nofollow(target)
+        except OSError:
+            print(f"task-from-spec: {target} is a symlink or cannot be read; left unchanged", file=sys.stderr)
+            return 2
+        kept = {k: v for k, v in front_values(old).items() if k in KEPT}
+        m = re.search(r"^## Verification.*\Z", old, re.M | re.S)
+        keep_ver = m.group(0).rstrip() + "\n" if m else ""
+
+    def val(key, default):
+        return kept[key] if key in kept else default
+
+    fm = ["---", f"id: {a.task_id}", f"title: {yaml_str(title)}",
+          f"status: {val('status', 'todo')}".rstrip(),
+          f"deps: {val('deps', '[' + ', '.join(deps) + ']')}".rstrip(),
+          f"source: {val('source', 'adhoc')}".rstrip(),
+          f"source_updated_at: {val('source_updated_at', '')}".rstrip()]
+    if "critical" in kept:
+        fm.append(f"critical: {kept['critical']}".rstrip())
+    fm += ["criteria_source: verbatim", f"spec: {yaml_str(spec_rel)}"]
+    if a.worker_class:
+        fm.append(f"worker_class: {a.worker_class}")
+    fm.append("---")
+    body = ["## Description", (summary_of(lines, heads) or title).strip(), "",
+            f"Spec: `{spec_rel}` (EGM, via /junkd:task-draft).", "",
+            "## Acceptance criteria", *acs, ""]
+    if matrix and "\n".join(matrix).strip():
+        body += ["## Test matrix", "\n".join(matrix).strip(), ""]
+    if a.probe:
+        with open(a.probe, encoding="utf-8", errors="replace") as f:
+            answer = f.read().strip()
+        body += ["## Evidence: comprehension", f"understood {a.understood or '?'} on class {a.worker_class or '?'}", answer, ""]
+    text = "\n".join(fm + body).rstrip() + "\n"
+    if keep_ver:
+        text += "\n" + keep_ver
+
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        print(f"task-from-spec: cannot make {out_dir}: {e.strerror}", file=sys.stderr)
+        return 2
+    if not under(target, root):
+        print(f"task-from-spec: {target} resolves outside the repo", file=sys.stderr)
+        return 2
+    try:
+        safe_write(target, text, root)
+    except OSError as e:
+        print(f"task-from-spec: {target}: {e.strerror or e}; left unchanged", file=sys.stderr)
+        return 2
+    print(f"wrote {target}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
