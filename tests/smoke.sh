@@ -103,7 +103,7 @@ handoff_result=$(CODEX_THREAD_ID=codex-id CLAUDE_CODE_SESSION_ID=claude-id CLAUD
 # Two plugins: plugins/ holds junkd and junk-drawer (the cheatsheet); every host's marketplace lists those two and
 # nothing else, no plugin that moved into junkd (handoff, orch, tldr, ctx-limit, ctx-tokens, statusline) among them,
 # and junkd depends on nothing.
-[ "$(ls -1 "$root/plugins" | sort | tr '\n' ' ')" = "junk-drawer junkd " ] ||
+[ "$(ls -1 "$root/plugins" | LC_ALL=C sort | tr '\n' ' ')" = "junk-drawer junkd " ] ||
     { echo "plugins/ holds $(ls -1 "$root/plugins" | tr '\n' ' '), expected junk-drawer junkd"; exit 1; }
 for gone in ctx-limit ctx-tokens statusline; do
     [ ! -e "$root/plugins/$gone" ] || { echo "plugins/$gone is back"; exit 1; }

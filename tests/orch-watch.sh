@@ -81,7 +81,7 @@ head -n1 <<<"$out" | grep -qF 'orch-watch · session s1 · idle stop after 5 min
     fail "header: $(head -n1 <<<"$out")"
 [ "$(sed -n 2p <<<"$out" | sed -E 's/ +/ /g')" = 'agent role status idle verdict' ] || fail "column header: $(sed -n 2p <<<"$out")"
 # the implementer alive in its worktree while its task is in progress: kept, however long it idles
-[ "$(row impl-T17)" = "impl-T17|implementer|idle (pid 101)|$(( ($(date +%s) - $(stat -f %m "$recs/impl-T17.json" 2>/dev/null || stat -c %Y "$recs/impl-T17.json")) / 60 ))m|kept (T17 in progress)" ] ||
+[ "$(row impl-T17)" = "impl-T17|implementer|idle (pid 101)|$(( ($(date +%s) - $(stat -c %Y "$recs/impl-T17.json" 2>/dev/null || stat -f %m "$recs/impl-T17.json")) / 60 ))m|kept (T17 in progress)" ] ||
     fail "impl-T17: $(row impl-T17)"
 # the older verify of T17 lost the worktree's one process to impl-T17: done; its id file is no second row
 row verify-T17 | grep -qE '\|done\|[0-9]+m\|done$' || fail "verify-T17: $(row verify-T17)"
