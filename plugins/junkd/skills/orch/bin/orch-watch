@@ -80,7 +80,7 @@ if [ -z "$idle_minutes" ]; then
   [[ "$idle_minutes" =~ ^[0-9]+$ ]] || idle_minutes=10
 fi
 
-mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
 # cwd_of <pid>: the process's working directory, or nothing.
 cwd_of() {

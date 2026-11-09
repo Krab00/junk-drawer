@@ -191,7 +191,7 @@ st status
 st on
 [ "$rc" = 0 ] && cmd_is "$dest" || fail "on fresh: rc $rc $out $err"
 [ -x "$dest" ] && cmp -s "$dest" "$real_render" || fail "on: the copy is not bin/statusline.sh, executable"
-[ "$(stat -f %Lp "$dest" 2>/dev/null || stat -c %a "$dest")" = 755 ] || fail "on: the copy is not mode 0755"
+[ "$(stat -c %a "$dest" 2>/dev/null || stat -f %Lp "$dest")" = 755 ] || fail "on: the copy is not mode 0755"
 [ ! -e "$settings.bak" ] || fail "on fresh: a backup of no file"
 st status
 [ "$out" = on ] || fail "status after on: $out"
