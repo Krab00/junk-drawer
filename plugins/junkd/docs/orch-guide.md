@@ -258,7 +258,7 @@ commit alone, and is a cheap early warning. The verdict that gates `done` is the
   ("rule exists in CLAUDE.md §X, no check"), without waiting for a second task.
 
 **Lessons.** The lessons are a queue that empties itself, not a diary. They live in three stores,
-promoted one way: **local** `<tasks_dir>/_lessons.md` (born there, never in git), **repo**
+promoted one way: **local** `<tasks_dir>/_lessons.md` (born there; junkd never commits it and does not git-ignore it: the repo's own `.gitignore` decides whether it enters git), **repo**
 `lessons.md` at the project root (committed with the project, for the team and other machines) and
 **global** `~/.claude/junkd/lessons.md` (one per machine, read by every repo). Each lesson carries a
 `stack:` tag (node, python, shell, tsx-mods, go, rust, any) and a `to:` target: `test` or `smoke` (the

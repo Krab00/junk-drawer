@@ -256,6 +256,27 @@ test("Bash and Monitor: only the plugin's own bin/ scripts with plain arguments"
   expect(orchGuard(main('Monitor', { ws: { url: 'wss://x' }, description: 'd', timeout_ms: 1 }), st(), on_)).toBeUndefined()
 })
 
+test('task-draft: the main loop Writes the input into .orch/taskdraft/<id>/ and runs the helper with --file; a pipe or a redirect is refused', () => {
+  const bash = (command: string) => orchGuard(main('Bash', { command }), st(), on_)
+  const write = (file_path: string) => orchGuard(main('Write', { file_path, content: 'x' }), st(), on_)
+  // the input files of SKILL.md and the task-egm/task-elephant roles, <out> = .orch/taskdraft/T-1
+  for (const p of [`${REPO}/.orch/taskdraft/T-1/answers.md`, `${REPO}/.orch/taskdraft/T-1/blocks.md`]) expect(write(p), p).toBeUndefined()
+  // their commands, as SKILL.md spells them (tests/task-draft.sh checks that SKILL.md holds these templates)
+  for (const c of [`${BIN}task-draft-state decisions add T-1 --source chat --file .orch/taskdraft/T-1/answers.md`,
+    `${BIN}task-draft-state questions T-1 put --role task-egm --spec docs/designs/t-1.md --file .orch/taskdraft/T-1/blocks.md`,
+    `${BIN}task-draft-state questions T-1 put --role task-draft --spec none --file .orch/taskdraft/T-1/blocks.md`]) {
+    expect(bash(c), c).toBeUndefined()
+  }
+  // the stdin forms of 0.12.0: never plain arguments
+  for (const c of [`printf 'A1: q => a\n' | ${BIN}task-draft-state decisions add T-1 --source chat`,
+    `${BIN}task-draft-state decisions add T-1 --source chat < .orch/taskdraft/T-1/answers.md`,
+    `${BIN}task-draft-state decisions add T-1 --source chat <<< 'A1: q => a'`,
+    `${BIN}task-draft-state questions T-1 put --role task-egm --spec none <<'EOF'\nQUESTION: q\nCONTEXT: c\nOPTIONS: a | b\nEOF`,
+    `cat .orch/taskdraft/T-1/blocks.md | ${BIN}task-draft-state questions T-1 put --role task-egm --spec none`]) {
+    expect(bash(c), c).toMatch(/may not run Bash/)
+  }
+})
+
 test('Agent: only opus, sonnet or haiku, or a junkd: type without a model; never a fork', () => {
   const agent = (args: Record<string, unknown>) => orchGuard(main('Agent', { prompt: 'p', description: 'd', ...args }), st(), on_)
   expect(agent({ subagent_type: 'fork' })).toMatch(/runs on the main loop's model or a costlier one\. Set model: opus\|sonnet\|haiku/)

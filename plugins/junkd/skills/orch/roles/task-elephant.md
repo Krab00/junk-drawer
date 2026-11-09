@@ -132,16 +132,20 @@ question per reply. The main loop handles a reply that ends with
     `ok` takes the first option of every question; `<n>: <answer>` pairs
     replace single answers and the rest take their first option. A
     `(free text)` question left without an answer is asked again, alone.
-    Then pipe the answers, one line per question,
-    `A<n>: <question> => <answer>`, to
-    `task-draft-state decisions add <id> --source chat` (it appends them to
-    `.orch/decisions.md`; never for the skill's own step 4 question),
-    and send one SendMessage to the same role, one line
+    Then write the answers, one line per question,
+    `A<n>: <question> => <answer>`, to `<out>/answers.md` with the Write
+    tool and run
+    `task-draft-state decisions add <id> --source chat --file <out>/answers.md`
+    (it appends them to `.orch/decisions.md`; never for the skill's own step
+    4 question). Give the helper plain arguments only: the orch guard refuses
+    a pipe or a `<` into it.
+    Then send one SendMessage to the same role, one line
     per question, `A<n>: <answer>`, in block order. On a host without
     SendMessage, dispatch a fresh role of the same kind with the answers in
     its `answers:` lines.
-*   With `--unattended`: pipe the blocks to
-    `task-draft-state questions <id> put --role <role> --spec <spec path or none>`,
+*   With `--unattended`: write the blocks to `<out>/blocks.md` with the
+    Write tool and run
+    `task-draft-state questions <id> put --role <role> --spec <spec path or none> --file <out>/blocks.md`,
     where `<role>` is `task-egm`, `task-elephant` or `task-draft` (the
     skill's own question in step 4). It writes `<out>/questions.md` and prints
     `<N> questions in .orch/taskdraft/<id>/questions.md`. Print

@@ -31,6 +31,16 @@ run() {
     out=$("$@" 2>"$tmp/err") || rc=$?
     err=$(cat "$tmp/err")
 }
+# Helpers that run the same on GNU and BSD (macOS), in place of the GNU-only flags of env, sed and stat.
+# at <dir> <cmd...>: one command in <dir>, in a subshell.
+at() ( cd -- "$1" || exit; shift; "$@" )
+# sed_i <script> <file>: sed's output written back over the file (its mode and inode stay).
+sed_i() { sed "$1" "$2" > "$tmp/sed.out" && cat "$tmp/sed.out" > "$2"; }
+# first_a <line> <file>: the first `A:` line with no answer becomes <line>.
+first_a() { awk -v t="$1" '!d && $0 == "A:" { $0 = t; d = 1 } 1' "$2" > "$tmp/sed.out" && cat "$tmp/sed.out" > "$2"; }
+# fsize <file>: the size in bytes. fmode <file>: the permission bits in octal (GNU stat, else BSD stat).
+fsize() { local n; n=$(wc -c < "$1") && echo $((n)); }
+fmode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
 # ---------------------------------------------------------------- syntax
 case_ "syntax"
@@ -56,7 +66,7 @@ done
 for n in harness-omp harness-opencode harness-codex harness-kimi; do
     # the mode git records (100755); on disk only the executable bits, since a checkout's mode follows the umask
     [ "$(git -C "$root" ls-files -s -- "plugins/junkd/skills/task-draft/bin/$n" | cut -d' ' -f1)" = 100755 ] || fail "$n is not tracked as mode 100755"
-    [ $(( 8#$(stat -c %a "$skill/bin/$n") & 8#111 )) = $(( 8#111 )) ] || fail "$n is not executable by user, group and other"
+    [ $(( 8#$(fmode "$skill/bin/$n") & 8#111 )) = $(( 8#111 )) ] || fail "$n is not executable by user, group and other"
     grep -q '^# Test status: ' "$skill/bin/$n" && grep -q '"No tools": ' "$skill/bin/$n" || fail "$n's header lacks its test or no-tools status"
 done
 
@@ -111,7 +121,14 @@ for md in "$skill_md" "$plugin/skills/orch/roles/task-egm.md" "$plugin/skills/or
     done
 done
 grep -qF 'task-draft is off: turn on egm_enabled in the /junkd pane (Settings, egm) or /config' "$skill_md" || fail "SKILL.md step 1 message"
-grep -qxF '.orch/taskdraft/' "$root/.gitignore" || fail ".gitignore lacks .orch/taskdraft/"
+# the --file commands the orch guard lets through (hooks/orch.test.tsx runs these spellings against the guard)
+for md in "$skill_md" "$plugin/skills/orch/roles/task-egm.md" "$plugin/skills/orch/roles/task-elephant.md"; do
+    for s in '`task-draft-state decisions add <id> --source chat --file <out>/answers.md`' \
+        '`task-draft-state questions <id> put --role <role> --spec <spec path or none> --file <out>/blocks.md`'; do
+        grep -qF -- "$s" "$md" || fail "${md#"$root"/} lacks $s"
+    done
+    if grep -qE 'pipe (the|them)' "$md"; then fail "${md#"$root"/} still tells the main loop to pipe into a helper"; fi
+done
 grep -qF 'short_description: "An orch task through EGM'"'"'s draft and review, an optional comprehension check, and into the task file"' "$skill/agents/openai.yaml" ||
     fail "openai.yaml short_description"
 
@@ -196,7 +213,7 @@ rm -f "$installed"
 case_ "egm missing per host"
 expect_hint() {
     run "$state" egm --host "$1"
-    [ "$rc" = 1 ] && [ "$out" = "$2" ] && [ "$(printf '%s\n' "$out" | wc -l)" = 1 ] || fail "egm hint on $1: $rc $out"
+    [ "$rc" = 1 ] && [ "$out" = "$2" ] && [ $(( $(printf '%s\n' "$out" | wc -l) )) = 1 ] || fail "egm hint on $1: $rc $out"
 }
 expect_hint claude 'egm is not installed: claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm'
 expect_hint codex 'egm is not installed: codex plugin marketplace add google/elephant-goldfish-model && codex plugin add egm@egm, then set EGM_ROOT to the folder that holds skills/egm-draft/SKILL.md'
@@ -258,7 +275,8 @@ rm -f "$models"
 repo="$tmp/repo"
 mkdir -p "$repo/docs/designs" "$repo/src" "$repo/tools" "$repo/.orch/tasks" "$tmp/outside"
 git -C "$repo" init -q
-# the user-repo lines of this repo's .gitignore; this repo's own .orch/ and docs/designs/ ignores are not a user's
+# the user-repo lines of this repo's .gitignore; this repo's own .orch/ and docs/designs/ ignores are not a user's, so
+# nothing in the fixture ignores .orch/ until task-draft-state writes .orch/taskdraft/.gitignore
 grep -vxF -e '.orch/' -e 'docs/designs/' "$root/.gitignore" > "$repo/.gitignore"
 printf 'src/ignored.py\n' >> "$repo/.gitignore"
 printf -- '---\nbackend: adhoc\ntasks_dir: ".orch/tasks"\ndefault_base: main\nbranch_prefix: task/\n---\n' > "$repo/.orch/config.md"
@@ -310,13 +328,26 @@ Localisation stays out.
   with one space between the parts.
 - AC3: tests/test_greet.py covers both cases. (modality: test)
 SPEC
-sed -i "s|@OUTSIDE@|$tmp/outside/notes.md|" "$spec"
+sed_i "s|@OUTSIDE@|$tmp/outside/notes.md|" "$spec"
 git -C "$repo" add .gitignore .orch/config.md src/greet.py tools/run tools/blob src/data.bin src/api_token.txt my-tokens.txt id_ed25519 .env config/.env.md \
     docs/designs/sibling.md docs/designs/greet.md src/link.md src/big.txt
 git -C "$repo" add -f src/ignored.py
 git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m init
 git -C "$repo" ls-files --error-unmatch src/ignored.py >/dev/null || fail "fixture: src/ignored.py is not tracked"
 git -C "$repo" check-ignore --no-index -q src/ignored.py || fail "fixture: src/ignored.py is not ignored"
+case_ "taskdraft ignore file"
+# the run's first call (answers, no questions.md) writes .orch/taskdraft/.gitignore: git then ignores the folder's
+# files and nothing else of .orch/
+run at "$repo" "$state" questions T0 answers
+[ "$rc" = 1 ] && [ "$(cat "$repo/.orch/taskdraft/.gitignore")" = '*' ] || fail "answers did not write .orch/taskdraft/.gitignore: $rc $err"
+git -C "$repo" check-ignore -q .orch/taskdraft/T0/questions.md || fail "the fixture repo does not ignore .orch/taskdraft/T0/questions.md"
+rc=0; git -C "$repo" check-ignore -q .orch/decisions.md || rc=$?
+[ "$rc" = 1 ] || fail "git check-ignore .orch/decisions.md exited $rc in the fixture repo"
+# an existing ignore file is left as it is
+printf '*\n# kept\n' > "$repo/.orch/taskdraft/.gitignore"
+run at "$repo" "$state" questions T0 answers
+[ "$rc" = 1 ] && [ "$(cat "$repo/.orch/taskdraft/.gitignore")" = $'*\n# kept' ] || fail "answers changed an existing .orch/taskdraft/.gitignore"
+printf '*\n' > "$repo/.orch/taskdraft/.gitignore"
 
 # stubs: one script under every harness name, on a PATH that holds no real harness
 stub="$tmp/stub"
@@ -371,7 +402,7 @@ probe() {
     local envs=()
     while [ "$1" != -- ]; do envs+=("$1"); shift; done
     shift
-    (cd "$repo" && env PATH="$safe_path" "${envs[@]}" python3 -I "$probe" "$@")
+    (cd "$repo" && env PATH="$safe_path" ${envs[@]+"${envs[@]}"} python3 -I "$probe" "$@")
 }
 
 # ---------------------------------------------------------------- task-probe
@@ -429,7 +460,7 @@ gitstub="$tmp/gitstub"
 mkdir -p "$gitstub"
 printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = check-ignore ] && exit 128; done\nexec %q "$@"\n' "$(command -v git)" > "$gitstub/git"
 chmod +x "$gitstub/git"
-run env -C "$repo" PATH="$gitstub:$safe_path" python3 -I "$probe" "$spec" --list --out "$out_dir"
+run at "$repo" env PATH="$gitstub:$safe_path" python3 -I "$probe" "$spec" --list --out "$out_dir"
 [ "$rc" = 0 ] && [ "$out" = 'total 0' ] && [ ! -s "$out_dir/inline-files.txt" ] || fail "a check-ignore error let files in: $rc $out"
 run probe -- "$spec" --list --out "$out_dir"
 [ "$(head -1 "$out_dir/inline-files.txt")" = src/greet.py ] || fail "inline-files.txt not restored after the check-ignore case"
@@ -438,7 +469,7 @@ run probe -- "$spec" --list --out "$out_dir"
 grep -qxF '(omitted: size cap) src/big.txt' <<<"$out" || fail "the 300 KB file is not listed as omitted"
 if grep -qF 'big.txt' "$out_dir/inline-files.txt"; then fail "inline-files.txt holds the omitted file"; fi
 grep -qxF '(omitted: size cap) src/big.txt' "$p" || fail "the prompt does not list the omitted file"
-g=$(wc -c < "$repo/src/greet.py")
+g=$(fsize "$repo/src/greet.py")
 run probe -- "$spec" --list --out "$out_dir" --files-from "$tmp/one.txt" --cap-bytes "$g"
 [ "$out" = "src/greet.py
 total $g" ] || fail "a cap of exactly the file's size dropped it: $out"
@@ -551,7 +582,7 @@ s2="$out_dir/probe-r2-B-openrouter-x-y-1-5"
 [ -f "$s2.prompt.md" ] && [ -f "$s2.meta.json" ] && [ ! -e "$s2.md" ] && [ ! -e "$s2.judge.md" ] || fail "the files after a timeout"
 jq -e '.exit == 124' "$s2.meta.json" >/dev/null || fail "meta after a timeout: $(cat "$s2.meta.json")"
 case_ "probe missing cli"
-run env -C "$repo" PATH="$nocli_path" python3 -I "$probe" "$spec" --entry "$ompB" --round 3 --out "$out_dir"
+run at "$repo" env PATH="$nocli_path" python3 -I "$probe" "$spec" --entry "$ompB" --round 3 --out "$out_dir"
 # the adapter's bash says `omp: command not found` on stderr; task-probe's own line comes last
 [ "$rc" = 20 ] && [ "$(tail -1 <<<"$err")" = 'task-probe: adapter exit 127' ] || fail "probe with no omp: $rc $err"
 s3="$out_dir/probe-r3-B-openrouter-x-y-1-5"
@@ -572,14 +603,14 @@ mkdir -p "$pbin"
 cp "$probe" "$pbin/task-probe"
 printf '#!/usr/bin/env bash\necho "plain answer"\necho "{not json"\n' > "$pbin/harness-omp"
 chmod +x "$pbin/task-probe" "$pbin/harness-omp"
-run env -C "$repo" PATH="$safe_path" python3 -I "$pbin/task-probe" "$spec" --entry "$ompB" --round 6 --out "$out_dir"
+run at "$repo" env PATH="$safe_path" python3 -I "$pbin/task-probe" "$spec" --entry "$ompB" --round 6 --out "$out_dir"
 s6="$out_dir/probe-r6-B-openrouter-x-y-1-5"
 [ "$rc" = 0 ] || fail "probe with no JSON line exited $rc: $err"
 jq -e '.meta_error == "no json line" and .wall_s == null and .tokens_in == null and .tokens_out == null and .cost == null' "$s6.meta.json" >/dev/null ||
     fail "meta with no JSON line: $(cat "$s6.meta.json")"
 [ "$(cat "$s6.md")" = $'plain answer\n{not json' ] || fail "the answer is not the whole stdout: $(cat "$s6.md")"
 printf '#!/usr/bin/env bash\necho "the answer"\necho "{\\"wall_s\\":7,\\"tokens_in\\":11,\\"tokens_out\\":12,\\"cost\\":0.5}"\n' > "$pbin/harness-omp"
-run env -C "$repo" PATH="$safe_path" python3 -I "$pbin/task-probe" "$spec" --entry "$ompB" --round 7 --out "$out_dir"
+run at "$repo" env PATH="$safe_path" python3 -I "$pbin/task-probe" "$spec" --entry "$ompB" --round 7 --out "$out_dir"
 jq -e '.wall_s == 7 and .tokens_in == 11 and .tokens_out == 12 and .cost == 0.5 and (has("meta_error") | not)' "$out_dir/probe-r7-B-openrouter-x-y-1-5.meta.json" >/dev/null ||
     fail "meta from the JSON line: $(cat "$out_dir/probe-r7-B-openrouter-x-y-1-5.meta.json")"
 [ "$(cat "$out_dir/probe-r7-B-openrouter-x-y-1-5.md")" = 'the answer' ] || fail "the JSON line stayed in the answer"
@@ -588,7 +619,7 @@ case_ "probe tui output"
 tui_probe() {
     printf "$2" > "$tmp/tui-fixture"
     printf '#!/usr/bin/env bash\ncat %q\necho "{\\"wall_s\\":1,\\"tokens_in\\":null,\\"tokens_out\\":null,\\"cost\\":null}"\n' "$tmp/tui-fixture" > "$pbin/harness-omp"
-    run env -C "$repo" PATH="$safe_path" python3 -I "$pbin/task-probe" "$spec" --entry "$ompB" --round "$1" --out "$out_dir"
+    run at "$repo" env PATH="$safe_path" python3 -I "$pbin/task-probe" "$spec" --entry "$ompB" --round "$1" --out "$out_dir"
     ts="$out_dir/probe-r$1-B-openrouter-x-y-1-5"
 }
 # rejected like an empty answer: exit 20, one stderr line, meta.json written, no answer and no judge input
@@ -646,10 +677,10 @@ h1=$(cd "$repo" && python3 -I "$probe" "$spec" --ac-hash)
 h2=$(cd "$repo" && python3 -I "$probe" "$spec" --ac-hash)
 [[ "$h1" =~ ^[0-9a-f]{64}$ ]] && [ "$h1" = "$h2" ] || fail "--ac-hash is not a stable SHA-256: $h1 $h2"
 cp "$spec" "$tmp/spec2.md"
-sed -i 's/still returns "hi Ann"/returns "hi Ann"/' "$tmp/spec2.md"
+sed_i 's/still returns "hi Ann"/returns "hi Ann"/' "$tmp/spec2.md"
 [ "$(python3 -I "$probe" "$tmp/spec2.md" --ac-hash)" != "$h1" ] || fail "a changed AC gives the same hash"
 cp "$spec" "$tmp/spec3.md"
-sed -i 's/Localisation stays out./Localisation stays out for now./' "$tmp/spec3.md"
+sed_i 's/Localisation stays out./Localisation stays out for now./' "$tmp/spec3.md"
 [ "$(python3 -I "$probe" "$tmp/spec3.md" --ac-hash)" = "$h1" ] || fail "a change outside the AC section changed the hash"
 printf '# Nothing\n\nNo criteria here.\n' > "$tmp/noac.md"
 run python3 -I "$probe" "$tmp/noac.md" --ac-hash
@@ -691,7 +722,7 @@ printf 'the prompt\n' > "$adir/prompt.md"
 # adapter <name> <effort> <level> <pass> [STUB_MODE]: run it in $adir on the stub PATH
 adapter() {
     clear_log
-    run env -C "$adir" PATH="$safe_path" STUB_MODE="${5:-}" "$skill/bin/harness-$1" --model the-model --effort "$2" --thinking "$3" --pass "$4" --prompt-file prompt.md
+    run at "$adir" env PATH="$safe_path" STUB_MODE="${5:-}" "$skill/bin/harness-$1" --model the-model --effort "$2" --thinking "$3" --pass "$4" --prompt-file prompt.md
 }
 argv_has() { grep -qxF -- "$2" "$STUB_LOG/$1.argv"; }
 argv_lacks() { ! grep -qF -- "$2" "$STUB_LOG/$1.argv"; }
@@ -771,16 +802,16 @@ grep -qF "the prompt is passed in argv; visible to local users in the process li
 [ -z "$(ls -A "$STUB_LOG/kimi.agentdir/kimi-skills")" ] || fail "kimi's skills dir is not empty: $(ls -A "$STUB_LOG/kimi.agentdir/kimi-skills")"
 printf 'line one\n\nline three\n\n\n' > "$adir/prompt.md"
 adapter kimi default - suffix
-[ "$rc" = 0 ] && [ "$(tail -n +10 "$STUB_LOG/kimi.argv")" = $'line one\n\nline three' ] && [ "$(wc -l < "$STUB_LOG/kimi.argv")" = 12 ] ||
+[ "$rc" = 0 ] && [ "$(tail -n +10 "$STUB_LOG/kimi.argv")" = $'line one\n\nline three' ] && [ $(( $(wc -l < "$STUB_LOG/kimi.argv") )) = 12 ] ||
     fail "a multi-line prompt in -p: $(cat "$STUB_LOG/kimi.argv")"
 head -c 102400 /dev/zero | tr '\0' 'k' > "$adir/prompt.md"
 adapter kimi default - suffix
-[ "$rc" = 0 ] && [ "$(sed -n 10p "$STUB_LOG/kimi.argv")" = "$(cat "$adir/prompt.md")" ] && [ "$(wc -l < "$STUB_LOG/kimi.argv")" = 10 ] ||
+[ "$rc" = 0 ] && [ "$(sed -n 10p "$STUB_LOG/kimi.argv")" = "$(cat "$adir/prompt.md")" ] && [ $(( $(wc -l < "$STUB_LOG/kimi.argv") )) = 10 ] ||
     fail "the 100 KB prompt is not kimi's -p value"
 head -c 122880 /dev/zero | tr '\0' 'k' > "$adir/prompt.md"
 adapter kimi default - suffix
 # 120 KiB in one argv string stays under the kernel's 128 KiB cap (MAX_ARG_STRLEN): the stub got it byte for byte
-[ "$rc" = 0 ] && [ "$(sed -n 9p "$STUB_LOG/kimi.argv")" = -p ] && [ "$(sed -n 10p "$STUB_LOG/kimi.argv" | wc -c)" = 122881 ] &&
+[ "$rc" = 0 ] && [ "$(sed -n 9p "$STUB_LOG/kimi.argv")" = -p ] && [ $(( $(sed -n 10p "$STUB_LOG/kimi.argv" | wc -c) )) = 122881 ] &&
     [ "$(sed -n 10p "$STUB_LOG/kimi.argv")" = "$(cat "$adir/prompt.md")" ] || fail "a prompt of exactly 120 KiB did not reach kimi's -p"
 head -c 122881 /dev/zero | tr '\0' 'k' > "$adir/prompt.md"
 adapter kimi default - suffix
@@ -806,7 +837,7 @@ jq -e '.permission["*"] == "deny" and ([.permission[]] | all(. == "deny"))
              "codesearch", "skill", "batch", "question", "todowrite", "todoread", "task"] | all(. as $k | $cfg_t[$k] == false))' \
     --argjson cfg_p "$(jq -c .permission <<<"$cfg")" --argjson cfg_t "$(jq -c .tools <<<"$cfg")" <<<"$cfg" >/dev/null ||
     fail "opencode's config does not turn the tools off: $cfg"
-run env -C "$adir" PATH="$safe_path" OPENCODE_CONFIG_CONTENT='{"permission":{"bash":"allow"}}' "$skill/bin/harness-opencode" --model m --prompt-file prompt.md
+run at "$adir" env PATH="$safe_path" OPENCODE_CONFIG_CONTENT='{"permission":{"bash":"allow"}}' "$skill/bin/harness-opencode" --model m --prompt-file prompt.md
 [ "$(sed -n 's/^OPENCODE_CONFIG_CONTENT=//p' "$STUB_LOG/opencode.env" | jq -r .permission.bash)" = deny ] || fail "a caller's OPENCODE_CONFIG_CONTENT reached opencode"
 case_ "codex no tools"
 adapter codex default - suffix
@@ -830,7 +861,7 @@ cmp -s "$STUB_LOG/kimi.agent" "$kd/kimi-goldfish.md" || fail "the copied folder 
 # (reference/tools) plus mcp__* (a bare * there "disables nothing"). Exact bytes always; python3 yaml too.
 kimi_builtins='Read Write Edit Grep Glob ReadMediaFile Bash WebSearch FetchURL ExitPlanMode TodoList Agent AgentSwarm AskUserQuestion
 NotifyUser Skill TaskList TaskOutput TaskStop WaitFor CronCreate CronList CronDelete'
-[ "$(wc -w <<<"$kimi_builtins")" = 23 ] || fail "fixture: the built-in tool list is not the 23 the tools page names"
+[ $(( $(wc -w <<<"$kimi_builtins") )) = 23 ] || fail "fixture: the built-in tool list is not the 23 the tools page names"
 kimi_md=$'---\nname: kimi-goldfish\ndescription: Answers five questions about a spec from the message alone, with no tools\ntools: []\ndisallowedTools:'
 for t in $kimi_builtins 'mcp__*'; do kimi_md+=$'\n'"  - $t"; done
 kimi_md+=$'\n---\n\nYou have no tools and no history. Answer the five questions about the spec in the message, under the headings (a) to (e). Do not ask questions back.'
@@ -901,11 +932,11 @@ adapter kimi default - suffix
     [ "$(cat "$adir/kimi-skills/SKILL.md")" = mine ] && [ ! -e "$adir/kimi-goldfish.md" ] || fail "kimi with an existing kimi-skills dir: $rc $err"
 rm -rf "${adir:?}/kimi-skills"
 case_ "adapter arguments"
-run env -C "$adir" PATH="$safe_path" "$skill/bin/harness-omp" --model m
+run at "$adir" env PATH="$safe_path" "$skill/bin/harness-omp" --model m
 [ "$rc" = 2 ] || fail "an adapter with no --prompt-file exited $rc"
-run env -C "$adir" PATH="$safe_path" "$skill/bin/harness-codex" --model m --prompt-file prompt.md --bogus x
+run at "$adir" env PATH="$safe_path" "$skill/bin/harness-codex" --model m --prompt-file prompt.md --bogus x
 [ "$rc" = 2 ] || fail "an adapter with an unknown flag exited $rc"
-run env -C "$adir" PATH="$safe_path" "$skill/bin/harness-kimi" --model
+run at "$adir" env PATH="$safe_path" "$skill/bin/harness-kimi" --model
 [ "$rc" = 2 ] || fail "an adapter with a flag missing its value exited $rc"
 
 # ---------------------------------------------------------------- task-from-spec
@@ -952,7 +983,9 @@ run fs "$spec" T1 --worker-class B
 case_ "from-spec force keeps"
 run fs "$spec" T1 --worker-class B --force
 [ "$rc" = 0 ] && cmp -s "$task" "$tmp/first.md" || fail "--force with the same inputs gave another file"
-sed -i 's/^status: todo$/status: in_progress/; s/^deps: \[\]$/deps: [T0, T00]/; s/^source: adhoc$/source: github#12/; s/^source_updated_at:$/source_updated_at: 2026-11-01T10:00:00Z\ncritical: true/' "$task"
+# a backslash-newline in the replacement is the newline both GNU and BSD sed take
+sed_i 's/^status: todo$/status: in_progress/; s/^deps: \[\]$/deps: [T0, T00]/; s/^source: adhoc$/source: github#12/; s/^source_updated_at:$/source_updated_at: 2026-11-01T10:00:00Z\
+critical: true/' "$task"
 printf '\n## Verification — task/T1\n| AC | verdict |\n|---|---|\n| AC1 | PASS |\n' >> "$task"
 run fs "$spec" T1 --worker-class C --force
 [ "$rc" = 0 ] || fail "--force exited $rc: $err"
@@ -1118,13 +1151,13 @@ else
     [ "$rc" = 2 ] && [ "$both" = 'task-draft-state: questions: cannot write .orch/taskdraft/T13/questions.md' ] ||
         fail "put with the temp file not writable: $rc $both"
     [ ! -e "$repo/.orch/taskdraft/T13/questions.md" ] && [ ! -L "$repo/.orch/taskdraft/T13/questions.md" ] ||
-        fail "a put whose temp write failed left a questions.md ($(stat -c %s "$repo/.orch/taskdraft/T13/questions.md") bytes)"
+        fail "a put whose temp write failed left a questions.md ($(fsize "$repo/.orch/taskdraft/T13/questions.md") bytes)"
     if ls -A "$repo/.orch/taskdraft/T13" | grep -q '^\.questions\.'; then fail "a put whose temp write failed left its temp file"; fi
     # the same over an existing questions.md: it keeps its bytes
     fsz "$state" questions T1 put --role task-elephant --spec none < <(printf '%s\n' "$two_blocks")
     [ "$rc" = 2 ] && [ "$both" = 'task-draft-state: questions: cannot write .orch/taskdraft/T1/questions.md' ] ||
         fail "put over questions.md with the temp file not writable: $rc $both"
-    cmp -s "$qfile" "$tmp/q-before.md" || fail "a put whose temp write failed changed questions.md ($(stat -c %s "$qfile") bytes)"
+    cmp -s "$qfile" "$tmp/q-before.md" || fail "a put whose temp write failed changed questions.md ($(fsize "$qfile") bytes)"
     if ls -A "$repo/.orch/taskdraft/T1" | grep -q '^\.questions\.'; then fail "a put whose temp write failed left its temp file in T1"; fi
 fi
 rm -rf "$repo/.orch/taskdraft/T13"
@@ -1145,11 +1178,11 @@ r3="$tmp/r3"
 mkdir -p "$r3/.orch" "$tmp/outside2"
 git -C "$r3" init -q
 ln -s "$tmp/outside2" "$r3/.orch/taskdraft"
-run env -C "$r3" "$state" questions T14 put --role task-egm --spec none <<<"$two_blocks"
+run at "$r3" env "$state" questions T14 put --role task-egm --spec none <<<"$two_blocks"
 [ "$rc" = 2 ] && [ -z "$(ls -A "$tmp/outside2")" ] || fail "put made a folder outside the repo before the fence: $rc $(ls -A "$tmp/outside2")"
 case_ "answers consumed and file deleted"
-sed -i '0,/^A:$/s//A:   deep  /' "$qfile"
-sed -i 's/^A:$/A: --title/' "$qfile"
+first_a 'A:   deep  ' "$qfile"
+sed_i 's/^A:$/A: --title/' "$qfile"
 cp "$qfile" "$tmp/q-answered.md"
 run st questions T1 answers
 [ "$rc" = 0 ] && [ "$out" = 'role: task-egm
@@ -1208,7 +1241,7 @@ cmp -s "$dfile" "$tmp/d-before.md" || fail "decisions --match changed the file"
 run st decisions --match "REVIEW PRESET"
 [ "$rc" = 0 ] && [ "$(head -1 <<<"$out")" = '## R1 (2026-11-08) Which review preset?' ] || fail "--match is not case-insensitive"
 run st decisions --match "/junkd pane"
-[ "$rc" = 0 ] && [ "$(head -1 <<<"$out")" = '## R2 (2026-11-08) Where do settings live?' ] && [ "$(wc -l <<<"$out")" = 3 ] || fail "--match on an A: line: $out"
+[ "$rc" = 0 ] && [ "$(head -1 <<<"$out")" = '## R2 (2026-11-08) Where do settings live?' ] && [ $(( $(wc -l <<<"$out") )) = 3 ] || fail "--match on an A: line: $out"
 run st decisions --match "2026-11-08"
 [ "$rc" = 0 ] && [ "$out" = '## R1 (2026-11-08) Which review preset?
 A: standard
@@ -1233,7 +1266,7 @@ run st decisions --match "review preset"
 mv "$tmp/d-saved.md" "$dfile"
 rc=0; git -C "$repo" check-ignore -q .orch/decisions.md || rc=$?
 [ "$rc" = 1 ] || fail "git check-ignore .orch/decisions.md exited $rc in the fixture repo"
-run env -C "$tmp" "$state" decisions
+run at "$tmp" env "$state" decisions
 [ "$rc" = 2 ] || fail "decisions outside a git repo exited $rc"
 case_ "uncovered questions batched"
 run st decisions --match "dark mode scope"
@@ -1257,7 +1290,7 @@ spec: none
 A1: Which toggle? => x
 A2: Dark mode scope? => z
 Q3: Anything else? | (free text)' ] || fail "answers with ok, z, ok on free text: $rc $out"
-sed -i 's/^A: ok$/A: OK/' "$qfile"
+sed_i 's/^A: ok$/A: OK/' "$qfile"
 run st questions T1 answers
 grep -qx 'A1: Which toggle? => x' <<<"$out" || fail "OK in capitals is not the first option"
 cp "$dfile" "$tmp/d-before.md"
@@ -1303,16 +1336,16 @@ if [ "$fsz_works" = 1 ]; then
     fsz "$state" decisions add T1 --source chat < <(printf 'A1: q => a\n')
     [ "$rc" = 2 ] && [ "$both" = 'task-draft-state: decisions: cannot write .orch/decisions.md' ] ||
         fail "decisions add with the temp file not writable: $rc $both"
-    cmp -s "$dfile" "$tmp/d-before.md" || fail "a decisions add whose temp write failed changed decisions.md ($(stat -c %s "$dfile") bytes)"
+    cmp -s "$dfile" "$tmp/d-before.md" || fail "a decisions add whose temp write failed changed decisions.md ($(fsize "$dfile") bytes)"
     if ls -A "$repo/.orch" | grep -q '^\.decisions\.'; then fail "a decisions add whose temp write failed left its temp file"; fi
     # the decisions copy of questions done: exit 2, decisions.md keeps its bytes, questions.md is kept
     st questions T16 put --role task-egm --spec none <<<"$two_blocks" >/dev/null
-    sed -i 's/^A:$/A: ok/' "$repo/.orch/taskdraft/T16/questions.md"
+    sed_i 's/^A:$/A: ok/' "$repo/.orch/taskdraft/T16/questions.md"
     cp "$repo/.orch/taskdraft/T16/questions.md" "$tmp/q16.md"
     fsz "$state" questions T16 done </dev/null
     [ "$rc" = 2 ] && [ "$both" = 'task-draft-state: decisions: cannot write .orch/decisions.md' ] ||
         fail "done with the decisions temp file not writable: $rc $both"
-    cmp -s "$dfile" "$tmp/d-before.md" || fail "a done whose decisions temp write failed changed decisions.md ($(stat -c %s "$dfile") bytes)"
+    cmp -s "$dfile" "$tmp/d-before.md" || fail "a done whose decisions temp write failed changed decisions.md ($(fsize "$dfile") bytes)"
     cmp -s "$repo/.orch/taskdraft/T16/questions.md" "$tmp/q16.md" || fail "a done whose decisions copy failed removed or changed questions.md"
     if ls -A "$repo/.orch" | grep -q '^\.decisions\.'; then fail "a done whose decisions temp write failed left a temp file"; fi
     rm -rf "$repo/.orch/taskdraft/T16"
@@ -1326,8 +1359,8 @@ mv "$tmp/d-saved.md" "$dfile"
 case_ "answers copied to decisions.md before questions.md is deleted"
 mv "$dfile" "$tmp/d-saved.md"
 st questions T1 put --role task-egm --spec none <<<"$two_blocks" >/dev/null
-sed -i '0,/^A:$/s//A: ok/' "$qfile"
-sed -i 's/^A:$/A: --prefix/' "$qfile"
+first_a 'A: ok' "$qfile"
+sed_i 's/^A:$/A: --prefix/' "$qfile"
 run st questions T1 done
 [ "$rc" = 0 ] && [ "$out" = 'questions: removed .orch/taskdraft/T1/questions.md' ] && [ ! -e "$qfile" ] || fail "done with role task-egm: $rc $out $err"
 [ "$(cat "$dfile")" = "# Decisions
@@ -1343,7 +1376,7 @@ cp "$dfile" "$tmp/d-copy.md"
 rm -f "$dfile"
 ln -s "$repo/victim.txt" "$dfile"
 st questions T1 put --role task-elephant --spec docs/designs/greet.md <<<"$two_blocks" >/dev/null
-sed -i 's/^A:$/A: ok/' "$qfile"
+sed_i 's/^A:$/A: ok/' "$qfile"
 run st questions T1 done
 [ "$rc" = 2 ] && grep -qF 'task-draft-state: decisions: ' <<<"$err" && [ -f "$qfile" ] && [ "$(cat "$repo/victim.txt")" = VICTIM ] || fail "done with decisions.md a symlink: $rc $err"
 rm -f "$dfile"
@@ -1352,7 +1385,7 @@ run st questions T1 done
 [ "$rc" = 0 ] && [ ! -e "$qfile" ] && [ "$(grep -c '^## R' "$dfile")" = 4 ] && grep -qx 'A: standard' "$dfile" || fail "done with role task-elephant: $rc $(cat "$dfile")"
 cp "$dfile" "$tmp/d-before.md"
 st questions T1 put --role task-draft --spec docs/designs/greet.md <<<$'QUESTION: Send these 3 files to non-local harnesses?\nCONTEXT: the list\nOPTIONS: send | skip non-local' >/dev/null
-sed -i 's/^A:$/A: send/' "$qfile"
+sed_i 's/^A:$/A: send/' "$qfile"
 run st questions T1 done
 [ "$rc" = 0 ] && [ ! -e "$qfile" ] && cmp -s "$dfile" "$tmp/d-before.md" || fail "done with role task-draft changed decisions.md: $rc"
 st questions T1 put --role task-egm --spec none <<<"$two_blocks" >/dev/null
@@ -1370,8 +1403,8 @@ mv "$repo/.orch-real" "$repo/.orch"
 case_ "done keeps questions.md when the decisions copy fails"
 want=$(printf '%o' $(( 0666 & ~0$(umask) )))
 st questions T1 put --role task-egm --spec none <<<"$two_blocks" >/dev/null
-[ "$(stat -c %a "$qfile")" = "$want" ] || fail "questions.md is mode $(stat -c %a "$qfile"), not the umask's $want"
-sed -i 's/^A:$/A: ok/' "$qfile"
+[ "$(fmode "$qfile")" = "$want" ] || fail "questions.md is mode $(fmode "$qfile"), not the umask's $want"
+sed_i 's/^A:$/A: ok/' "$qfile"
 cp "$qfile" "$tmp/q-kept.md"
 cp "$dfile" "$tmp/d-before.md"
 chmod 555 "$repo/.orch"
@@ -1391,10 +1424,10 @@ else
 fi
 chmod 755 "$repo/.orch"
 run st questions T1 done
-[ "$rc" = 0 ] && [ ! -e "$qfile" ] && [ "$(stat -c %a "$dfile")" = "$want" ] || fail "done after the folder is writable again: $rc, decisions.md mode $(stat -c %a "$dfile")"
+[ "$rc" = 0 ] && [ ! -e "$qfile" ] && [ "$(fmode "$dfile")" = "$want" ] || fail "done after the folder is writable again: $rc, decisions.md mode $(fmode "$dfile")"
 case_ "done exits 2 when questions.md cannot be removed"
 st questions T1 put --role task-egm --spec none <<<"$two_blocks" >/dev/null
-sed -i 's/^A:$/A: ok/' "$qfile"
+sed_i 's/^A:$/A: ok/' "$qfile"
 before=$(grep -c '^## R' "$dfile")
 top=$(sed -n 's/^## R\([0-9][0-9]*\) .*/\1/p' "$dfile" | sort -n | tail -1)
 chmod 555 "$repo/.orch/taskdraft/T1"
@@ -1436,7 +1469,7 @@ case "${INJ:-}" in
     awk-on) if [ "$t" = awk ]; then for a in "$@"; do case "$a" in *"$INJ_AWK"*) exit 1 ;; esac; done; fi ;;
     awk-mute) if [ "$t" = awk ]; then for a in "$@"; do case "$a" in *"$INJ_AWK"*) exit 0 ;; esac; done; fi ;;
     mkdir-plant) if [ "$t" = mkdir ]; then "$real" "$@" || exit; rm -f -- "$PLANT"; ln -s -- "$PLANT_TO" "$PLANT"; exit 0; fi ;;
-    mkdir-move) if [ "$t" = mkdir ]; then "$real" "$@" || exit; mv -T -- "$PLANT" "$PLANT_TO"; ln -s -- "$PLANT_TO" "$PLANT"; exit 0; fi ;;
+    mkdir-move) if [ "$t" = mkdir ]; then "$real" "$@" || exit; mv -- "$PLANT" "$PLANT_TO"; ln -s -- "$PLANT_TO" "$PLANT"; exit 0; fi ;;
     mktemp-link) if [ "$t" = mktemp ]; then p=$("$real" "$@") || exit; rm -f -- "$p"; ln -s -- "$PLANT_TO" "$p"; printf '%s\n' "$p"; exit 0; fi ;;
     mktemp-dir) if [ "$t" = mktemp ]; then p=$("$real" "$@") || exit; rm -f -- "$p"; mkdir -- "$p"; printf '%s\n' "$p"; exit 0; fi ;;
 esac
@@ -1453,10 +1486,10 @@ ij() {
     local w="$1"
     shift
     case "$w" in
-        P1) run env -C "$repo" PATH="$inj:$PATH" "$@" "$state" questions TP put --role task-egm --spec none <<<"$two_blocks" ;;
-        P2) run env -C "$repo" PATH="$inj:$PATH" "$@" "$state" questions T1 put --role task-elephant --spec none <<<"$two_blocks" ;;
-        A) run env -C "$repo" PATH="$inj:$PATH" "$@" "$state" decisions add T1 --source chat <<<'A1: q => a' ;;
-        D) run env -C "$repo" PATH="$inj:$PATH" "$@" "$state" questions TD done </dev/null ;;
+        P1) run at "$repo" env PATH="$inj:$PATH" "$@" "$state" questions TP put --role task-egm --spec none <<<"$two_blocks" ;;
+        P2) run at "$repo" env PATH="$inj:$PATH" "$@" "$state" questions T1 put --role task-elephant --spec none <<<"$two_blocks" ;;
+        A) run at "$repo" env PATH="$inj:$PATH" "$@" "$state" decisions add T1 --source chat <<<'A1: q => a' ;;
+        D) run at "$repo" env PATH="$inj:$PATH" "$@" "$state" questions TD done </dev/null ;;
     esac
 }
 # prep <writer>: the files the writer starts from, saved for kept.
@@ -1466,7 +1499,7 @@ prep() {
         P2) snap "$qfile" ;;
         A) snap "$dfile" ;;
         D) st questions TD put --role task-egm --spec none <<<"$two_blocks" >/dev/null
-           sed -i 's/^A:$/A: ok/' "$tdfile"
+           sed_i 's/^A:$/A: ok/' "$tdfile"
            snap "$tdfile" "$dfile" ;;
     esac
 }
@@ -1479,7 +1512,7 @@ snap() {
 # kept <label>: every snapped file is still a regular file with the same bytes (or still absent); no temp file.
 kept() {
     local i=0 f
-    for f in "${snapped[@]}"; do
+    for f in ${snapped[@]+"${snapped[@]}"}; do
         i=$((i + 1))
         if [ -e "$tmp/snap/$i" ]; then
             [ -f "$f" ] && [ ! -L "$f" ] && cmp -s "$f" "$tmp/snap/$i" || fail "$1: ${f#"$repo"/} was changed or removed"
@@ -1493,7 +1526,7 @@ kept() {
 # restore: put the snapped files back (a planted link replaced one of them).
 restore() {
     local i=0 f
-    for f in "${snapped[@]}"; do
+    for f in ${snapped[@]+"${snapped[@]}"}; do
         i=$((i + 1))
         rm -f -- "$f"
         if [ -e "$tmp/snap/$i" ]; then cp -- "$tmp/snap/$i" "$f"; fi
@@ -1588,7 +1621,7 @@ for kind in link dir; do
         cmp -s "$repo/victim.txt" "$tmp/victim-before" || fail "$w with mktemp giving a $kind wrote through it"
         # the planted path is not one mktemp made, so it is never removed: exactly one is there, still a link or a folder
         planted=$(find "$repo/$reldir" -maxdepth 1 -name "$pre*" -print)
-        [ -n "$planted" ] && [ "$(printf '%s\n' "$planted" | wc -l)" = 1 ] || fail "$w with mktemp giving a $kind: planted path gone or doubled: '$planted'"
+        [ -n "$planted" ] && [ $(( $(printf '%s\n' "$planted" | wc -l) )) = 1 ] || fail "$w with mktemp giving a $kind: planted path gone or doubled: '$planted'"
         if [ "$kind" = link ]; then
             [ -L "$planted" ] && [ "$(readlink "$planted")" = "$repo/victim.txt" ] || fail "$w removed or changed the planted temp link"
         else
@@ -1603,7 +1636,7 @@ done
 case_ "answers exits 2 when questions.md cannot be read"
 # a failed _qparse must not read as "all answered" (exit 0, nothing printed)
 prep D
-run env -C "$repo" PATH="$inj:$PATH" INJ=awk-on INJ_AWK='/^Role:/' "$state" questions TD answers
+run at "$repo" env PATH="$inj:$PATH" INJ=awk-on INJ_AWK='/^Role:/' "$state" questions TD answers
 [ "$rc" = 2 ] && [ -z "$out" ] && [ "$err" = 'task-draft-state: questions: cannot read .orch/taskdraft/TD/questions.md' ] ||
     fail "answers with the questions.md read failing: $rc $out $err"
 kept "answers with the questions.md read failing"
@@ -1650,7 +1683,7 @@ for w in A D; do
     prep "$w"
     ij "$w" INJ=mkdir-move PLANT="$repo/.orch" PLANT_TO="$repo/.orch-real"
     rm -f "$repo/.orch"
-    mv -T "$repo/.orch-real" "$repo/.orch"
+    mv "$repo/.orch-real" "$repo/.orch"
     [ "$rc" = 2 ] && [ "$err" = 'task-draft-state: decisions: .orch is a symlink; left unchanged' ] || fail "$w with .orch planted as a link: $rc $err"
     kept "$w after .orch was planted as a link"
     done_tidy
@@ -1660,7 +1693,7 @@ r4="$tmp/r4"
 mkdir -p "$r4/.orch/td-real"
 git -C "$r4" init -q
 ln -s "$r4/.orch/td-real" "$r4/.orch/taskdraft"
-run env -C "$r4" "$state" questions TL put --role task-egm --spec none <<<"$two_blocks"
+run at "$r4" env "$state" questions TL put --role task-egm --spec none <<<"$two_blocks"
 [ "$rc" = 2 ] && [ "$err" = 'task-draft-state: questions: .orch/taskdraft is a symlink; left unchanged' ] && [ -z "$(ls -A "$r4/.orch/td-real")" ] ||
     fail "put through a folder link inside the repo: $rc $err $(ls -A "$r4/.orch/td-real")"
 
@@ -1675,5 +1708,33 @@ mv "$tmp/d-saved.md" "$dfile"
 snapped=()
 kept "decisions add onto a folder"
 rm -f "$qfile"
+
+case_ "--file input of put and decisions add"
+# the orch guard lets the main loop run a helper with plain arguments only (no pipe, no <), so both writers also read
+# their input from a file
+printf '%s\n' "$two_blocks" > "$tmp/blocks.md"
+st questions TF put --role task-egm --spec none <<<"$two_blocks" >/dev/null
+cp "$repo/.orch/taskdraft/TF/questions.md" "$tmp/q-stdin.md"
+run st questions TF put --role task-egm --spec none --file "$tmp/blocks.md" </dev/null
+[ "$rc" = 0 ] && [ "$out" = '2 questions in .orch/taskdraft/TF/questions.md' ] && cmp -s "$repo/.orch/taskdraft/TF/questions.md" "$tmp/q-stdin.md" ||
+    fail "put --file: $rc $out $err"
+rm -rf "$repo/.orch/taskdraft/TF"
+before=$(grep -c '^## R' "$dfile")
+printf 'A1: File question? => file answer\n' > "$tmp/answers.md"
+run st decisions add T1 --source chat --file "$tmp/answers.md" </dev/null
+[ "$rc" = 0 ] && [ "$out" = 'decisions: 1 added to .orch/decisions.md' ] && [ "$(grep -c '^## R' "$dfile")" = $((before + 1)) ] &&
+    [ "$(tail -2 "$dfile")" = 'A: file answer
+source: chat' ] || fail "decisions add --file: $rc $out $err"
+cp "$dfile" "$tmp/d-before.md"
+for f in "$tmp/none.md" "$tmp"; do
+    run st decisions add T1 --source chat --file "$f" </dev/null
+    [ "$rc" = 2 ] && [ "$err" = "task-draft-state: decisions: --file $f is not a file that can be read" ] || fail "decisions add --file $f: $rc $err"
+    run st questions TF put --role task-egm --spec none --file "$f" </dev/null
+    [ "$rc" = 2 ] && [ "$err" = "task-draft-state: questions: --file $f is not a file that can be read" ] && [ ! -e "$repo/.orch/taskdraft/TF" ] ||
+        fail "put --file $f: $rc $err"
+done
+cmp -s "$dfile" "$tmp/d-before.md" || fail "a failed --file changed decisions.md"
+run st decisions add T1 --source chat --file
+[ "$rc" = 2 ] && [ "$err" = 'task-draft-state: decisions: --file takes a path' ] || fail "decisions add --file with no path: $rc $err"
 
 echo "task-draft tests passed"

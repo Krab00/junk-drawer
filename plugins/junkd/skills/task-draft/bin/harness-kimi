@@ -48,7 +48,9 @@ done
 : "$effort" "$thinking" "$pass"
 
 start=$(date +%s)
-if [ "$(stat -c %s -- "$prompt")" -gt 122880 ]; then
+# the size in bytes from wc -c, as GNU and BSD both count it (BSD pads it with blanks; $(( )) drops them)
+size=$(wc -c < "$prompt")
+if [ $((size)) -gt 122880 ]; then
   echo "harness-kimi: prompt over 120 KiB" >&2
   printf '{"wall_s":%d,"tokens_in":null,"tokens_out":null,"cost":null}\n' "$(($(date +%s) - start))"
   exit 2
