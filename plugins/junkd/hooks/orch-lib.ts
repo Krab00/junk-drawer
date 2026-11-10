@@ -114,7 +114,7 @@ export function applyOrchSettings(v: Record<string, unknown>): void {
 }
 
 // Coordination only. RemoteTrigger runs a claude.ai routine (main-loop-only tool: its OAuth token is in-process, a
-// subagent has none). Agent, SendMessage, Read, Write, Bash, Monitor, CronCreate and ScheduleWakeup have rules below.
+// subagent has none). Agent, SendMessage, Read, Write, Edit, Bash, Monitor, CronCreate and ScheduleWakeup have rules below.
 const ALLOW = new Set([
   'ListAgents', 'TaskStop', 'AskUserQuestion', 'ToolSearch', 'Skill',
   'CronList', 'CronDelete', 'EnterPlanMode', 'ExitPlanMode', 'PushNotification', 'RemoteTrigger',
@@ -193,6 +193,16 @@ function pathRule(tool: string, path: string, s: OrchState): string | undefined 
   return `${PREFIX} the main loop may Write only to the scratchpad, a .md in the repo's .orch/ task store (not an existing config.md), the orch state dir, the handoffs, the project memory or a new .md file, never to settings, Claude Code config (a .claude dir, the skills, agents, rules, commands, hooks of any plugin, CLAUDE.md, AGENTS.md, SKILL.md, anything else in the config dir) or this plugin. For ${path}, ask the user for a target path or delegate.`
 }
 
+// Edit: two of Write's path classes, with Write's conditions: a .md in .orch/taskdraft/<id>/ (storeWrite) and the
+// project memory (projects/<p>/memory/ in the config dir). Any path Write refuses (forbidden), Edit refuses too.
+const editOk = (path: string, s: OrchState) => {
+  const rest = path.startsWith(`${s.configDir}/`) ? path.slice(s.configDir.length + 1) : undefined
+  const dir = `${s.repo}/.orch/taskdraft`
+  const draft = s.repo !== '' && under(path, dir) && /^[^/]+\/./.test(path.slice(dir.length + 1)) // <id>/<file>, not a file right in taskdraft/
+  return !forbidden(path, s) && ((draft && storeWrite(path, s.repo)) || (rest !== undefined && MEMORY.test(rest)))
+}
+const EDIT_DENY = `${deny('Edit')} Edit passes only on a .md in the repo's .orch/taskdraft/<id>/ and on a file in the project memory (projects/*/memory/ in the config dir), where Write passes too.`
+
 // `<bin>/<script> <plain args>`, one optional pair of quotes around the script path.
 function isBinCall(command: string, binDir: string): boolean {
   if (!binDir) return false
@@ -227,6 +237,12 @@ export function orchGuard(e: { tool: string; agentId?: string; [k: string]: unkn
         return `${PREFIX} ${e.tool} of "${raw}": use a plain absolute ASCII path (no ~, no relative path, no surrounding spaces, no non-ASCII letters).`
       if (s.placed === null) return `${PREFIX} ${e.tool} of ${raw}: the path can't be placed (its folder doesn't resolve, or it is a link to nothing). Delegate it, or use an existing folder.`
       return pathRule(e.tool, norm(raw), s) ?? (s.placed ? pathRule(e.tool, norm(s.placed.path), { ...s, ...s.placed }) : undefined)
+    }
+    case 'Edit': {
+      // Write's checks: a plain path, both spellings placed and passing, here against Edit's two classes.
+      const raw = String(e.file_path ?? '')
+      if (raw !== raw.trim() || !PLAIN_PATH.test(raw) || s.placed === null) return EDIT_DENY
+      return editOk(norm(raw), s) && (!s.placed || editOk(norm(s.placed.path), { ...s, ...s.placed })) ? undefined : EDIT_DENY
     }
     case 'CronCreate':
     case 'ScheduleWakeup': {

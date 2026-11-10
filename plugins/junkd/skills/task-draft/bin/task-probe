@@ -20,8 +20,10 @@ five-question questionnaire. It is written to <out>/probe-r<n>-<class>-<slug>.pr
   stderr).
 --list writes <out>/inline-files.txt and prints the inlined paths, the `(omitted: size cap) <path>` lines and
 `total <bytes>`. --judge-input writes <stem>.judge.md from the spec and the answer file. --ac-hash prints the
-SHA-256 of the `## Acceptance criteria` section. Exit 2: bad arguments or entry, or an <out> outside the repo or a
-symlinked target; exit 3: the spec has no acceptance criteria. Nothing here reads a credential.
+SHA-256 of the normalised acceptance-criteria items (the ac-rule block below), joined by newlines: the list marker,
+the checkbox, the indent, blank lines and prose do not count, so a format-only change keeps the hash. Exit 2: bad
+arguments or entry, or an <out> outside the repo or a symlinked target; exit 3: the spec has no acceptance criteria
+(no section, or no `AC<n>:` item), the same rule and message as task-from-spec. Nothing here reads a credential.
 """
 import argparse
 import hashlib
@@ -116,20 +118,47 @@ def git_root():
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
-def ac_section(text):
-    """The `## Acceptance criteria` section's lines, heading included, to the next `## ` heading; None when absent."""
-    lines = text.split("\n")
+# >>> ac-rule: the acceptance-criteria rule, the same block in task-probe and task-from-spec (tests/smoke.sh checks it)
+# The section: the first heading (outside a code fence) that names "Acceptance criteria", to the next heading of the
+# same or a higher level. An item: a line that is `AC<n>: ...` after optional leading space, an optional list marker
+# (`- `, `* `, `+ `, `<n>. `, `<n>) `) and an optional checkbox (`[ ] `, `[x] `), with text after the colon (a bare
+# `AC<n>:` is no item). The item is its text from `AC<n>:` on, trailing space trimmed; an indented line that is no
+# item continues the item above it (one space between).
+# Blank lines, prose and any other line add nothing. AC_ERR is the message of exit 3 (no section, or no item).
+AC_HEAD_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+AC_ITEM_RE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:\[[ xX]\]\s+)?(AC(\d+):\s*\S.*?)\s*$")
+AC_ERR = "has no '## Acceptance criteria' list; add one (egm-resolve) and run again"
+
+
+def ac_body(lines):
+    """The body lines of the acceptance-criteria section; None when the spec has none."""
+    start, level, fence = None, 0, False
     for i, line in enumerate(lines):
-        if re.match(r"^##\s+Acceptance criteria\s*$", line.rstrip("\r"), re.I):
-            j = i + 1
-            while j < len(lines) and not lines[j].startswith("## "):
-                j += 1
-            return lines[i:j]
-    return None
+        if line.lstrip().startswith(("```", "~~~")):
+            fence = not fence
+            continue
+        m = None if fence else AC_HEAD_RE.match(line)
+        if not m:
+            continue
+        if start is None:
+            if re.search(r"acceptance criteria", m.group(2), re.I):
+                start, level = i + 1, len(m.group(1))
+        elif len(m.group(1)) <= level:
+            return lines[start:i]
+    return None if start is None else lines[start:]
 
 
-def has_acs(section):
-    return section is not None and any(re.search(r"\bAC\d+:", line) for line in section)
+def ac_items(body):
+    """The normalised items of a section body: `AC<n>: ...`, marker and checkbox gone, continuations joined."""
+    items = []
+    for line in body or []:
+        m = AC_ITEM_RE.match(line)
+        if m:
+            items.append(m.group(1))
+        elif items and line.strip() and len(line) - len(line.lstrip()) >= 2:
+            items[-1] += " " + line.strip()
+    return items
+# <<< ac-rule
 
 
 def named_section(text, pattern):
@@ -228,8 +257,7 @@ def build_prompt(spec_text, inlined, omitted):
 
 
 def judge_text(spec_text, inlined, named, answer):
-    section = ac_section(spec_text)
-    acs = "\n".join(section[1:]).strip()
+    acs = "\n".join(ac_body(spec_text.split("\n"))).strip()
     first = [rel for rel, _, _ in inlined]
     files = first + [rel for rel in named if rel not in first]
     oos = named_section(spec_text, r"^(non-goals|out of scope)$")
@@ -360,13 +388,13 @@ def main(argv):
         return bad(f"no spec file {a.spec}")
     with open(a.spec, encoding="utf-8", errors="replace") as f:
         spec_text = f.read()
-    section = ac_section(spec_text)
+    items = ac_items(ac_body(spec_text.split("\n")))
 
     if a.ac_hash:
-        if not has_acs(section):
-            print(f"task-probe: {a.spec} has no ## Acceptance criteria list", file=sys.stderr)
+        if not items:
+            print(f"task-probe: {a.spec} {AC_ERR}", file=sys.stderr)
             return 3
-        print(hashlib.sha256("\n".join(section).encode("utf-8")).hexdigest())
+        print(hashlib.sha256("\n".join(items).encode("utf-8")).hexdigest())
         return 0
 
     if not re.fullmatch(r"\d+", a.cap_bytes or ""):
@@ -401,8 +429,8 @@ def main(argv):
             return bad("--round takes a whole number, 1 or more")
         if entry['harness'] == 'claude' and entry['id'] not in CLAUDE_MODELS:
             return bad(f"harness claude takes haiku, sonnet, opus or fable, not {entry['id']}")
-        if not has_acs(section):
-            print(f"task-probe: {a.spec} has no ## Acceptance criteria list", file=sys.stderr)
+        if not items:
+            print(f"task-probe: {a.spec} {AC_ERR}", file=sys.stderr)
             return 3
 
     try:

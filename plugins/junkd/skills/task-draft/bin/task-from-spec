@@ -7,15 +7,16 @@
 Writes <tasks_dir>/<id>.md (tasks_dir from `orch-state tasks-dir` when it prints a path, else .orch/tasks) in the
 format `orch-state new` writes: the frontmatter (id, title, status todo, deps, source adhoc, source_updated_at,
 criteria_source verbatim, spec, worker_class with --worker-class), `## Description`, `## Acceptance criteria` (the
-spec's own list, each item `- [ ] AC<n>: ...`), `## Test matrix` when the spec has one, and with --probe
-`## Evidence: comprehension` (`understood <N/M> on class <X>`, then the agreed answer). Without --force the same
-inputs always give a byte-identical file. With --force on an existing file, its deps, status, critical, source and
-source_updated_at values and its whole `## Verification` section are kept.
+spec's own items, each as `- [ ] AC<n>: ...`; the ac-rule block below says what an item is), `## Test matrix` when
+the spec has one, and with --probe `## Evidence: comprehension` (`understood <N/M> on class <X>`, then the agreed
+answer). Without --force the same inputs always give a byte-identical file. With --force on an existing file, its
+deps, status, critical, source and source_updated_at values and its whole `## Verification` section are kept.
 
 Writes are safe: the target's real path must be inside the repo root, an existing target is opened with O_NOFOLLOW
 (a symlink is refused), and the text goes to a mkstemp file in the target's folder that is os.replace'd onto it.
 Exit codes: 0 written; 1 the task file exists (no --force); 2 bad arguments, or a target outside the repo or a
-symlink; 3 the spec has no acceptance criteria; 4 .orch/taskdraft/<id>/questions.md exists (a question is open).
+symlink; 3 the spec has no acceptance criteria (no section, or no `AC<n>:` item; task-probe --ac-hash exits 3 on the
+same specs); 4 .orch/taskdraft/<id>/questions.md exists (a question is open).
 """
 import argparse
 import os
@@ -26,8 +27,6 @@ import tempfile
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 HEAD_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.*\S)\s*$")
-AC_ID_RE = re.compile(r"^\**(AC[-\s]?(\d+))\**\s*[:.)-]\s*(.*)$", re.I)
 CLASSES = ('A', 'B', 'C', 'F')
 # The frontmatter keys --force takes from the existing file, in the order they are written.
 KEPT = ('status', 'deps', 'source', 'source_updated_at', 'critical')
@@ -59,25 +58,56 @@ def section(lines, heads, pattern):
     return None
 
 
-def criteria(body):
-    items, n = [], 0
-    for line in body:
-        m = ITEM_RE.match(line)
-        indent = len(line) - len(line.lstrip())
-        if not m or indent >= 2:
-            # an indented line (a wrapped sentence or a nested item) belongs to the item above it
-            if items and line.strip() and indent >= 2:
-                items[-1] = (items[-1][0], items[-1][1] + " " + line.strip())
+# >>> ac-rule: the acceptance-criteria rule, the same block in task-probe and task-from-spec (tests/smoke.sh checks it)
+# The section: the first heading (outside a code fence) that names "Acceptance criteria", to the next heading of the
+# same or a higher level. An item: a line that is `AC<n>: ...` after optional leading space, an optional list marker
+# (`- `, `* `, `+ `, `<n>. `, `<n>) `) and an optional checkbox (`[ ] `, `[x] `), with text after the colon (a bare
+# `AC<n>:` is no item). The item is its text from `AC<n>:` on, trailing space trimmed; an indented line that is no
+# item continues the item above it (one space between).
+# Blank lines, prose and any other line add nothing. AC_ERR is the message of exit 3 (no section, or no item).
+AC_HEAD_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+AC_ITEM_RE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:\[[ xX]\]\s+)?(AC(\d+):\s*\S.*?)\s*$")
+AC_ERR = "has no '## Acceptance criteria' list; add one (egm-resolve) and run again"
+
+
+def ac_body(lines):
+    """The body lines of the acceptance-criteria section; None when the spec has none."""
+    start, level, fence = None, 0, False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            fence = not fence
             continue
-        text = m.group(1)
-        a = AC_ID_RE.match(text)
-        if a:
-            num, text = int(a.group(2)), a.group(3).strip()
-        else:
-            num = n + 1
-        n = max(n, num)
-        items.append((num, text))
-    return [f"- [ ] AC{num}: {text}" for num, text in items]
+        m = None if fence else AC_HEAD_RE.match(line)
+        if not m:
+            continue
+        if start is None:
+            if re.search(r"acceptance criteria", m.group(2), re.I):
+                start, level = i + 1, len(m.group(1))
+        elif len(m.group(1)) <= level:
+            return lines[start:i]
+    return None if start is None else lines[start:]
+
+
+def ac_items(body):
+    """The normalised items of a section body: `AC<n>: ...`, marker and checkbox gone, continuations joined."""
+    items = []
+    for line in body or []:
+        m = AC_ITEM_RE.match(line)
+        if m:
+            items.append(m.group(1))
+        elif items and line.strip() and len(line) - len(line.lstrip()) >= 2:
+            items[-1] += " " + line.strip()
+    return items
+# <<< ac-rule
+
+
+def criteria(lines):
+    """The task file's AC list: each item of the ac-rule as `- [ ] AC<n>: <text>`."""
+    out = []
+    for item in ac_items(ac_body(lines)):
+        m = re.match(r"AC(\d+):\s*(.*)$", item)
+        out.append(f"- [ ] AC{int(m.group(1))}: {m.group(2)}")
+    return out
 
 
 def title_of(lines, heads, fallback):
@@ -206,9 +236,9 @@ def main(argv):
     with open(a.spec, encoding="utf-8", errors="replace") as f:
         lines = f.read().splitlines()
     heads = headings(lines)
-    acs = criteria(section(lines, heads, r"acceptance criteria") or [])
+    acs = criteria(lines)
     if not acs:
-        print(f"task-from-spec: {a.spec} has no '## Acceptance criteria' list; add one (egm-resolve) and run again", file=sys.stderr)
+        print(f"task-from-spec: {a.spec} {AC_ERR}", file=sys.stderr)
         return 3
     matrix = section(lines, heads, r"test matrix")
     title = title_of(lines, heads, a.task_id)

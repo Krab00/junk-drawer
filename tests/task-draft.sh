@@ -1075,6 +1075,75 @@ done
 case_ "from-spec no criteria"
 run fs "$repo/docs/designs/noac.md" T6
 [ "$rc" = 3 ] && [ ! -e "$repo/.orch/tasks/T6.md" ] || fail "a spec with no criteria: $rc"
+case_ "ac-rule: task-probe --ac-hash and task-from-spec agree"
+# One rule in both helpers: `AC<n>:` after optional indent, list marker and checkbox. Each fixture: both exit 0 or
+# both exit 3 (with the same message shape); a format-only change keeps the hash.
+acdir="$repo/docs/designs/acr"
+mkdir -p "$acdir"
+acspec() { printf '# AC %s\n\nIntro.\n\n## Acceptance criteria\n%b\n## After\nAC9: not in the section. (modality: test)\n' "$1" "$2" > "$acdir/$1.md"; }
+acspec bare 'AC1: the first. (modality: test)\nAC2: the second. (modality: data)\n'
+acspec dash '- AC1: the first. (modality: test)\n- AC2: the second. (modality: data)\n'
+acspec star '* AC1: the first. (modality: test)\n* AC2: the second. (modality: data)\n'
+acspec plus '+ AC1: the first. (modality: test)\n+ AC2: the second. (modality: data)\n'
+acspec num '1. AC1: the first. (modality: test)\n2) AC2: the second. (modality: data)\n'
+acspec box '- [ ] AC1: the first. (modality: test)\n- [x] AC2: the second. (modality: data)\n'
+acspec mixed 'Prose before the list.\n\nAC1: the first. (modality: test)   \n\n- AC2: the second. (modality: data)\n'
+acspec indent '  AC1: the first. (modality: test)\n  - AC2: the second. (modality: data)\n'
+acspec other 'AC1: the first. (modality: test)\nAC2: another second. (modality: data)\n'
+acspec prose 'The criteria follow later.\n- greet works\n1. it is fast\n'
+acspec empty '\n'
+acspec notext 'AC3:\n- AC3:   \n'
+acspec withempty 'AC1: the first. (modality: test)\nAC3:\n- AC2: the second. (modality: data)\n- AC4:   \n'
+printf '# AC none\n\nNo criteria here.\n\n## After\nAC1: not in a section. (modality: test)\n' > "$acdir/none.md"
+n=0
+for f in bare dash star plus num box mixed indent other withempty prose empty notext none; do
+    n=$((n + 1))
+    run python3 -I "$probe" "$acdir/$f.md" --ac-hash
+    prc=$rc perr=$err
+    eval "hash_$f=\$out"
+    run fs "$acdir/$f.md" "ACR$n"
+    case $f in
+        prose | empty | notext | none)
+            [ "$prc" = 3 ] && [ "$rc" = 3 ] || fail "ac-rule $f: task-probe exited $prc, task-from-spec $rc (both must exit 3)"
+            [ "$perr" = "task-probe: $acdir/$f.md has no '## Acceptance criteria' list; add one (egm-resolve) and run again" ] &&
+                [ "$err" = "task-from-spec: $acdir/$f.md has no '## Acceptance criteria' list; add one (egm-resolve) and run again" ] ||
+                fail "ac-rule $f: the exit-3 messages: $perr / $err"
+            [ ! -e "$repo/.orch/tasks/ACR$n.md" ] || fail "ac-rule $f: a task file with no criteria" ;;
+        *)
+            [ "$prc" = 0 ] && [ "$rc" = 0 ] || fail "ac-rule $f: task-probe exited $prc, task-from-spec $rc (both must exit 0): $perr $err"
+            [ "$(awk '/^## Acceptance criteria$/ { f = 1; next } /^## / { f = 0 } f && NF' "$repo/.orch/tasks/ACR$n.md")" = "- [ ] AC1: the first. (modality: test)
+- [ ] AC2: $([ "$f" = other ] && echo another || echo the) second. (modality: data)" ] ||
+                fail "ac-rule $f: the task file's AC list: $(cat "$repo/.orch/tasks/ACR$n.md")" ;;
+    esac
+    rm -f "$repo/.orch/tasks/ACR$n.md"
+done
+[[ "$hash_bare" =~ ^[0-9a-f]{64}$ ]] || fail "ac-rule: no hash for the bare items: $hash_bare"
+for f in dash star plus num box mixed indent withempty; do
+    eval "h=\$hash_$f"
+    [ "$h" = "$hash_bare" ] || fail "ac-rule: the $f items hash to $h, the bare ones to $hash_bare"
+done
+[ "$hash_other" != "$hash_bare" ] || fail "ac-rule: a changed item text keeps the hash"
+# the hash is the normalised items joined by newlines
+[ "$hash_bare" = "$(printf 'AC1: the first. (modality: test)\nAC2: the second. (modality: data)' | python3 -I -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')" ] ||
+    fail "ac-rule: the hash is not the SHA-256 of the normalised items"
+# the live run: 17 bare items, then the same with `- `: both helpers pass both, the hash stays
+{ printf '# Live\n\n## Acceptance criteria\n'; for i in $(seq 1 17); do printf 'AC%s: item %s holds. (modality: data)\n' "$i" "$i"; done; } > "$acdir/live.md"
+sed 's/^AC/- AC/' "$acdir/live.md" > "$acdir/live-dash.md"
+for f in live live-dash; do
+    run python3 -I "$probe" "$acdir/$f.md" --ac-hash
+    [ "$rc" = 0 ] || fail "ac-rule $f: task-probe exited $rc"
+    eval "hash_${f/-/_}=\$out"
+    run fs "$acdir/$f.md" "ACR-$f"
+    [ "$rc" = 0 ] && [ "$(grep -c '^- \[ \] AC[0-9]*: item' "$repo/.orch/tasks/ACR-$f.md")" = 17 ] || fail "ac-rule $f: task-from-spec exited $rc: $err"
+    rm -f "$repo/.orch/tasks/ACR-$f.md"
+done
+[ "$hash_live" = "$hash_live_dash" ] || fail "ac-rule: adding '- ' to 17 bare items changed the hash"
+# an indented continuation line is part of the item, in the hash and in the task file
+printf '# W\n\n## Acceptance criteria\n- AC1: wrapped\n  across two lines. (modality: test)\n' > "$acdir/wrap.md"
+printf '# W\n\n## Acceptance criteria\n- AC1: wrapped\n  across 2 lines. (modality: test)\n' > "$acdir/wrap2.md"
+[ "$(python3 -I "$probe" "$acdir/wrap.md" --ac-hash)" != "$(python3 -I "$probe" "$acdir/wrap2.md" --ac-hash)" ] ||
+    fail "ac-rule: a changed continuation line keeps the hash"
+rm -rf "$acdir"
 case_ "from-spec deterministic"
 cp -a "$repo" "$tmp/repoA"
 cp -a "$repo" "$tmp/repoB"

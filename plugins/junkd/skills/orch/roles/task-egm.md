@@ -30,9 +30,13 @@ The helpers `task-draft-state` and `task-probe` live in junkd's `bin/` folder (o
     H1, lowercased, with every run of `[^a-z0-9]+` replaced by `-`, trimmed of
     `-`, cut to 40 characters. With an input under `docs/designs/`, the spec is
     that file.
-*   The spec must end with `## Acceptance criteria`, items
-    `AC<n>: <tool-checkable sentence> (modality: ui|api|test|data)`. This
-    section passes EGM's section approval like any other.
+*   The spec must end with `## Acceptance criteria`. Write each item on its
+    own line, with the list marker:
+    `- AC<n>: <tool-checkable sentence> (modality: ui|api|test|data)`.
+    The helpers also accept a bare `AC<n>: …` line, an indented line, and the
+    markers `* `, `+ `, `<n>. `, `<n>) `, but write `- `. A line with no
+    `AC<n>:` is no item. This section passes EGM's section approval like any
+    other.
 *   Register check: before it returns any question EGM's skills tell it
     to ask the user (a draft gate, the review preset, an egm-resolve choice),
     it checks the decisions register: the spec's `## Decisions` first (when

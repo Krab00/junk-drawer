@@ -814,9 +814,10 @@ Every denial starts with `Orchestrator mode (orch):` and says what to do instead
 | `SendMessage` | to a peer session (a name from `ListAgents`, with or without its ` [ref]`), to `main` or as a protocol reply: always, the engine resolves the name. To a subagent of this session: except to a reviewer (`verify-coordinator`, `ui-reviewer`, `test-planner`, bare or `junkd:`: spawn a new one), to an agent past `implementer_ctx_k` k tokens of context, or to a subagent id nobody knows (`a` and 15 or more hex digits, the shape of a subagent id; any other unknown name is a peer). A stopped agent is known by its `SubagentStop` record (see [Agent records](#agent-records)): its type and the context tokens of its transcript's last usage record, by id and by name. |
 | `Read` | in the session scratchpad, the repo's task store `<repo>/.orch/` (`<repo>` = git's toplevel of the session's cwd; none outside a repo) and, in the config dir (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), `orch/`, `handoffs/` and `projects/*/memory/`. The path must be a plain absolute ASCII path (no `~`, no relative path, no surrounding spaces, no non-ASCII letters) with no `..` segment; symlinks and case aliases are resolved first and where it lands must pass too, and a path that cannot be placed is denied. |
 | `Write` | in the same places as `Read`, except that in the task store only a `.md` file (task files, `_lessons.md`) and never an existing `.orch/config.md` (its `tasks_dir` steers the bin scripts; a new one passes as any new `.md` does), or to a new `.md` file. Never a path with a `..` segment, never to settings, Claude Code config (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, anything in a `.claude/` dir, any plugin's `agents`, `commands`, `skills`, `hooks`, `rules`, `output-styles`, a `.claude-plugin/` dir), the module's own control files `junkd/orch-off` and `junkd/orch-rules-off` (or any path under those names), the agent records `junkd/orch/_agents/` (any case, any path under it) or this plugin. The path must be a plain absolute ASCII path; symlinks and case aliases are resolved first, and a path that cannot be placed (a link to nothing, a folder that does not resolve) is denied. |
+| `Edit` | only on a `.md` in `<repo>/.orch/taskdraft/<id>/` and on a file in `projects/*/memory/` in the config dir (the memory index `MEMORY.md` and its files), with the conditions `Write` has there: a plain absolute ASCII path, no `..` segment, none of `Write`'s never-written paths, and where symlinks and case aliases land must pass too. Every path where `Write` is refused, and every other path, is refused. |
 | `Bash`, `Monitor` | only to run one of this plugin's own `bin/` scripts, by its path under the plugin root, with plain arguments (no quotes, `$`, backticks, `;`, `&`, `\|`, `<`, `>`) |
 | `CronCreate`, `ScheduleWakeup` | only to schedule `/junkd:orch` (or bare `/orch`), `/loop` of an allowed prompt, or a plain prompt, or to stop one |
-| anything else (`Edit`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `LSP`, MCP tools, …) | never |
+| anything else (`MultiEdit`, `NotebookEdit`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `LSP`, MCP tools, …) | never |
 
 If the guard itself throws, the call is denied (`Orchestrator mode (orch): guard error`). Known
 gaps: a `context: fork` skill raises no spawn event, so the guard never sees it; a plugin loaded
@@ -1786,7 +1787,13 @@ draft.
    dispatches the EGM reviewers. Its artifacts go to `.orch/taskdraft/<id>/egm/`. It ends with `spec <path>` or
    `failed: <reason>`.
 3. **Acceptance criteria.** The spec must have `## Acceptance criteria` with items
-   `AC<n>: … (modality: ui|api|test|data)`; `task-probe <spec> --ac-hash` keeps their hash.
+   `- AC<n>: … (modality: ui|api|test|data)`. This is the form to write. Both helpers also accept the bare
+   `AC<n>: …` line, an indented item, and the markers `* `, `+ `, `<n>. `, `<n>) ` (and a `[ ]` checkbox); a line
+   with no `AC<n>:` is no item. `task-probe <spec> --ac-hash` keeps the hash of the items: each item with its indent,
+   marker and checkbox stripped and its trailing space trimmed (an indented line that is no item joins the item
+   above), joined by newlines. Blank lines and prose do not count, so a format-only fix (bare to `- `) keeps the
+   hash. `task-probe --ac-hash` and `task-from-spec` read the items by one rule (the `ac-rule` block, the same in
+   both; `tests/smoke.sh` checks it) and both exit 3 when the section is missing or has no item.
 4. **Comprehension sub-loop** (only with `egm_models` on). The ladder is the first registry entry per class. Before a
    non-claude harness gets the spec, the skill lists the repo files the prompt would inline
    (`task-probe --list`, `inline-files.txt`) and asks `Send these <n> files to non-local harnesses?` (`send` or

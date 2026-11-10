@@ -90,7 +90,7 @@ that name disjoint files. A split never changes an AC's text.
 *   It writes `docs/designs/<id-lowercase>a-<slug>.md` and
     `docs/designs/<id-lowercase>b-<slug>.md`. Each holds the original spec with
     `## Acceptance criteria` cut to that part's ACs (renumbered `AC1…`, the text
-    otherwise verbatim) and a first line under the H1:
+    otherwise verbatim, each item as `- AC<n>: …`) and a first line under the H1:
     `Split from <original spec path>.`
 *   Each part has its own `<out>`: `.orch/taskdraft/<id>a/` and
     `.orch/taskdraft/<id>b/`. Each restarts at class A, round 1. The 12-round
