@@ -1,7 +1,7 @@
-// The /junkd frame: /junkd, ✚ junkd and q open and close junkd, handoff, orch, statusline, tools, lessons and egm together
-// as tabs (tools only while tools_enabled is on, lessons while orch_enabled and orch_lessons are, egm while egm_enabled
-// is); the junkd pane has the marketplace's plugins (on/off at user scope), every settings group of this plugin (core,
-// handoff, orch, tldr, ctx, statusline, tools, egm) and the commands. The drawing is junkd-views.tsx, fed closures over
+// The /junkd frame: /junkd, ✚ junkd and q open and close junkd, handoff, orch, statusline, tools and egm together as
+// tabs (tools only while tools_enabled is on, egm while egm_enabled is); the junkd pane has the marketplace's plugins
+// (on/off at user scope), every settings group of this plugin (core, handoff, orch, tldr, ctx, statusline, tools, egm)
+// and the commands. The drawing is junkd-views.tsx, fed closures over
 // `$`. egm.models is drawn dim, titled ` · wymaga enabled`, while egm.enabled is off; its pill shows the stored value.
 // - Plugins: the marketplace's plugins, each on or off in the user's settings.json; junkd is this pane. handoff,
 //   orch, tldr, ctx and statusline are no plugins of their own: each is switched by its group's `enabled` row.
@@ -20,7 +20,6 @@ import { PANE, SET, closeSet, hideSet, setIsOpen, setOpen } from './set'
 import { panelView, type Command, type Els, type Field, type PluginRow, type Section } from './junkd-views'
 import { GROUPS, isKey, keyOf, rowsOf } from './settings'
 import { T as Tools } from './tools'
-import { O as Orch } from './orch-lib'
 import { E as EGM } from './egm'
 
 type Json = Record<string, any>
@@ -28,10 +27,9 @@ type Json = Record<string, any>
 const MARKETPLACE = 'junk-drawer'
 // The groups with a pane of their own, which `settings ▸` opens (the feature panes of the set, set.ts).
 const hasPane = (group: string): group is FeaturePane => (SET as readonly string[]).includes(group)
-// The feature panes the set opens now: tools only while tools_enabled is on, lessons while orch and orch_lessons are,
-// egm while egm_enabled is.
+// The feature panes the set opens now: tools only while tools_enabled is on, egm while egm_enabled is.
 const opensNow = (): FeaturePane[] =>
-  SET.filter(p => (p !== 'tools' || Tools.enabled) && (p !== 'lessons' || (Orch.enabled && Orch.lessons)) && (p !== 'egm' || EGM.enabled))
+  SET.filter(p => (p !== 'tools' || Tools.enabled) && (p !== 'egm' || EGM.enabled))
 
 let isChanged = false
 let note = ''

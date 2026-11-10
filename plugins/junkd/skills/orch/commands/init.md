@@ -66,7 +66,7 @@ capabilities:
   api:  { run: "<dev-server cmd>", port_base: 3180, health: "/health" }  # omit if no api
   tests: { <pkg>: "<test cmd>" }   # use key `root` for a repo-level suite; omit absent runners
   security: { severity: high }     # only with a web app, an api, or a security-named file; omit otherwise
-standing_checks_extra: []          # project lessons promoted to standing checks (starts empty)
+standing_checks_extra: []          # project-specific standing checks (starts empty)
 specs: [PRD.md, specs/*.md]        # spec files /junkd:direction checks; omit when none were found
 worktree_links: [mobile/node_modules, mobile/ios/Pods]   # step 6; omit when none were approved
 github: { label: "orch" }          # github-issues backend only; drop otherwise
@@ -82,7 +82,7 @@ so pick bases far enough apart that a few parallel tasks won't collide (e.g. 518
 
 After the user confirms:
 1. Create `.orch/` if needed, then write `.orch/config.md`.
-2. Create `tasks_dir` and an empty `<tasks_dir>/_lessons.md` (the retro log `/junkd:orch` appends to).
+2. Create `tasks_dir`.
 3. Confirm `${CLAUDE_PLUGIN_ROOT}/bin/orch-state list` runs clean against the new config (empty
    store is fine), then tell the user how to start: `/junkd:orch <free text>` for an adhoc task, or
    `/junkd:orch batch` once tasks exist. If `.orch/config.md` already exists, show the diff and

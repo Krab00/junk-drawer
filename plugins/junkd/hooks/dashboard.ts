@@ -1,5 +1,5 @@
-// The orch dashboard's `$`-free half: the task store's parsers (frontmatter, the last verification table, the lessons),
-// the phases each agent opens and closes on its task, the merge with the status.js already on disk, and the status
+// The orch dashboard's `$`-free half: the task store's parsers (frontmatter, the last verification table), the
+// phases each agent opens and closes on its task, the merge with the status.js already on disk, and the status
 // itself (skills/orch/dashboard/status.sample.js holds the data contract the page reads). dashboard.tsx does the
 // awaits (agent list, files, git, usage, clock) and the writes; bin/orch-status builds the same file from a shell.
 import type { AgentInfo } from 'claude-code'
@@ -44,7 +44,6 @@ export type DashAgent = {
   events?: DashEvent[]
   id?: string
 }
-export type Lesson = { task: string; text: string }
 export type Status = {
   mock: false
   generatedAt: number
@@ -54,7 +53,6 @@ export type Status = {
   tasks: DashTask[]
   agents: DashAgent[]
   events: DashEvent[]
-  lessons: Lesson[]
   usage: { fiveHour?: number; week?: number }
   watchdog: { on?: boolean; minutes?: number }
 }
@@ -100,7 +98,7 @@ export function parseTask(file: string, text: string): TaskHead | undefined {
   return { id, title: unquote(fm.get('title') ?? ''), status: unquote(fm.get('status') ?? '') || 'todo', deps: listOf(fm.get('deps') ?? '', blocks.get('deps') ?? []) }
 }
 
-// Which files of the task dir are tasks: `*.md` not starting with `_` (_lessons.md, _notes-*.md).
+// Which files of the task dir are tasks: `*.md` not starting with `_` (_notes-*.md).
 export const isTaskFile = (name: string) => /\.md$/i.test(name) && !name.startsWith('_')
 
 export type Verdicts = { round: number; ac?: [number, number]; acx?: [number, number]; note?: string }
@@ -158,30 +156,6 @@ export function parseVerification(text: string): Verdicts | undefined {
   }
   const note = [fail.length ? `FAIL: ${fail.join(', ')}` : '', pm.length ? `PM-REVIEW: ${pm.join(', ')}` : ''].filter(Boolean).join(' · ')
   return { round, ...(ac[1] ? { ac } : {}), ...(acx[1] ? { acx } : {}), ...(note ? { note: `round ${round}: ${note}` } : {}) }
-}
-
-// _lessons.md: `## T<n> (date)` or `## L<n> (date) … · from: T<n>` headings, each with its paragraph; the lesson is the
-// paragraph's first sentence, its task the heading's `from:` when it has one (else the heading's first word). Newest
-// first (the file appends).
-export function parseLessons(text: string): Lesson[] {
-  const out: Lesson[] = []
-  const lines = text.replace(/\r\n?/g, '\n').split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const m = /^##\s+(\S+)/.exec(lines[i]!)
-    if (!m) continue
-    let body = ''
-    for (let j = i + 1; j < lines.length && !/^##\s/.test(lines[j]!); j++) {
-      if (lines[j]!.trim() === '') {
-        if (body) break
-        continue
-      }
-      body += (body ? ' ' : '') + lines[j]!.trim()
-    }
-    const sentence = /^(.*?[.!?])(\s|$)/.exec(body)?.[1] ?? body
-    const from = /\bfrom:\s*([^\s·,]+)/.exec(lines[i]!)?.[1]
-    if (sentence) out.push({ task: from ?? m[1]!, text: sentence })
-  }
-  return out.reverse()
 }
 
 // The orch config's tasks_dir (`.orch/tasks` when unset or not a folder under .orch/, as orch-state reads it).
@@ -312,7 +286,6 @@ export type BuildInput = {
   phases: Record<string, Phase[]> // by task id, merged already
   agents: DashAgent[]
   events: DashEvent[]
-  lessons: Lesson[]
   usage: { kind: string; percentUsed: number }[]
 }
 
@@ -357,7 +330,6 @@ export function buildStatus(i: BuildInput): Status {
     tasks,
     agents: i.agents,
     events: i.events.slice(0, MAX_EVENTS),
-    lessons: i.lessons,
     usage,
     watchdog: {},
   }

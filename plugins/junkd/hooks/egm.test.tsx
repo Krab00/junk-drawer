@@ -20,7 +20,7 @@ const SETTINGS = `${CFG}/settings.json`
 const EGM = 'junkd-egm'
 const DENY = 'egm.models działa dopiero przy egm.enabled = on'
 const FIX = 'popraw plik ręcznie'
-const SET_TABS = ['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools', 'junkd-lessons']
+const SET_TABS = ['junkd', 'ahandoff', 'orch', 'statusline', 'junkd-tools']
 
 const e = (cls: string, id: string, more: Partial<Entry> = {}): Entry => ({ class: cls, id, harness: 'claude', effort: 'default', thinking: { level: '-', pass: 'suffix' }, ...more })
 // The engine's own parser message for a text, on one line: the expected text is computed, never copied.
@@ -313,13 +313,13 @@ test('egm tab is hidden while egm_enabled is off and the set opens without junkd
   expect(rec.log.filter(l => l.includes(EGM))).toEqual([])
 })
 
-test('n turns egm_enabled on: the note is ✓ egm.enabled = true, junkd-egm is in ui.panes(), settings ▸ shows on the egm header', W, async ($, on) => {
+test('m turns egm_enabled on: the note is ✓ egm.enabled = true, junkd-egm is in ui.panes(), settings ▸ shows on the egm header', W, async ($, on) => {
   const rec = world(on)
   await start($)
   const pane = await openSet($)
   const enabled = await pane.find({ type: 'Button', key: 'set:egm:enabled' })
-  expect(enabled?.props.hotkey).toBe('n')
-  expect((await pane.find({ type: 'Button', key: 'set:egm:models' }))?.props.hotkey).toBe('o')
+  expect(enabled?.props.hotkey).toBe('m')
+  expect((await pane.find({ type: 'Button', key: 'set:egm:models' }))?.props.hotkey).toBe('n')
   const at = rec.log.length
   await pane.press({ key: 'set:egm:enabled' })
   expect((await pane.find({ key: 'note' }))?.text).toBe('✓ egm.enabled = true')

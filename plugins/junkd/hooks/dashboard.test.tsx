@@ -7,7 +7,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { AgentInfo, Args, On } from 'claude-code'
 import {
-  HOUR, MAX_AGENT_EVENTS, MAX_EVENTS, buildStatus, columnOf, ctxText, isTaskFile, kindOf, mergePhases, openArgv, orchRoot, parseLessons, parseTask,
+  HOUR, MAX_AGENT_EVENTS, MAX_EVENTS, buildStatus, columnOf, ctxText, isTaskFile, kindOf, mergePhases, openArgv, orchRoot, parseTask,
   parseVerification, readStatusJs, relTo, roleOf, shortModel, stateOf, statusJs, stepOf, taskOf, tasksDirOf,
   type Phase, type Status,
 } from './dashboard.ts'
@@ -46,7 +46,7 @@ test('parseTask: the frontmatter of a task file, CRLF as LF; no frontmatter or a
 })
 
 test('isTaskFile: *.md not starting with _; tasksDirOf: the config\'s tasks_dir under .orch/, else .orch/tasks', () => {
-  expect(['T1.md', 'T10.MD', '_lessons.md', '_notes-T1.md', 'T1.template.html', 'README'].filter(isTaskFile)).toEqual(['T1.md', 'T10.MD'])
+  expect(['T1.md', 'T10.MD', '_notes.md', '_notes-T1.md', 'T1.template.html', 'README'].filter(isTaskFile)).toEqual(['T1.md', 'T10.MD'])
   expect(tasksDirOf('---\ntasks_dir: .orch/backlog/\n---')).toBe('.orch/backlog')
   expect(tasksDirOf('tasks_dir: ".orch/b" # mine\r\n')).toBe('.orch/b')
   for (const bad of ['tasks_dir: /etc', 'tasks_dir: .orch/../x', 'tasks_dir: tasks', '', undefined]) expect(tasksDirOf(bad), String(bad)).toBe('.orch/tasks')
@@ -77,16 +77,6 @@ test('parseVerification: the last round\'s table: AC and ACX counted apart, PASS
   // a round with no table: the round alone
   expect(parseVerification('## Verification round 1\nnothing yet\n')).toEqual({ round: 1 })
   expect(parseVerification('# no verification\n| Criterion | Verdict |\n| AC1 | PASS |\n')).toBe(undefined)
-})
-
-test('parseLessons: one lesson per `## T<n>` heading, its first sentence, newest first', () => {
-  const text = '# Lessons\n\n## T1 (2026-10-01)\nFirst lesson. More text.\n\n## T2 (2026-10-02)\nA lesson\nover two lines! Then.\n\n## T3\n\n'
-  expect(parseLessons(text)).toEqual([{ task: 'T2', text: 'A lesson over two lines!' }, { task: 'T1', text: 'First lesson.' }])
-  expect(parseLessons('\r\n## T4 (d)\r\nNo period at all\r\n')).toEqual([{ task: 'T4', text: 'No period at all' }])
-  expect(parseLessons('')).toEqual([])
-  // the current lesson blocks: `## L<n> (date) scope: … · from: T<n>` names its task by from:
-  const blocks = '# Lessons\n\n## L1 (2026-10-18) scope: local · stack: shell · to: smoke · from: T2\nA ported script. Then more.\n\n## L2 (2026-10-19) scope: local\nNo from here.\n'
-  expect(parseLessons(blocks)).toEqual([{ task: 'L2', text: 'No from here.' }, { task: 'T2', text: 'A ported script.' }])
 })
 
 test('parseVerification: the spec\'s `## Verification — <branch>` heading is round 1, the n-th such heading round n; a later round heading wins; `Verifications` is none', () => {
@@ -167,7 +157,7 @@ test('mergePhases: the ones in memory win by agent and start, the ones read back
 })
 
 test('readStatusJs reads back what statusJs writes; anything else is undefined', () => {
-  const s = buildStatus({ now: 5 * HOUR, windowH: 2, repo: 'r', branch: 'b', root: '', tasks: [], phases: {}, agents: [], events: [], lessons: [], usage: [] })
+  const s = buildStatus({ now: 5 * HOUR, windowH: 2, repo: 'r', branch: 'b', root: '', tasks: [], phases: {}, agents: [], events: [], usage: [] })
   expect(readStatusJs(statusJs(s))).toEqual(s)
   expect(statusJs(s).startsWith('window.ORCH = {')).toBe(true)
   expect(statusJs(s).endsWith('};\n')).toBe(true)
@@ -203,7 +193,6 @@ test('buildStatus: the window ends now, open phases end now, implementer and ver
     },
     agents: [{ name: 'imp-b', role: 'implementer', model: 'opus', status: 'running', lastCallSec: 1, ctx: '1k', worktree: '.worktrees/T1' }],
     events: Array.from({ length: MAX_EVENTS + 5 }, (_, i) => ({ t: i, text: `e${i}`, kind: 'info' as const })),
-    lessons: [{ task: 'T1', text: 'l.' }],
     usage: [{ kind: 'five_hour', percentUsed: 41.6 }, { kind: 'seven_day', percentUsed: 12.4 }, { kind: 'spend_limit', percentUsed: 99 }],
   })
   expect(s.window).toEqual({ start: now - 24 * HOUR, end: now })
@@ -244,7 +233,6 @@ function world(on: On, o: Opts = {}) {
     [`${TASKS}/T10.md`]: TASK('T10', 'blocked'),
     [`${TASKS}/notes.md`]: '# no frontmatter here\n',
     [`${TASKS}/_notes-T2.md`]: TASK('NOTE', 'todo'),
-    [`${TASKS}/_lessons.md`]: '## T1 (2026-10-01)\nAlways pin the model. More.\n',
   }
   const rec = {
     clock,
@@ -388,7 +376,6 @@ test('/junkd:dashboard: the flag, the page copied, status.js from the task store
   // the CRLF file's last table: round 2, AC 1 of 2, ACX 0 of 1, FAIL and PM-REVIEW named
   expect(task(rec, 'T2')).toMatchObject({ round: 2, ac: [1, 2], acx: [0, 1], note: 'round 2: FAIL: ACX1 · PM-REVIEW: AC2' })
   expect(task(rec, 'T3')!.round).toBe(undefined)
-  expect(s.lessons).toEqual([{ task: 'T1', text: 'Always pin the model.' }])
   expect(rec.runs.find(r => r[0] === 'open')).toEqual(['open', PAGE])
   expect(rec.runs.some(r => r[0] === 'xdg-open')).toBe(false)
   expect(rec.toasts).toEqual([`✓ dashboard: ${PAGE}`])
@@ -465,7 +452,6 @@ test('a task store that cannot be listed is an empty board, still written', asyn
   await start($)
   await dash($)
   expect(status(rec).tasks).toEqual([])
-  expect(status(rec).lessons).toEqual([{ task: 'T1', text: 'Always pin the model.' }])
 })
 
 test('the cadence: every 30 s while open, a turn\'s end writes too; close removes the flag and stops both', async ($, on) => {

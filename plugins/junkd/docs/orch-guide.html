@@ -200,13 +200,12 @@
     <li><a href="#s2">How it works — the loop</a></li>
     <li><a href="#s3">The criteria freeze ladder</a></li>
     <li><a href="#s4">Standing checks, gated by capabilities</a></li>
-    <li><a href="#s5">Learning — the retro</a></li>
-    <li><a href="#s6">Modes &amp; flags</a></li>
-    <li><a href="#s7">Setup &amp; usage walkthrough</a></li>
-    <li><a href="#s8">Backends</a></li>
-    <li><a href="#s9">The bin scripts</a></li>
-    <li><a href="#s10">Config reference</a></li>
-    <li><a href="#s11">Limitations — v0.1</a></li>
+    <li><a href="#s5">Modes &amp; flags</a></li>
+    <li><a href="#s6">Setup &amp; usage walkthrough</a></li>
+    <li><a href="#s7">Backends</a></li>
+    <li><a href="#s8">The bin scripts</a></li>
+    <li><a href="#s9">Config reference</a></li>
+    <li><a href="#s10">Limitations — v0.1</a></li>
   </ol>
 </nav>
 
@@ -225,7 +224,7 @@
   <code>bin/</code> files — no invented behaviour.</p>
 
   <h2 id="s1">1. The idea — why it exists <a class="anchor" href="#s1">#</a></h2>
-  <p>A naive “agent, go build my backlog” loop fails in four predictable ways. <code>orch</code> is
+  <p>A naive “agent, go build my backlog” loop fails in three predictable ways. <code>orch</code> is
   built around an answer to each.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>The failure mode</th><th>What goes wrong</th><th>orch's answer</th></tr></thead>
@@ -234,11 +233,6 @@
         <td><strong>Context drift</strong></td>
         <td>One agent implements, verifies, reads build logs, drives the browser, and reflects — all in one context. Heavy output fills the window, and quality degrades task after task.</td>
         <td>The <strong>orchestrator never codes or verifies itself.</strong> Implementation goes to an <code>implementer</code>; the whole verification goes to a <code>verify-coordinator</code>. The noisy output lives in <em>their</em> contexts. The orchestrator sees only a short plan in and a compact verdict out — so <code>all</code> drains many more tasks before its own window fills.</td>
-      </tr>
-      <tr>
-        <td><strong>No memory</strong></td>
-        <td>The loop repeats on task 7 the mistake it made on task 2. Nothing learned in one task informs the next.</td>
-        <td>A <strong>retro step</strong> adds a lesson to <code>_lessons.md</code> when a resolve had a signal (a fix round, a surviving mutant, a verify FAIL). Those lessons feed the next task's plan and verification. A pattern recurring across ≥2 tasks is proposed for promotion into a permanent standing check.</td>
       </tr>
       <tr>
         <td><strong>Tokens burned on unreachable goals</strong></td>
@@ -271,7 +265,7 @@
                     └─────────┬──────────┘   (criteria are IMMUTABLE for the whole round loop)
                               │
                     ┌─────────▼──────────┐
-                    │  3. PLAN + DELEGATE│  short plan + lessons → implementer
+                    │  3. PLAN + DELEGATE│  short plan → implementer
                     └─────────┬──────────┘   (or lead-implementer fan-out for a big task)
                               │
                     ┌─────────▼──────────┐
@@ -288,11 +282,7 @@
                   └───────────┬───────────┘        final round FRESH impl. + diff + why
                               │                     still failing after R → blocked + escalate
                     ┌─────────▼──────────┐
-                    │  6. RETRO          │  lesson add on a signal → _lessons.md
-                    └─────────┬──────────┘
-                              │
-                    ┌─────────▼──────────┐
-                    │  7. DRAFT PR       │  gh pr create --draft  (humans merge, never orch)
+                    │  6. DRAFT PR       │  gh pr create --draft  (humans merge, never orch)
                     └─────────┬──────────┘
                               │
                   next task (chain/batch/all)  … then  BACKLOG: DRAINED | REMAINING | BLOCKED</code></pre>
@@ -301,7 +291,7 @@
   <ol>
     <li><strong>Sync + select.</strong> <code>orch-sync pull</code> refreshes the store from the backend. <code>orch-state reset-stale</code> returns any leftover <code>in_progress</code> task to <code>todo</code> (a killed run). A <code>blocked</code> task stays blocked until the user asks for a retry; then <code>reset-stale --blocked</code> gives it a fresh attempt. The selectable pool is every <code>todo</code> row whose <code>deps</code> are all <code>done</code>. <strong>Two tasks that touch the same files are never batched together</strong> — they split across batches or run as a chain. Picked tasks are set <code>in_progress</code>.</li>
     <li><strong>Freeze the criteria.</strong> Before <em>any</em> code, the acceptance criteria are settled once and made immutable for the rest of the loop — see <a href="#s3">§3</a>.</li>
-    <li><strong>Plan + delegate.</strong> The orchestrator writes a short implementation plan (files to touch, contracts, any spec to follow), folds in the current <code>_lessons.md</code>, and hands it to an implementer. It chooses <code>lead-implementer</code> when the work cuts into ≥2 file-disjoint slices (or <code>--deep</code> is passed), else the plain <code>implementer</code>. The agent is spawned worktree-isolated and fed the <strong>config facts it needs</strong> — dev-server commands, ports, test commands — because the agent itself assumes no stack.</li>
+    <li><strong>Plan + delegate.</strong> The orchestrator writes a short implementation plan (files to touch, contracts, any spec to follow) and hands it to an implementer. It chooses <code>lead-implementer</code> when the work cuts into ≥2 file-disjoint slices (or <code>--deep</code> is passed), else the plain <code>implementer</code>. The agent is spawned worktree-isolated and fed the <strong>config facts it needs</strong> — dev-server commands, ports, test commands — because the agent itself assumes no stack.</li>
     <li><strong>Verify — via <code>verify-coordinator</code>.</strong> The orchestrator never verifies; it delegates the whole thing. The coordinator builds the verify env, runs the checks, collects evidence, and returns <strong>one merged verdict table plus a <code>FAILING:</code> list</strong>.</li>
     <li><strong>Resolve — round strategy.</strong> All criteria PASS (or PM-REVIEW) → the task is <code>done</code> and a <strong>draft PR</strong> is opened. Any FAIL → the fix loop runs, handing back <strong>only</strong> the failing criteria, capped at <code>--rounds R</code> (default 3):
       <ul>
@@ -311,7 +301,6 @@
         <li><strong>Still failing after round R</strong> → the task is <code>blocked</code>, the escalation reason is appended, and the loop moves on.</li>
       </ul>
     </li>
-    <li><strong>Retro.</strong> A resolve with a signal adds a lesson to <code>_lessons.md</code> — see <a href="#s5">§5</a>.</li>
     <li><strong>Draft PR + iterate.</strong> In <code>chain</code>/<code>all</code> the next task branches off the one just finished; in <code>batch</code> verdicts are consumed as coordinators finish. At end of run <code>orch-sync push</code> reflects statuses to the backend, and the run prints its <code>BACKLOG:</code> line.</li>
   </ol>
 
@@ -361,22 +350,14 @@
       <tr><td><strong>FE actually calls the live API</strong> on data-backed routes, verified <strong>E2E through the UI</strong></td><td><code>web</code> + <code>api</code> declared</td><td>The frontend really consumes the backend end to end — not static content with a silent mock behind it.</td></tr>
       <tr><td><strong><code>ui-reviewer</code> drives the real browser</strong> — a screenshot per criterion, every state</td><td><code>web</code> declared</td><td>Screen/flow/state criteria are proven visually, at the project's target viewport, against the design tokens — not taken on the implementer's word.</td></tr>
       <tr><td><strong>Every path from <code>test-planner</code>'s matrix</strong> — happy + each edge (empty/loading/error/no-permission/boundary), each induced for real</td><td>always (scaled to declared layers)</td><td>The branches a lucky random run skips are actually hit. A state that genuinely can't be reached this run is a visible FAIL/PM-REVIEW row with a reason — never a silently missing line.</td></tr>
-      <tr><td><strong>Everything in <code>standing_checks_extra</code></strong></td><td>project config</td><td>Project-specific lessons already promoted to permanent checks (see <a href="#s5">§5</a>).</td></tr>
+      <tr><td><strong>Everything in <code>standing_checks_extra</code></strong></td><td>project config</td><td>Project-specific permanent checks from the config (see <em>Rules need checks</em> below and <a href="#s9">§9</a>).</td></tr>
     </tbody>
   </table></div>
 
-  <h2 id="s5">5. Learning — the retro / <code>_lessons.md</code> <a class="anchor" href="#s5">#</a></h2>
-  <p><code>orch</code> learns <em>within a run</em> and, with your approval, <em>across runs</em>.</p>
-  <ul>
-    <li><strong>The retro step.</strong> At a task resolve that had a <strong>signal</strong> — a fix round, a surviving mutant, a PM-REVIEW that found a bug, a dead or stalled agent, a verify FAIL — the orchestrator adds a lesson with <code>orch-state lesson add</code>, 2–3 sentences, plus a promotion target; a clean round-0 PASS writes nothing: <em>what failed, why, and what check would have caught it.</em></li>
-    <li><strong>Fed forward immediately.</strong> Those lessons are handed into the next task's plan (step 3) and into the next <code>verify-coordinator</code> spawn (step 4). So a mistake made on task 2 informs task 3 in the same run.</li>
-    <li><strong>Promotion to a standing check.</strong> When the <strong>same pattern recurs across ≥2 tasks</strong>, the orchestrator proposes promoting it into <code>standing_checks_extra</code> in the config — where it becomes a permanent, always-on check for every future task. This <strong>asks you first; the loop never edits the config silently.</strong></li>
-    <li><strong>Rules need checks.</strong> A rule written in <code>CLAUDE.md</code> (&ldquo;never&rdquo;, &ldquo;always&rdquo;, &ldquo;must&rdquo;, &ldquo;only&rdquo;, a &ldquo;Binding rules&rdquo; section) holds only on the prompt until a tool checks it. <code>/junkd:orch-init</code> scans every <code>CLAUDE.md</code>/<code>AGENTS.md</code> and proposes, per rule, a <code>standing_checks_extra</code> row with a concrete recipe (grep / test / curl), a pointer to the test that already pins it, or &ldquo;stays prose&rdquo;. You confirm each row; re-runs propose only new rules. The starter <code>TEST-POLICY.md</code> it offers makes this a standing rule: a task that adds a binding rule adds its check in the same branch. The retro shortcut: a lesson that names a rule already in <code>CLAUDE.md</code> is proposed for promotion at once (&ldquo;rule exists in CLAUDE.md &sect;X, no check&rdquo;), without waiting for a second task.</li>
-  </ul>
-  <p>This is the missing feedback loop in naive agent runs: without it, the same class of bug gets
-  re-litigated task after task.</p>
+  <h3>Rules need checks</h3>
+  <p>A rule written in <code>CLAUDE.md</code> (&ldquo;never&rdquo;, &ldquo;always&rdquo;, &ldquo;must&rdquo;, &ldquo;only&rdquo;, a &ldquo;Binding rules&rdquo; section) holds only on the prompt until a tool checks it. <code>/junkd:orch-init</code> scans every <code>CLAUDE.md</code>/<code>AGENTS.md</code> and proposes, per rule, a <code>standing_checks_extra</code> row with a concrete recipe (grep / test / curl), a pointer to the test that already pins it, or &ldquo;stays prose&rdquo;. You confirm each row; re-runs propose only new rules. The starter <code>TEST-POLICY.md</code> it offers makes this a standing rule: a task that adds a binding rule adds its check in the same branch. The loop never edits the config silently.</p>
 
-  <h2 id="s6">6. Modes &amp; flags <a class="anchor" href="#s6">#</a></h2>
+  <h2 id="s5">5. Modes &amp; flags <a class="anchor" href="#s5">#</a></h2>
   <p><code>orch</code> is one command with several shapes. Parse them from the arguments:</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Invocation</th><th>What it does</th></tr></thead>
@@ -426,7 +407,7 @@ BACKLOG: BLOCKED   — remaining tasks need a human: &lt;ids + one-line reasons&
   <code>deps</code> entry that isn't a known task id (a human prerequisite). A <code>/loop</code>
   driver stops on both <code>DRAINED</code> and <code>BLOCKED</code>.</p>
 
-  <h2 id="s7">7. Setup &amp; usage walkthrough <a class="anchor" href="#s7">#</a></h2>
+  <h2 id="s6">6. Setup &amp; usage walkthrough <a class="anchor" href="#s6">#</a></h2>
   <h3>Install</h3>
   <pre><code>/plugin marketplace add Krab00/junk-drawer
 /plugin install junkd@junk-drawer</code></pre>
@@ -447,10 +428,9 @@ BACKLOG: BLOCKED   — remaining tasks need a human: &lt;ids + one-line reasons&
     <li>each <strong>runnable capability</strong> — for every web frontend or api backend, its dev-server script, the port it binds, and a health path (<code>/</code> for web, <code>/health</code> for api);</li>
     <li>the <strong>test runner</strong> per package (a layer with no runner is recorded as absent, never forced to grow one).</li>
   </ul>
-  <p>It then <strong>asks which backend</strong> fits (<a href="#s8">§8</a>), shows you the filled
+  <p>It then <strong>asks which backend</strong> fits (<a href="#s7">§7</a>), shows you the filled
   config to confirm the run/test commands + ports it detected, and on approval writes
-  <code>.orch/config.md</code>, creates <code>tasks_dir</code>, and seeds an empty
-  <code>_lessons.md</code>. If a config already exists it shows a diff and asks before overwriting —
+  <code>.orch/config.md</code> and creates <code>tasks_dir</code>. If a config already exists it shows a diff and asks before overwriting —
   a hand-tuned config is never clobbered silently.</p>
 
   <h3>The canonical task file</h3>
@@ -479,13 +459,13 @@ criteria_source: derived # verbatim | derived
   <ol>
     <li><strong>Adhoc task created.</strong> <code>orch-state new ADHOC-1 "fix login redirect bug"</code> writes the skeleton file; the orchestrator fills the description from your prompt.</li>
     <li><strong>Criteria frozen (interactively).</strong> No structured DoD exists, so the loop <em>derives</em> criteria — e.g. <em>“AC1: after a successful login the user lands on <code>/dashboard</code>, not <code>/login</code> (modality: ui)”</em> — each traceable to a sentence in your prompt, and shows them to you for approval.</li>
-    <li><strong>Delegated.</strong> A short plan + the current lessons go to an <code>implementer</code>, spawned in its own worktree on branch <code>task/adhoc-1-fix-login-redirect</code>, fed the dev-server and test commands from the config.</li>
+    <li><strong>Delegated.</strong> A short plan goes to an <code>implementer</code>, spawned in its own worktree on branch <code>task/adhoc-1-fix-login-redirect</code>, fed the dev-server and test commands from the config.</li>
     <li><strong>Verified.</strong> <code>verify-coordinator</code> boots the app, derives the matrix from the diff (including the <em>failed</em>-login and <em>already-logged-in</em> branches), has <code>ui-reviewer</code> drive the real browser through the redirect on a fresh random account, runs the standing checks, and returns a merged verdict.</li>
-    <li><strong>Resolved.</strong> All PASS → the task is <code>done</code>, a <strong>draft PR</strong> is opened (<code>gh pr create --draft …</code>), and a lesson is appended to <code>_lessons.md</code>. The run prints <code>BACKLOG: DRAINED</code>.</li>
+    <li><strong>Resolved.</strong> All PASS → the task is <code>done</code>, a <strong>draft PR</strong> is opened (<code>gh pr create --draft …</code>). The run prints <code>BACKLOG: DRAINED</code>.</li>
   </ol>
   <p>You review and merge the PR — <code>orch</code> never does.</p>
 
-  <h2 id="s8">8. Backends <a class="anchor" href="#s8">#</a></h2>
+  <h2 id="s7">7. Backends <a class="anchor" href="#s7">#</a></h2>
   <p>The backend decides where tasks come from and what <code>orch-sync</code> does. Set it in the
   config.</p>
   <div class="table-wrap"><table>
@@ -494,7 +474,7 @@ criteria_source: derived # verbatim | derived
       <tr><td><code>adhoc</code></td><td>The task files in <code>tasks_dir</code> are the whole source of truth; <code>/junkd:orch "&lt;free text&gt;"</code> creates them.</td><td><code>orch-sync</code> is a <strong>no-op</strong> (the files <em>are</em> canon).</td></tr>
       <tr><td><code>manifest</code></td><td>Same as adhoc, but you maintain the task files <strong>by hand</strong>.</td><td>No-op.</td></tr>
       <tr><td><code>github-issues</code></td><td>GitHub issues carrying a configured label (default <code>orch</code>).</td><td><strong>Pull:</strong> issues → task files (<code>id</code> becomes <code>GH-&lt;number&gt;</code>, the body checklist → acceptance criteria, <code>updatedAt</code> stamped as <code>source_updated_at</code>). <strong>Push:</strong> a status comment with the verification table + PR link. Needs the <code>gh</code> CLI authenticated.</td></tr>
-      <tr><td><code>linear-mcp</code></td><td>Linear, via the Linear MCP.</td><td>Sync happens <strong>in-conversation</strong> through the MCP — <code>/junkd:orch</code> does the pull/push itself. Thin in v0.1 (see <a href="#s11">§11</a>).</td></tr>
+      <tr><td><code>linear-mcp</code></td><td>Linear, via the Linear MCP.</td><td>Sync happens <strong>in-conversation</strong> through the MCP — <code>/junkd:orch</code> does the pull/push itself. Thin in v0.1 (see <a href="#s10">§10</a>).</td></tr>
     </tbody>
   </table></div>
   <div class="note"><p><strong>Field ownership + drift guard (<code>github-issues</code>).</strong> The
@@ -505,7 +485,7 @@ criteria_source: derived # verbatim | derived
   (plain issues have no rich workflow states); push <strong>never closes an issue and never
   merges</strong>.</p></div>
 
-  <h2 id="s9">9. The bin scripts <a class="anchor" href="#s9">#</a></h2>
+  <h2 id="s8">8. The bin scripts <a class="anchor" href="#s8">#</a></h2>
   <p>Three small, zero-dependency bash scripts carry the <strong>deterministic mechanics</strong> —
   the mechanical, error-prone steps that shouldn't be an LLM's job. Keeping them out of the model's
   hands is why the frontmatter never drifts and ports never collide.</p>
@@ -515,7 +495,7 @@ criteria_source: derived # verbatim | derived
     <li><code>orch-sync</code> — the task-store ⇄ backend bridge: <code>pull</code> / <code>push</code> (github via <code>gh</code>; <code>adhoc</code>/<code>manifest</code> no-op; <code>linear-mcp</code> an in-conversation stub).</li>
   </ul>
 
-  <h2 id="s10">10. Config reference <a class="anchor" href="#s10">#</a></h2>
+  <h2 id="s9">9. Config reference <a class="anchor" href="#s9">#</a></h2>
   <p><code>/junkd:orch</code> reads every project fact from <code>.orch/config.md</code>. <strong>No
   config → it stops and tells you to run <code>/junkd:orch-init</code>.</strong> YAML frontmatter +
   free-form prose notes:</p>
@@ -528,7 +508,7 @@ capabilities:
   web:  { run: "npm run dev", port_base: 5180, health: "/" }              # omit if no web app
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if no api
   tests: { api: "npm test" }   # use `root` for a repo-level suite; omit absent runners
-standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
+standing_checks_extra: []      # project-specific standing checks (starts empty)
 github: { label: "orch" }      # github-issues backend only; drop otherwise
 ---
 Free-form project notes /junkd:orch should know: conventions, gotchas, where the visual spec lives,
@@ -536,13 +516,13 @@ calibration values that must never be guessed, etc.</code></pre>
   <div class="table-wrap"><table>
     <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
     <tbody>
-      <tr><td><code>backend</code></td><td>Which task source drives the run — see <a href="#s8">§8</a>.</td></tr>
+      <tr><td><code>backend</code></td><td>Which task source drives the run — see <a href="#s7">§7</a>.</td></tr>
       <tr><td><code>tasks_dir</code></td><td>Directory holding the canonical <code>&lt;ID&gt;.md</code> task files (default <code>.orch/tasks</code>).</td></tr>
       <tr><td><code>default_base</code></td><td>Detected git default branch; overridden by <code>--base</code>.</td></tr>
       <tr><td><code>branch_prefix</code></td><td>Per-task branch name = <code>&lt;branch_prefix&gt;&lt;id&gt;-&lt;slug&gt;</code>.</td></tr>
       <tr><td><code>capabilities.web</code> / <code>.api</code></td><td><code>run</code> (dev-server command), <code>port_base</code>, <code>health</code> path. <strong>Omit the whole block if the layer doesn't exist</strong> — its standing checks are then skipped.</td></tr>
       <tr><td><code>capabilities.tests</code></td><td>Test command map (<code>{ pkg: "cmd" }</code>); use <code>root</code> for a repo-level suite.</td></tr>
-      <tr><td><code>standing_checks_extra</code></td><td>Project-specific checks promoted from <code>_lessons.md</code> (starts empty).</td></tr>
+      <tr><td><code>standing_checks_extra</code></td><td>Project-specific standing checks (starts empty); <code>/junkd:orch-init</code> proposes rows from the rules in <code>CLAUDE.md</code>/<code>AGENTS.md</code>.</td></tr>
       <tr><td><code>github.label</code></td><td>Only for the <code>github-issues</code> backend — the label to pull.</td></tr>
       <tr><td><em>(prose below the frontmatter)</em></td><td>Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed.</td></tr>
     </tbody>
@@ -551,7 +531,7 @@ calibration values that must never be guessed, etc.</code></pre>
   a stable slot — so pick bases far enough apart that a few parallel tasks won't collide (e.g.
   <code>5180</code> web / <code>3180</code> api).</p>
 
-  <h2 id="s11">11. Limitations — v0.1 notes <a class="anchor" href="#s11">#</a></h2>
+  <h2 id="s10">10. Limitations — v0.1 notes <a class="anchor" href="#s10">#</a></h2>
   <ul>
     <li><strong><code>linear-mcp</code> is thin.</strong> The sync runs in-conversation through the Linear MCP; <code>bin/orch-sync</code> is only a stub for that backend.</li>
     <li><strong>No Jira backend</strong> yet.</li>

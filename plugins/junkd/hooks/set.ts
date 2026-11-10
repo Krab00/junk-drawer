@@ -1,4 +1,4 @@
-// The /junkd set as the six feature panes see it (egm only while egm_enabled is on): whether it is up, and how to close all of it at once. panel.tsx
+// The /junkd set as the five feature panes see it (egm only while egm_enabled is on): whether it is up, and how to close all of it at once. panel.tsx
 // opens it and draws junkd's pane. A feature pane that is still the set's (it opened through `show({ owner: SET_OWNER })`
 // and nobody reopened or closed it since) answers its × and q, and the engine's close of its tab, with closeSet: one
 // press ends the whole set, as the junkd pane's × does. A pane opened on its own has no mark and closes alone.
@@ -8,7 +8,7 @@ import { hidePane, type FeaturePane } from './dispatch'
 
 export const PANE = 'junkd'
 // The feature panes of the set, in tab order; egm last (panel.tsx opens it only while egm_enabled is on).
-export const SET: readonly FeaturePane[] = ['handoff', 'orch', 'statusline', 'tools', 'lessons', 'egm']
+export const SET: readonly FeaturePane[] = ['handoff', 'orch', 'statusline', 'tools', 'egm']
 
 // A feature pane's mark says whether its close is the set's. Every way a pane stops being the set's (a close, an open
 // of its own, settings ▸) clears the mark, so a marked pane is one the set opened and nobody has touched since.

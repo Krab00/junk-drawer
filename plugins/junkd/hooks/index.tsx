@@ -15,12 +15,10 @@
 // - egm-pane.tsx (with egm.ts, egm-views.tsx): the egm settings group and the egm tab (models.json).
 // - core.ts: the core rows: output_style (and the flag file scripts/setup.sh reads), cache_check_sessions.
 // - cache.tsx: the prompt-cache check at session start (scripts/cache-check.sh) and its band above the prompt.
-// - panel.tsx (with set.ts): /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools, lessons, egm);
+// - panel.tsx (with set.ts): /junkd, ✚ junkd and the set of tabs (junkd, handoff, orch, statusline, tools, egm);
 //   a × or q on any pane of the set closes the whole set.
 // - dashboard.tsx (with dashboard.ts): /junkd:dashboard, the orch dashboard's status.js beside a copy of its page.
 // - watchdog.tsx (with watchdog.ts): the agent watchdog of orch, its timer, its ⚠ segment and its prompt.submit line.
-// - lessons.tsx (with lessons.ts, lessons-views.tsx): the lessons loop of orch: its tab, its 📒 segment, the blocking
-//   dialog and its prompt.submit line, /junkd:lessons.
 // Settings: one userConfig row per `<group>_<field>` (settings.ts), the /config row `junkd.<group>_<field>`.
 // Paths follow CLAUDE_CONFIG_DIR like Claude Code itself; the flag files live under its junkd/ folder.
 import type { Register } from 'claude-code'
@@ -38,7 +36,6 @@ import { registerTldr, tldrStart } from './tldr'
 import { registerTools, toolsCommandRan, toolsCount, toolsStart } from './tools-pane'
 import { dashboardStart, dashboardToolCall, registerDashboard } from './dashboard.tsx'
 import { registerWatchdog, watchCallEnd, watchCallStart, watchdogKeep, watchdogLines, watchdogSegment, watchdogStart } from './watchdog.tsx'
-import { lessonsPromptLine, lessonsSegment, lessonsStart, registerLessons } from './lessons.tsx'
 import { egmStart, registerEgm } from './egm-pane'
 
 const NO_HOOK = 'junkd: the hooks module did not answer'
@@ -97,7 +94,7 @@ export const register: Register = (on, options) => {
       if (pane === 'junkd') {
         if (route !== undefined) return { deny: `junkd: the junkd pane has no tab ${String(route)}` }
         await panelToggle($)
-      } else if (pane === 'handoff' || pane === 'orch' || pane === 'statusline' || pane === 'tools' || pane === 'lessons' || pane === 'egm') await openPane($, pane, route === undefined ? {} : { route })
+      } else if (pane === 'handoff' || pane === 'orch' || pane === 'statusline' || pane === 'tools' || pane === 'egm') await openPane($, pane, route === undefined ? {} : { route })
       else return { deny: `junkd: no pane ${String(pane)}` }
     } catch (err) {
       return { deny: reason(err) }
@@ -115,17 +112,15 @@ export const register: Register = (on, options) => {
     await watched
     if (failed) throw failed.reason
     await dashboardStart($) // after the features' starts: it reads orch's settings; never throws
-    await lessonsStart($).catch(() => undefined) // after orch's start too: the stores, and the dialog of an orch session
     return next(e)
   })
 
-  // The main loop's next turn: the watchdog's pending lines, then the lessons line while the dialog stands, as
-  // context. A prompt that does not enter gives the watchdog's lines back for the next one.
+  // The main loop's next turn: the watchdog's pending lines, then the handon continuation, as context. A prompt
+  // that does not enter gives the watchdog's lines back for the next one.
   on('prompt.submit', async ($, e, next) => {
     const lines = watchdogLines()
-    const lesson = await lessonsPromptLine($).catch(() => undefined)
     const continuation = handoffContinuation(e) // the handon turn of the auto loop carries its continuation prompt
-    const context = [...lines.length ? [lines.join('\n')] : [], ...lesson ? [lesson] : [], ...continuation ? [continuation] : []]
+    const context = [...lines.length ? [lines.join('\n')] : [], ...continuation ? [continuation] : []]
     if (!context.length) return next(e)
     const r = await next({ ...e, context: [...(e.context ?? []), ...context] })
     if (r.drop !== undefined && lines.length) watchdogKeep(lines)
@@ -163,7 +158,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const { Box } = $.ui.resolve(e)
     const below = await next(e).catch(() => undefined)
-    const parts = [below, handoffSegment($, e), lessonsSegment($, e), panelButton($, e)].filter(Boolean)
+    const parts = [below, handoffSegment($, e), panelButton($, e)].filter(Boolean)
     parts.splice(below ? 1 : 0, 0, ...[watchdogSegment($, e, () => void openPane($, 'tools', { route: 'agents' }).catch(err => $.ui.toast(`✗ ${reason(err)}`)))].filter(Boolean))
     if (parts.length === 1) return parts[0]!
     return (
@@ -185,5 +180,4 @@ export const register: Register = (on, options) => {
   registerPanel(on, options)
   registerDashboard(on, options)
   registerWatchdog(on, options)
-  registerLessons(on, options)
 }

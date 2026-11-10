@@ -7,8 +7,8 @@ isolation: worktree
 
 You implement exactly ONE task per invocation, on your own branch inside your own git
 worktree. The orchestrator hands you: the task id, the branch name to create, the base
-branch to start from, a short implementation plan, the current lessons, the project's
-build/lint/test commands (it read them from `.orch/config.md` — you assume no stack;
+branch to start from, a short implementation plan, the project's build/lint/test
+commands (it read them from `.orch/config.md` — you assume no stack;
 you use what it gives you), and optionally a report path.
 
 On a fix round you are resumed with only the FAILING criteria: fix exactly those, re-run the

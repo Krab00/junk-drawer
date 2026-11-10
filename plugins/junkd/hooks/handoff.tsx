@@ -14,7 +14,6 @@ import { Footer, P, Rule, TABS, Tabs, fields, type Api, type Ctx, type Elements 
 import { VIEWS } from './handoff-views'
 import { toolsTurnEnd } from './tools-pane'
 import { dashboardTurnEnd } from './dashboard.tsx'
-import { lessonsTurnEnd } from './lessons.tsx'
 
 const PANE = 'ahandoff'
 const EDGE = 2 // empty columns at the pane's right edge (a docked pane's last column may not show)
@@ -756,12 +755,10 @@ export function handoffSegment($: $, e: RenderInput<'PromptHint'>) {
 }
 
 // The loop's turn end, without the next(e) that its hook runs in a finally; `at.stage` names the step it is on.
-async function turnEnd($: $, e: { agentId?: string; reason?: string; answer?: unknown }, at: { stage: string }): Promise<void> {
+async function turnEnd($: $, e: { agentId?: string; reason?: string }, at: { stage: string }): Promise<void> {
   toolsTurnEnd($)
   at.stage = 'dashboard'
   detach($, 'dashboard', dashboardTurnEnd($)) // the orch dashboard's status.js, while it is open; never throws
-  at.stage = 'lessons'
-  await lessonsTurnEnd($, e) // the lessons stores again, and the dialog when the answer prints BACKLOG:; never throws
   if (e.agentId) return
   // One loop turn end at a time (seen in a probe: two in flight both read the written file, both logged cycle:continue and
   // both followed; two at resume spent two retries). Taken before the loop's first await, so a second one that comes
