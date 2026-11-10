@@ -453,6 +453,13 @@ done
 if rg -n --no-ignore -g '!node_modules' -g '!*.ts' -g '!*.tsx' -g '!*.md' -g '!*.html' 'select\(\.key \| startswith\("junkd@"\)\)\]\[0\]' "$junkd" >/dev/null; then
     echo "junkd: a shell reader still picks the first junkd@ entry"; exit 1
 fi
+# The ac-rule block (what an acceptance criterion is, and the exit-3 message) is the same in task-probe and
+# task-from-spec, so step 3 (--ac-hash) and step 5 (the task file) of /junkd:task-draft never disagree.
+ac_block() { awk '/^# >>> ac-rule:/ { p = 1 } p { print } /^# <<< ac-rule$/ { exit }' "$1"; }
+ac_ref=$(ac_block "$junkd/skills/task-draft/bin/task-probe")
+[ -n "$ac_ref" ] || { echo "junkd: task-probe has no ac-rule block"; exit 1; }
+[ "$(ac_block "$junkd/skills/task-draft/bin/task-from-spec")" = "$ac_ref" ] ||
+    { echo "junkd: the ac-rule block of task-from-spec differs from task-probe's"; exit 1; }
 # The task-draft roles: the agent types live in skills/orch/roles (agents -> skills/orch/roles), and the skill
 # ships byte-identical copies in skills/task-draft/roles for the hosts that read ./roles/<file>.
 for r in task-egm task-elephant task-judge task-goldfish; do

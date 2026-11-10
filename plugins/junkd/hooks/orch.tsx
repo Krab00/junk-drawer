@@ -142,8 +142,9 @@ async function orchCheck($: $, e: { tool: string; agentId?: string; [k: string]:
   const cfg = await configDir($)
   const exists = e.tool === 'Write' ? await $.fs.exists(String(e.file_path ?? '')).catch(() => true) : undefined
   const agent = e.tool === 'SendMessage' ? await orchAgent($, String(e.to)) : undefined
-  const repo = e.tool === 'Read' || e.tool === 'Write' ? await sessionRepo($) : ''
-  const where = e.tool === 'Read' || e.tool === 'Write' ? await orchPlace($, String(e.file_path ?? ''), cfg, repo) : undefined
+  const pathTool = e.tool === 'Read' || e.tool === 'Write' || e.tool === 'Edit'
+  const repo = pathTool ? await sessionRepo($) : ''
+  const where = pathTool ? await orchPlace($, String(e.file_path ?? ''), cfg, repo) : undefined
   return orchGuard(e, { model, binDir: `${$.plugin.root}/bin/`, configDir: cfg, repo, exists, agent, placed: where })
 }
 

@@ -107,6 +107,43 @@ test('Write: the Read roots or a new .md file; never settings, loaded config, a 
   expect(kit('/repo/docs/hooks/x.md')).toBeUndefined() // outside any plugins/ path or the marketplace
 })
 
+test('Edit: a .md in .orch/taskdraft/<id>/ and the project memory, as Write; every other path, and every path Write refuses, denied', () => {
+  const edit = (file_path: unknown, extra: Partial<OrchState> = {}) =>
+    orchGuard(main('Edit', { file_path, old_string: 'a', new_string: 'b' }), st(extra), on_)
+  const write = (file_path: string, extra: Partial<OrchState> = {}) =>
+    orchGuard(main('Write', { file_path, content: 'x' }), st({ exists: true, ...extra }), on_)
+  const ok = [`${REPO}/.orch/taskdraft/T-1/answers.md`, `${REPO}/.orch/taskdraft/T-1/egm/gate_log.md`, `${REPO}/.orch/taskdraft/T-1/Questions.MD`,
+    `${CFG}/projects/-repo/memory/MEMORY.md`, `${CFG}/projects/-repo/memory/hermes-principal-reserved.md`, `${CFG}/projects/-repo/memory/notes.txt`,
+    `${REPO}/.orch//taskdraft/./T-1/answers.md`]
+  for (const p of ok) {
+    expect(write(p), p).toBeUndefined() // the precondition: Write passes there
+    expect(edit(p), p).toBeUndefined()
+  }
+  // the default config dir spelled as the roots
+  expect(edit('/home/u/.claude/projects/-repo/memory/MEMORY.md', { configDir: '/home/u/.claude' })).toBeUndefined()
+  // where Write is refused, Edit is refused
+  const refused = [`${REPO}/.orch/taskdraft/T-1/x.ts`, `${REPO}/.orch/taskdraft/.gitignore`, `${REPO}/.orch/taskdraft/T-1/SKILL.md`,
+    `${REPO}/.orch/taskdraft/T-1/CLAUDE.md`, `${REPO}/.orch/taskdraft/../config.md`, `${REPO}/.orch/taskdraft/T-1/../../x.md`,
+    `${CFG}/projects/-repo/x/memory/a.md`, `${CFG}/projects/-repo/notes.md`, `${CFG}/projects/-repo/memory/../s1.jsonl`, `${CFG}/settings.json`]
+  for (const p of refused) {
+    expect(write(p), p).toBeDefined()
+    expect(edit(p), p).toMatch(/may not run Edit\. .* Edit passes only on a \.md in the repo's \.orch\/taskdraft\/<id>\/ and on a file in the project memory/)
+  }
+  // places Write takes but Edit does not: the rest of the task store, the scratchpad, the orch state, the handoffs, any new .md
+  for (const p of [`${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/_lessons.md`, `${REPO}/.orch/taskdraft/notes.md`, `${SCRATCH}/plan.md`,
+    `${CFG}/orch/-repo/tasks/T-1.md`, `${CFG}/handoffs/a.md`, '/repo/docs/design.md', '/repo/src/a.ts'])
+    expect(edit(p), p).toMatch(/may not run Edit/)
+  // the path spelling and its placement, as for Write
+  for (const p of [undefined, '', 'relative/answers.md', `~/x.md`, ` ${REPO}/.orch/taskdraft/T-1/answers.md`, `${REPO}/.orch/taskdraft/T-1/ünï.md`])
+    expect(edit(p), String(p)).toMatch(/may not run Edit/)
+  expect(edit(`${REPO}/.orch/taskdraft/T-1/answers.md`, { placed: null })).toMatch(/may not run Edit/)
+  // a link in the draft folder that lands elsewhere is denied; one that lands in the memory passes
+  expect(edit(`${REPO}/.orch/taskdraft/T-1/answers.md`, { placed: { path: '/repo/src/a.md', configDir: CFG, binDir: BIN, repo: REPO } })).toMatch(/may not run Edit/)
+  expect(edit(`${REPO}/.orch/taskdraft/T-1/answers.md`, { placed: { path: `${CFG}/projects/-repo/memory/a.md`, configDir: CFG, binDir: BIN, repo: REPO } })).toBeUndefined()
+  // no repo: no task store
+  expect(edit(`${REPO}/.orch/taskdraft/T-1/answers.md`, { repo: '' })).toMatch(/may not run Edit/)
+})
+
 test("Write: never the module's own control files junkd/orch-off and junkd/orch-rules-off (the enabled and inject_rules flags), any spelling", () => {
   const write = (file_path: string, extra: Partial<OrchState> = {}) =>
     orchGuard(main('Write', { file_path, content: '' }), st({ exists: false, ...extra }), on_)
@@ -261,6 +298,9 @@ test('task-draft: the main loop Writes the input into .orch/taskdraft/<id>/ and 
   const write = (file_path: string) => orchGuard(main('Write', { file_path, content: 'x' }), st(), on_)
   // the input files of SKILL.md and the task-egm/task-elephant roles, <out> = .orch/taskdraft/T-1
   for (const p of [`${REPO}/.orch/taskdraft/T-1/answers.md`, `${REPO}/.orch/taskdraft/T-1/blocks.md`, `${REPO}/.orch/taskdraft/T-1/auto-answers.md`]) expect(write(p), p).toBeUndefined()
+  // Edit of the same files passes as their Write does
+  const edit = (file_path: string) => orchGuard(main('Edit', { file_path, old_string: 'a', new_string: 'b' }), st(), on_)
+  for (const p of [`${REPO}/.orch/taskdraft/T-1/answers.md`, `${REPO}/.orch/taskdraft/T-1/blocks.md`, `${REPO}/.orch/taskdraft/T-1/auto-answers.md`]) expect(edit(p), p).toBeUndefined()
   // their commands, as SKILL.md spells them (tests/task-draft.sh checks that SKILL.md holds these templates)
   for (const c of [`${BIN}task-draft-state decisions add T-1 --source chat --file .orch/taskdraft/T-1/answers.md`,
     `${BIN}task-draft-state decisions add T-1 --source auto --file .orch/taskdraft/T-1/answers.md`,

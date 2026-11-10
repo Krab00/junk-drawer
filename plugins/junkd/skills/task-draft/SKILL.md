@@ -257,8 +257,13 @@ All the paths below are relative to the repo root. `<out>` is `.orch/taskdraft/<
     answered any) or `failed: <reason>`. On `failed:`, print
     `task-draft <id>: egm failed: <reason>` and stop.
 3.  **Acceptance criteria check.** The spec must have a section
-    `## Acceptance criteria` with items `AC<n>: … (modality: ui|api|test|data)`.
-    Run `task-probe <spec> --ac-hash` and keep the hash. Exit 3 (no list) stops
+    `## Acceptance criteria` with items `- AC<n>: … (modality: ui|api|test|data)`
+    (the form to write; the helpers also accept the bare `AC<n>: …` line, an
+    indent, and the markers `* `, `+ `, `<n>. `, `<n>) `). A line with no
+    `AC<n>:` is no item. Run `task-probe <spec> --ac-hash` and keep the hash: it
+    covers the items with the marker, the indent and the trailing space
+    stripped, so a format-only fix keeps it. `task-from-spec` reads the items
+    by the same rule. Exit 3 (no section, or no item) stops
     with `task-draft <id>: the spec has no ## Acceptance criteria list; add it in egm-resolve`.
 4.  **Comprehension sub-loop**, only when `models=true`.
     *   Run `task-draft-state models` (the ladder). An empty ladder prints
