@@ -260,9 +260,10 @@ test('task-draft: the main loop Writes the input into .orch/taskdraft/<id>/ and 
   const bash = (command: string) => orchGuard(main('Bash', { command }), st(), on_)
   const write = (file_path: string) => orchGuard(main('Write', { file_path, content: 'x' }), st(), on_)
   // the input files of SKILL.md and the task-egm/task-elephant roles, <out> = .orch/taskdraft/T-1
-  for (const p of [`${REPO}/.orch/taskdraft/T-1/answers.md`, `${REPO}/.orch/taskdraft/T-1/blocks.md`]) expect(write(p), p).toBeUndefined()
+  for (const p of [`${REPO}/.orch/taskdraft/T-1/answers.md`, `${REPO}/.orch/taskdraft/T-1/blocks.md`, `${REPO}/.orch/taskdraft/T-1/auto-answers.md`]) expect(write(p), p).toBeUndefined()
   // their commands, as SKILL.md spells them (tests/task-draft.sh checks that SKILL.md holds these templates)
   for (const c of [`${BIN}task-draft-state decisions add T-1 --source chat --file .orch/taskdraft/T-1/answers.md`,
+    `${BIN}task-draft-state decisions add T-1 --source auto --file .orch/taskdraft/T-1/answers.md`,
     `${BIN}task-draft-state questions T-1 put --role task-egm --spec docs/designs/t-1.md --file .orch/taskdraft/T-1/blocks.md`,
     `${BIN}task-draft-state questions T-1 put --role task-draft --spec none --file .orch/taskdraft/T-1/blocks.md`]) {
     expect(bash(c), c).toBeUndefined()

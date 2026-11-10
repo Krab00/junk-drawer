@@ -26,7 +26,8 @@ export type JunkdStatuslineSegment = 'ctx' | 'branch' | 'worktree' | 'model' | '
 export type JunkdStatuslineField = 'enabled' | JunkdStatuslineSegment
 export type JunkdToolsField = 'enabled' | 'refresh' | 'agents_only'
 // The egm group: EGM while writing tasks (and the egm tab), and the comprehension loop over the model registry.
-export type JunkdEgmField = 'enabled' | 'models'
+export type JunkdEgmField = 'enabled' | 'models' | 'answers'
+export type JunkdEgmAnswers = 'manual' | 'auto'
 export type JunkdKey =
   | `core_${JunkdCoreField}`
   | `handoff_${JunkdHandoffField}`

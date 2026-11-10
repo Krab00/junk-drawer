@@ -9,22 +9,23 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/task-draft-state:*), Bash(${CLAUDE
 
 Arguments: "$ARGUMENTS"
 
-The first word is the task id (orch's id rule: `[A-Za-z0-9][A-Za-z0-9._-]*`, no `..`). The second word, when present and not `--unattended`, is the input path; without it the input is `.orch/taskdraft/<id>/input.md` when that file exists, else `none`. `--unattended` only sends questions to `.orch/taskdraft/<id>/questions.md` and stops the run; it never answers one. On a host that leaves the placeholder above unfilled, the arguments are the rest of the user's request. No task id: ask for one in one line and stop.
+The first word is the task id (orch's id rule: `[A-Za-z0-9][A-Za-z0-9._-]*`, no `..`). The second word, when present and not `--unattended`, is the input path; without it the input is `.orch/taskdraft/<id>/input.md` when that file exists, else `none`. `--unattended` only sends questions to `.orch/taskdraft/<id>/questions.md` and stops the run; it never answers one, unless `egm_answers` is `auto`: then no question is sent anywhere, the roles answer them (see "Questions"). On a host that leaves the placeholder above unfilled, the arguments are the rest of the user's request. No task id: ask for one in one line and stop.
 
-Never answer a question for the user and never take a default. Only the decisions register answers a question without the user: the spec's `## Decisions`, then `.orch/decisions.md`.
+Unless `egm_answers` is `auto`, never answer a question for the user and never take a default. Only the decisions register answers a question without the user: the spec's `## Decisions`, then `.orch/decisions.md`. With `egm_answers` = `auto` the skill asks nothing, not even the step 4 confirmation: every question is answered by its proposed answer (or a composed one), logged, and listed in the closing reply.
 
 ## Hosts
 
 The skill runs on Claude Code, Codex, Kimi Code and OpenCode. It runs in the main loop: it runs the helpers, dispatches the roles, asks the user, and writes nothing itself except through the helpers. The helpers are `task-draft-state`, `task-probe` and `task-from-spec` (`task-probe` runs the harness adapters itself), run with the repository root as the working directory.
 
-- Codex, Kimi Code, OpenCode or any other host that is not Claude Code: the helpers are `./bin/<name>` inside this skill folder (for example `./bin/task-draft-state`). The roles are the files `./roles/task-egm.md`, `./roles/task-elephant.md`, `./roles/task-judge.md` and `./roles/task-goldfish.md`: read the file and inline its text (without the frontmatter) into a generic subagent; with no subagents, follow the role in your own thread. Ask a question as one plain question. The `egm_enabled` gate is skipped (an explicit run), and `models=true` only with `JUNKD_EGM_MODELS=1`. The final orch command is `$orch <id>` on Codex, `/skill:orch <id>` on Kimi Code and `/orch <id>` on OpenCode.
+- Codex, Kimi Code, OpenCode or any other host that is not Claude Code: the helpers are `./bin/<name>` inside this skill folder (for example `./bin/task-draft-state`). The roles are the files `./roles/task-egm.md`, `./roles/task-elephant.md`, `./roles/task-judge.md` and `./roles/task-goldfish.md`: read the file and inline its text (without the frontmatter) into a generic subagent; with no subagents, follow the role in your own thread. Ask a question as one plain question. The `egm_enabled` gate is skipped (an explicit run), `models=true` only with `JUNKD_EGM_MODELS=1`, and `answers=auto` only with `JUNKD_EGM_ANSWERS=auto`. The final orch command is `$orch <id>` on Codex, `/skill:orch <id>` on Kimi Code and `/orch <id>` on OpenCode.
 - Claude Code: the helpers are `${CLAUDE_PLUGIN_ROOT}/bin/<name>`. The roles are the agent types `junkd:task-egm`, `junkd:task-elephant`, `junkd:task-judge` and `junkd:task-goldfish`, dispatched with the Agent tool (no `model`, except the goldfish's). Ask a question with AskUserQuestion and continue a role with SendMessage. Never call an EGM skill through the Skill tool: EGM's skills refuse it, and `junkd:task-egm` reads them from disk. The final orch command is `/junkd:orch <id>`.
 
 Never read, print or pass a credential file (for example `~/.config/<tool>/token`); `task-probe` inlines only tracked, non-ignored repo files and never one whose name looks like a secret.
 
 ## Questions
 
-**Questions.** The skill is always interactive. A role never
+**Questions.** With `egm_answers` = `manual` (the default) the skill is
+interactive; `auto` is in "Auto" below. Under `manual` a role never
 answers an EGM question itself and never takes a default on its own; the only
 answers it applies without asking are those of the decisions register
 (the task's spec `## Decisions` first, then `task-draft-state decisions --match "<text>"`),
@@ -116,6 +117,60 @@ question per reply. The main loop handles a reply that ends with
     The answers of a `task-egm` or `task-elephant` file are copied into
     `.orch/decisions.md` by `questions done` before the file is deleted.
 
+**Auto.** With the line `egm_answers: auto` in a role's prompt (the
+setting `egm_answers` = `auto`), nothing is asked of anyone: no
+AskUserQuestion, no plain question, no `WAITING <N>`, no `questions.md`,
+with or without `--unattended`. The decisions register still answers first.
+A role answers every other question itself, where it would have returned
+the block: with the first OPTIONS entry (its proposed answer), or, for
+`OPTIONS: (free text)`, with an answer it composes from the spec, the repo
+and the input. It applies the answer where EGM's flow puts it, appends
+`answered auto: <question> => <answer>` to
+`.orch/taskdraft/<id>/egm/gate_log.md`, and goes on. Before its final line
+it returns one block of four lines per answer it took, in the order it took
+them:
+
+```text
+QUESTION: <the question, one line>
+CONTEXT: <one line: the EGM step or gate it belongs to, and what the answer changes>
+OPTIONS: <option 1> | <option 2> [| …]
+ANSWER: <the answer it applied>
+```
+
+Its final line then ends with ` (auto-answered <N>)`, for example
+`spec <path> (auto-answered 5)`; with no such block, nothing is added. For
+each role reply with `ANSWER:` blocks, the main loop:
+
+*   writes the answers, one line per block, `A<n>: <question> => <answer>`,
+    to `<out>/answers.md` with the Write tool and runs
+    `task-draft-state decisions add <id> --source auto --file <out>/answers.md`
+    (never for the step 4 answer);
+*   writes the blocks to `<out>/auto-answers.md` with the Write tool, after
+    the ones already there (the first auto answer of the run starts the
+    file; `## Q<n>` numbers on):
+
+    ```markdown
+    # task-draft <id>: auto-answered questions
+    Spec: <spec path or none>
+
+    ## Q1
+    Question: <question>
+    Context: <context>
+    Options: <option 1> | <option 2>
+    A: <answer>
+    ```
+
+    It is for the human's review after the run: no helper reads it, and it
+    never blocks `task-from-spec` (only `questions.md` does);
+*   keeps each pair for the closing list (step 5).
+
+The step 4 inline-file confirmation is not asked under `auto` either: the
+skill takes the safe choice, `skip non-local` (no repo file leaves the
+machine), appends
+`answered auto: Send these <n> files to non-local harnesses? => skip non-local` to
+`<out>/egm/gate_log.md`, adds it to `<out>/auto-answers.md` and to the
+closing list, and never records it in `.orch/decisions.md`.
+
 ## The decisions register
 
 The register has two parts: the `## Decisions` section of the task's own spec, and the repo file `.orch/decisions.md`. The file is an ordinary repo file that the user may commit: junkd does not git-ignore it (only `.orch/taskdraft/` is ignored, by the `.orch/taskdraft/.gitignore` that `task-draft-state` writes). It holds one block per decision:
@@ -123,11 +178,12 @@ The register has two parts: the `## Decisions` section of the task's own spec, a
 ```markdown
 ## R<n> (<YYYY-MM-DD>) <the question, one line>
 A: <the answer>
-source: <spec D<n> | questions.md of task <id> | chat>
+source: <spec D<n> | questions.md of task <id> | chat | auto (task <id>)>
 ```
 
 - The roles read it with `task-draft-state decisions [--match "<text>"]` and never write it. A question a recorded decision covers is answered from it and logged as `answered from <decision id>: <question>` in `.orch/taskdraft/<id>/egm/gate_log.md`; when the spec and the file disagree, the spec wins; when in doubt, the question is not covered.
 - The skill appends every answer the user gives in a session with `task-draft-state decisions add <id> --source chat --file <out>/answers.md` (the file holds the `A<n>: <question> => <answer>` lines; without `--file` the helper reads them from stdin), never the step 4 answer (the inline-file confirmation is never answered from the register and never recorded in it).
+- With `egm_answers` = `auto`, the skill appends every answer a role took itself with `task-draft-state decisions add <id> --source auto --file <out>/answers.md` (never the step 4 answer).
 - `task-draft-state questions <id> done` copies the `questions.md` answers of a `task-egm` or `task-elephant` file into `.orch/decisions.md` before it deletes `questions.md`; when that copy fails, `questions.md` stays.
 
 ## Steps
@@ -135,8 +191,10 @@ source: <spec D<n> | questions.md of task <id> | chat>
 All the paths below are relative to the repo root. `<out>` is `.orch/taskdraft/<id>`.
 
 1.  **Gate.**
-    *   Run `task-draft-state settings`. It prints three lines,
-        `enabled=<bool>`, `models=<bool>` and `host=<claude|codex|kimi|opencode>`.
+    *   Run `task-draft-state settings`. It prints four lines,
+        `enabled=<bool>`, `models=<bool>`, `answers=<manual|auto>` and
+        `host=<claude|codex|kimi|opencode>`. Keep `answers` as `<mode>`
+        (on another host it is `auto` only with `JUNKD_EGM_ANSWERS=auto`).
         With `host=claude` and `enabled=false`, print
         `task-draft is off: turn on egm_enabled in the /junkd pane (Settings, egm) or /config`
         and stop. With any other host the `enabled` gate is skipped: the
@@ -145,7 +203,13 @@ All the paths below are relative to the repo root. `<out>` is `.orch/taskdraft/<
         exit 0, keep `root=<abs>` as `<root>`.
     *   **Resume.** Run `task-draft-state questions <id> answers`.
         *   Exit 1 (no `questions.md`): a fresh run; `<answers>` is `none`.
-        *   Exit 4 (some `A:` lines empty): with `--unattended`, print
+        *   Exit 4 with `<mode>` = `auto`, `--unattended` or not: nothing
+            is asked and the run does not stop. Each open `Q<n>:` line
+            becomes `A<n>: <question> => auto` in `<answers>`; go on as for
+            exit 0. A role answers a `=> auto` line itself as in "Auto"
+            (with an `ANSWER:` block); role `task-draft`: step 4 takes
+            `skip non-local` as in "Auto".
+        *   Exit 4 (some `A:` lines empty) with `<mode>` = `manual`: with `--unattended`, print
             `task-draft <id>: waiting: <N> questions in .orch/taskdraft/<id>/questions.md`
             (`<N>` = the number of `Q<n>:` lines) and stop, dispatching
             nothing. Without it, ask the open `Q<n>:` questions as in
@@ -178,6 +242,7 @@ All the paths below are relative to the repo root. `<out>` is `.orch/taskdraft/<
     input: <input path or "none">
     artifacts: .orch/taskdraft/<id>/egm/
     spec_dir: docs/designs/
+    egm_answers: <mode>
     answers: none
     ```
 
@@ -186,8 +251,10 @@ All the paths below are relative to the repo root. `<out>` is `.orch/taskdraft/<
 
     The role answers with lines (protocol in "Role `task-egm`"). A reply that
     ends with `WAITING <N>` is handled as in "Questions"; the role waits for
-    the answers and continues. The final line is
-    `spec <path>` or `failed: <reason>`. On `failed:`, print
+    the answers and continues (under `auto` no reply does: its `ANSWER:`
+    blocks are handled as in "Auto"). The final line is
+    `spec <path>` (under `auto`, `spec <path> (auto-answered <N>)` when it
+    answered any) or `failed: <reason>`. On `failed:`, print
     `task-draft <id>: egm failed: <reason>` and stop.
 3.  **Acceptance criteria check.** The spec must have a section
     `## Acceptance criteria` with items `AC<n>: … (modality: ui|api|test|data)`.
@@ -205,17 +272,22 @@ All the paths below are relative to the repo root. `<out>` is `.orch/taskdraft/<
         `Send these <n> files to non-local harnesses?`, with the list as its
         context and the options `send` and `skip non-local`, as in
         "Questions" (role `task-draft`; with `--unattended` it goes to
-        `questions.md` and the run stops). This question is asked on every
-        run that has a non-local entry; nothing answers it for the user, not
-        even the decisions register, and its answer is not recorded there.
-        `skip non-local` drops every non-local entry from the ladder.
+        `questions.md` and the run stops). With `<mode>` = `manual` this
+        question is asked on every run that has a non-local entry; nothing
+        answers it for the user, not even the decisions register, and its
+        answer is not recorded there. With `<mode>` = `auto` it is not
+        asked, `--unattended` or not: the skill takes `skip non-local` and logs it as
+        in "Auto". `skip non-local` drops every non-local entry from the
+        ladder.
     *   Dispatch one `junkd:task-elephant` with the lines `id: <id>`,
         `spec: <spec>`, `out: <out>`, `ladder:` followed by the ladder lines,
         `host: <claude|codex|kimi|opencode>`, `source: <task source or adhoc>`,
-        and `answers: none` (on resume with role `task-elephant`, `answers:`
+        `egm_answers: <mode>` and `answers: none` (on resume with role `task-elephant`, `answers:`
         followed by the `<answers>` lines). A reply that ends with
         `WAITING <N>` is handled as in "Questions".
-    *   The elephant returns one of the lines in "Role `task-elephant`". On
+    *   The elephant returns one of the lines in "Role `task-elephant`"
+        (under `auto`, after its `ANSWER:` blocks, with
+        ` (auto-answered <N>)` on its last line when it answered any). On
         `unresolved`, print
         `task-draft <id>: no class understood the spec; return to egm-review`
         and stop.
@@ -236,3 +308,20 @@ All the paths below are relative to the repo root. `<out>` is `.orch/taskdraft/<
     then one line naming the orch command of the host: `/junkd:orch <id>`
     (Claude Code), `$orch <id>` (Codex), `/skill:orch <id>` (Kimi Code), or
     `/orch <id>` (OpenCode).
+6.  **Auto answers.** Under `auto`, when any answer was taken without the
+    user (the roles' `ANSWER:` blocks and the step 4 `skip non-local`), the closing
+    reply goes on, after the lines of step 5 or after the line of any stop
+    above, `--unattended` or not, with:
+
+    ```text
+    task-draft <id>: auto-answered <N>
+    <gate>:
+    1. <question> => <answer>
+    2. <question> => <answer>
+    files: .orch/taskdraft/<id>/auto-answers.md, .orch/taskdraft/<id>/egm/gate_log.md, .orch/decisions.md
+    ```
+
+    Every answer is one numbered line, in the order taken, numbered across
+    the whole run. A `<gate>:` line (the step or gate its CONTEXT names, as
+    in the AskUserQuestion `header`) heads each run of answers of one gate;
+    without a gate in CONTEXT, no heading. The count alone is never enough.

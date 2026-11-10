@@ -52,6 +52,7 @@ export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'tools_agents_only', group: 'tools', field: 'agents_only', type: 'boolean', title: 'Tools pane: only worktrees with an agent', default: false, main: false },
   { key: 'egm_enabled', group: 'egm', field: 'enabled', type: 'boolean', title: 'EGM przy pisaniu tasków', default: false, main: true },
   { key: 'egm_models', group: 'egm', field: 'models', type: 'boolean', title: 'EGM bierze pod uwagę modele (pętla rozumienia)', default: false, main: true },
+  { key: 'egm_answers', group: 'egm', field: 'answers', type: 'string', title: 'Questions', default: 'manual', main: true, options: ['manual', 'auto'] },
 ]
 
 export const isKey = (key: unknown): key is JunkdKey => SCHEMA.some(f => f.key === key)

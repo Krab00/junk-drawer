@@ -81,9 +81,9 @@ for r in task-egm task-elephant task-judge task-goldfish; do
 done
 fmline() { awk -v k="$2" 'NR == 1 { next } /^---$/ { exit } index($0, k ": ") == 1 { print; exit }' "$plugin/skills/orch/roles/$1.md"; }
 [ "$(fmline task-egm model)" = 'model: opus' ] && [ "$(fmline task-egm tools)" = 'tools: Read, Grep, Glob, Write, Edit, Bash, Agent' ] || fail "task-egm frontmatter"
-[ "$(fmline task-egm description)" = 'description: "Drafts and reviews one task'"'"'s EGM spec by reading EGM'"'"'s skill files from disk; returns every EGM question to the main loop as QUESTION: blocks and waits, then spec or failed:."' ] || fail "task-egm description"
+[ "$(fmline task-egm description)" = 'description: "Drafts and reviews one task'"'"'s EGM spec by reading EGM'"'"'s skill files from disk; returns every EGM question to the main loop as QUESTION: blocks and waits (with egm_answers: auto it answers them itself and lists them), then spec or failed:."' ] || fail "task-egm description"
 [ "$(fmline task-elephant model)" = 'model: opus' ] && [ "$(fmline task-elephant tools)" = 'tools: Read, Write, Edit, Bash, Agent' ] || fail "task-elephant frontmatter"
-[ "$(fmline task-elephant description)" = 'description: "Owns one task'"'"'s comprehension sub-loop: probes the registry ladder, has each answer judged, clarifies the spec, returns QUESTION: blocks for a human when needed, returns one line per task."' ] || fail "task-elephant description"
+[ "$(fmline task-elephant description)" = 'description: "Owns one task'"'"'s comprehension sub-loop: probes the registry ladder, has each answer judged, clarifies the spec, returns QUESTION: blocks for a human when needed (with egm_answers: auto it answers them itself and lists them), returns one line per task."' ] || fail "task-elephant description"
 [ "$(fmline task-judge model)" = 'model: sonnet' ] && [ "$(fmline task-judge tools)" = 'tools: []' ] || fail "task-judge frontmatter"
 [ "$(fmline task-judge description)" = "description: Scores one goldfish answer against the spec's ACs, files and out-of-scope list." ] || fail "task-judge description"
 [ "$(fmline task-goldfish tools)" = 'tools: []' ] && [ -z "$(fmline task-goldfish model)" ] || fail "task-goldfish frontmatter (tools: [], no model)"
@@ -95,8 +95,10 @@ grep -qF 'You have no tools and no history. Answer the' "$plugin/skills/orch/rol
 grep -qF 'The reply is the first line `understood N/M`, then one line per mismatch:' "$plugin/skills/orch/roles/task-judge.md" || fail "task-judge body"
 for r in task-egm task-elephant; do
     md="$plugin/skills/orch/roles/$r.md"
-    grep -qF 'Never answer a question yourself and never take a default: answer it from the decisions register when a recorded decision covers it (the spec'"'"'s `## Decisions` first, then `task-draft-state decisions --match`), logging `answered from <decision id>` in `.orch/taskdraft/<id>/egm/gate_log.md`; otherwise return it as a `QUESTION:` block and wait.' "$md" ||
+    grep -qF 'Unless your prompt has `egm_answers: auto`, never answer a question yourself and never take a default: answer it from the decisions register when a recorded decision covers it (the spec'"'"'s `## Decisions` first, then `task-draft-state decisions --match`), logging `answered from <decision id>` in `.orch/taskdraft/<id>/egm/gate_log.md`; otherwise return it as a `QUESTION:` block and wait.' "$md" ||
         fail "$r lacks the never-answer sentence"
+    grep -qF 'With `egm_answers: auto`, ask nothing: after the register, answer every question yourself (the first option, or your own text for `(free text)`), log `answered auto: <question> => <answer>` in the same gate log' "$md" ||
+        fail "$r lacks the auto sentence"
     grep -qF 'Return every uncovered question of one gate in one reply, your proposed answer as the first option; never write `.orch/decisions.md`.' "$md" ||
         fail "$r lacks the batch sentence"
     grep -qF 'QUESTION: <the question, one line>' "$md" || fail "$r lacks the Questions format block"
@@ -113,17 +115,22 @@ grep -qxF 'argument-hint: "<task-id> [input] [--unattended]"' "$skill_md" || fai
 for host in 'Claude Code' 'Codex' 'Kimi Code' 'OpenCode'; do grep -qF "$host" "$skill_md" || fail "SKILL.md does not name $host"; done
 if grep -qF '../' "$skill_md"; then fail "SKILL.md contains ../"; fi
 if grep -qE 'taskdraft_|--worker-model|rung' "$skill_md"; then fail "SKILL.md keeps the removed wording"; fi
-grep -qF 'Never answer a question for the user and never take a default. Only the decisions register answers a question without the user: the spec'"'"'s `## Decisions`, then `.orch/decisions.md`.' "$skill_md" ||
+grep -qF 'Unless `egm_answers` is `auto`, never answer a question for the user and never take a default. Only the decisions register answers a question without the user: the spec'"'"'s `## Decisions`, then `.orch/decisions.md`.' "$skill_md" ||
     fail "SKILL.md lacks the never-answer sentence"
 for md in "$skill_md" "$plugin/skills/orch/roles/task-egm.md" "$plugin/skills/orch/roles/task-elephant.md"; do
-    for s in 'QUESTION:' 'WAITING <N>' 'never take a default' '.orch/decisions.md' 'task-draft-state decisions' 'answered from'; do
+    for s in 'QUESTION:' 'WAITING <N>' 'never take a default' '.orch/decisions.md' 'task-draft-state decisions' 'answered from' 'answered auto: <question> => <answer>' 'ANSWER: <the answer it applied>' '(auto-answered <N>)' 'egm_answers: auto' '<out>/auto-answers.md'; do
         grep -qF -- "$s" "$md" || fail "${md#"$root"/} lacks '$s'"
     done
 done
 grep -qF 'task-draft is off: turn on egm_enabled in the /junkd pane (Settings, egm) or /config' "$skill_md" || fail "SKILL.md step 1 message"
+for s in 'egm_answers: <mode>' 'task-draft <id>: auto-answered <N>' '1. <question> => <answer>' 'files: .orch/taskdraft/<id>/auto-answers.md, .orch/taskdraft/<id>/egm/gate_log.md, .orch/decisions.md' \
+    'answered auto: Send these <n> files to non-local harnesses? => skip non-local' '`answers=<manual|auto>`'; do
+    grep -qF -- "$s" "$skill_md" || fail "SKILL.md lacks the auto text '$s'"
+done
 # the --file commands the orch guard lets through (hooks/orch.test.tsx runs these spellings against the guard)
 for md in "$skill_md" "$plugin/skills/orch/roles/task-egm.md" "$plugin/skills/orch/roles/task-elephant.md"; do
     for s in '`task-draft-state decisions add <id> --source chat --file <out>/answers.md`' \
+        '`task-draft-state decisions add <id> --source auto --file <out>/answers.md`' \
         '`task-draft-state questions <id> put --role <role> --spec <spec path or none> --file <out>/blocks.md`'; do
         grep -qF -- "$s" "$md" || fail "${md#"$root"/} lacks $s"
     done
@@ -135,17 +142,17 @@ grep -qF 'short_description: "An orch task through EGM'"'"'s draft and review, a
 # ---------------------------------------------------------------- task-draft-state settings
 settings_json() { printf '%s' "$1" > "$CLAUDE_CONFIG_DIR/settings.json"; }
 case_ "settings defaults"
-[ "$("$state" settings)" = $'enabled=false\nmodels=false\nhost=claude' ] || fail "settings with no settings.json: $("$state" settings)"
+[ "$("$state" settings)" = $'enabled=false\nmodels=false\nanswers=manual\nhost=claude' ] || fail "settings with no settings.json: $("$state" settings)"
 settings_json 'not json'
-[ "$("$state" settings)" = $'enabled=false\nmodels=false\nhost=claude' ] || fail "settings with a broken settings.json"
+[ "$("$state" settings)" = $'enabled=false\nmodels=false\nanswers=manual\nhost=claude' ] || fail "settings with a broken settings.json"
 settings_json '{"a":1}{"b":2}'
-[ "$("$state" settings)" = $'enabled=false\nmodels=false\nhost=claude' ] || fail "settings with two JSON values"
+[ "$("$state" settings)" = $'enabled=false\nmodels=false\nanswers=manual\nhost=claude' ] || fail "settings with two JSON values"
 case_ "settings models needs enabled"
 settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_enabled":false,"egm_models":true}}}}'
-[ "$("$state" settings)" = $'enabled=false\nmodels=false\nhost=claude' ] || fail "egm_models without egm_enabled: $("$state" settings)"
+[ "$("$state" settings)" = $'enabled=false\nmodels=false\nanswers=manual\nhost=claude' ] || fail "egm_models without egm_enabled: $("$state" settings)"
 for v in 'true' '"true"' '"on"'; do
     settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_enabled":'"$v"',"egm_models":'"$v"'}}}}'
-    [ "$("$state" settings)" = $'enabled=true\nmodels=true\nhost=claude' ] || fail "the spelling $v is not true: $("$state" settings)"
+    [ "$("$state" settings)" = $'enabled=true\nmodels=true\nanswers=manual\nhost=claude' ] || fail "the spelling $v is not true: $("$state" settings)"
 done
 for v in 'false' '"yes"' '1' '"TRUE"' 'null'; do
     settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_enabled":'"$v"'}}}}'
@@ -154,11 +161,28 @@ done
 settings_json '{"pluginConfigs":{"other@x":{"options":{"egm_enabled":true}},"junkd@a":{"options":{"egm_enabled":true}},"junkd@b":{"options":{"egm_enabled":false}}}}'
 [ "$("$state" settings | head -1)" = 'enabled=true' ] || fail "settings does not read the first junkd@ key"
 settings_json '{"pluginConfigs":{"junkd@a":{"options":{"egm_enabled":true}}}}'
-[ "$(JUNKD_EGM_MODELS=1 "$state" settings)" = $'enabled=true\nmodels=false\nhost=claude' ] || fail "JUNKD_EGM_MODELS changed models on claude"
+[ "$(JUNKD_EGM_MODELS=1 "$state" settings)" = $'enabled=true\nmodels=false\nanswers=manual\nhost=claude' ] || fail "JUNKD_EGM_MODELS changed models on claude"
+case_ "settings answers"
+for v in '"auto"' '"AUTO"' '" Auto "'; do
+    settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_enabled":true,"egm_answers":'"$v"'}}}}'
+    [ "$("$state" settings)" = $'enabled=true\nmodels=false\nanswers=auto\nhost=claude' ] || fail "egm_answers $v is not auto: $("$state" settings)"
+done
+for v in '"bogus"' '"manual"' 'true' 'null' '""'; do
+    settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_enabled":true,"egm_answers":'"$v"'}}}}'
+    [ "$("$state" settings | sed -n 3p)" = 'answers=manual' ] || fail "egm_answers $v is not manual: $("$state" settings)"
+done
+settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_enabled":true}}}}'
+[ "$("$state" settings | sed -n 3p)" = 'answers=manual' ] || fail "egm_answers absent is not manual"
+settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_answers":"auto"}}}}'
+[ "$("$state" settings)" = $'enabled=false\nmodels=false\nanswers=auto\nhost=claude' ] || fail "egm_answers is not read while egm_enabled is off"
+[ "$(JUNKD_EGM_ANSWERS=manual "$state" settings | sed -n 3p)" = 'answers=auto' ] || fail "JUNKD_EGM_ANSWERS changed answers on claude"
 case_ "settings other host"
-[ "$(JUNK_DRAWER_RUNTIME=codex JUNKD_EGM_MODELS=1 "$state" settings)" = $'enabled=false\nmodels=true\nhost=codex' ] || fail "settings on codex with JUNKD_EGM_MODELS=1"
-[ "$(JUNK_DRAWER_RUNTIME=codex "$state" settings)" = $'enabled=false\nmodels=false\nhost=codex' ] || fail "settings on codex without JUNKD_EGM_MODELS"
-[ "$(JUNKD_EGM_MODELS=true "$state" settings --host kimi)" = $'enabled=false\nmodels=false\nhost=kimi' ] || fail "JUNKD_EGM_MODELS=true counted as 1"
+[ "$(JUNK_DRAWER_RUNTIME=codex JUNKD_EGM_MODELS=1 "$state" settings)" = $'enabled=false\nmodels=true\nanswers=manual\nhost=codex' ] || fail "settings on codex with JUNKD_EGM_MODELS=1"
+[ "$(JUNK_DRAWER_RUNTIME=codex "$state" settings)" = $'enabled=false\nmodels=false\nanswers=manual\nhost=codex' ] || fail "settings on codex without JUNKD_EGM_MODELS"
+[ "$(JUNK_DRAWER_RUNTIME=codex JUNKD_EGM_ANSWERS=auto "$state" settings)" = $'enabled=false\nmodels=false\nanswers=auto\nhost=codex' ] || fail "settings on codex with JUNKD_EGM_ANSWERS=auto"
+[ "$(JUNKD_EGM_ANSWERS=AUTO "$state" settings --host opencode | sed -n 3p)" = 'answers=auto' ] || fail "JUNKD_EGM_ANSWERS=AUTO is not auto"
+[ "$(JUNKD_EGM_ANSWERS=yes "$state" settings --host kimi | sed -n 3p)" = 'answers=manual' ] || fail "JUNKD_EGM_ANSWERS=yes counted as auto"
+[ "$(JUNKD_EGM_MODELS=true "$state" settings --host kimi)" = $'enabled=false\nmodels=false\nanswers=manual\nhost=kimi' ] || fail "JUNKD_EGM_MODELS=true counted as 1"
 [ "$(CODEX_THREAD_ID=x "$state" settings | tail -1)" = 'host=codex' ] || fail "CODEX_THREAD_ID is not codex"
 [ "$(KIMI_PLUGIN_ROOT=x "$state" settings | tail -1)" = 'host=kimi' ] || fail "KIMI_PLUGIN_ROOT is not kimi"
 [ "$(OPENCODE=1 "$state" settings | tail -1)" = 'host=opencode' ] || fail "OPENCODE is not opencode"
@@ -1318,8 +1342,12 @@ run st decisions add T1 --source questions <<<'A1: Next? => yes'
 A: yes
 source: questions.md of task T1" ] || fail "R numbering does not follow the highest R: $(tail -4 "$dfile")"
 [ "$(tail -6 "$dfile" | tr '\n' '|')" = "A: x|source: chat||## R42 ($today) Next?|A: yes|source: questions.md of task T1|" ] || fail "the trailing blank lines were not cut to one: $(tail -6 "$dfile" | cat -A)"
+run st decisions add T1 --source auto <<<'A1: Auto? => picked'
+[ "$(tail -3 "$dfile")" = "## R43 ($today) Auto?
+A: picked
+source: auto (task T1)" ] || fail "decisions add --source auto: $(tail -4 "$dfile")"
 cp "$dfile" "$tmp/d-before.md"
-for badsrc in web D Dx questions.md ''; do
+for badsrc in web D Dx questions.md AUTO auto2 ''; do
     run st decisions add T1 --source "$badsrc" <<<'A1: q => a'
     [ "$rc" = 2 ] || fail "decisions add --source '$badsrc' exited $rc"
 done
