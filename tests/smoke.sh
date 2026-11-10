@@ -441,6 +441,18 @@ for copy in tldr/bin/host-lib handon/bin/host-lib ctx-limit/bin/host-lib ctx-tok
         { echo "junkd: skills/$copy differs from skills/handoff/bin/${copy##*/}"; exit 1; }
 done
 [ -x "$junkd/skills/handon/bin/handoff-load" ] || { echo "junkd: skills/handon/bin/handoff-load is not executable"; exit 1; }
+# The jd-rule block (which pluginConfigs entry holds junkd's options) is the same in every shell reader of
+# settings.json, and no shell file reads a junkd@ entry another way (the old "first junkd@ key" selection).
+jd_block() { awk '/^# >>> jd-rule:/ { p = 1 } p { print } /^# <<< jd-rule$/ { exit }' "$1"; }
+jd_ref=$(jd_block "$junkd/skills/task-draft/bin/task-draft-state")
+[ -n "$jd_ref" ] || { echo "junkd: task-draft-state has no jd-rule block"; exit 1; }
+for f in task-draft/bin/task-draft-state orch/bin/orch-state orch/bin/orch-status orch/bin/orch-watch orch/scripts/orch-context.sh \
+    orch/scripts/orch-agent-stop.sh junkd/scripts/setup.sh tldr/bin/tldr-hook statusline/bin/statusline.sh; do
+    [ "$(jd_block "$junkd/skills/$f")" = "$jd_ref" ] || { echo "junkd: the jd-rule block of skills/$f differs from task-draft-state's"; exit 1; }
+done
+if rg -n --no-ignore -g '!node_modules' -g '!*.ts' -g '!*.tsx' -g '!*.md' -g '!*.html' 'select\(\.key \| startswith\("junkd@"\)\)\]\[0\]' "$junkd" >/dev/null; then
+    echo "junkd: a shell reader still picks the first junkd@ entry"; exit 1
+fi
 # The task-draft roles: the agent types live in skills/orch/roles (agents -> skills/orch/roles), and the skill
 # ships byte-identical copies in skills/task-draft/roles for the hosts that read ./roles/<file>.
 for r in task-egm task-elephant task-judge task-goldfish; do

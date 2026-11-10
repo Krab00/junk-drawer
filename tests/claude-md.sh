@@ -325,7 +325,8 @@ run off
 settings="$CLAUDE_CONFIG_DIR/settings.json"
 main() { printf '%s' "${1:-{\"session_id\":\"s1\",\"hook_event_name\":\"SessionStart\"\}}" | env -u CLAUDE_AGENT_ID "$setup" 2>&1; }
 # opts <json of junkd@'s options>: settings.json with the outputStyle already set (the style step stays quiet)
-opts() { printf '{"outputStyle":"x","pluginConfigs":{"other@m":{"options":{"orch_claude_md":%s}},"junkd@m":{"options":%s},"junkd@n":{"options":{"orch_claude_md":%s,"orch_enabled":true}}}}\n' "$2" "$1" "$2" > "$settings"; }
+# (another plugin's entry carries the second argument: it never counts)
+opts() { printf '{"outputStyle":"x","pluginConfigs":{"other@m":{"options":{"orch_claude_md":%s}},"junkd@m":{"options":%s}}}\n' "$2" "$1" > "$settings"; }
 section='# Me\n\n## Orchestrator mode\nr\n\n## Other\n'
 with_block="# Me\n\n${BLOCK}\n## Other\n"
 
@@ -343,6 +344,14 @@ for o in '{"orch_claude_md":false}' '{}' '{"orch_claude_md":"true"}'; do
     [[ "$out" == "junkd: updated $md: junkd:orch pointer block removed"* ]] || fail "setup, $o: the line is: $out"
     expect "$md" '# Me\n\n## Other\n' "setup, $o: the block stayed"
 done
+# jd-rule, from the checkout: the junkd@* entries merge, a later one over an earlier one, junkd@inline lowest; the
+# warning goes to stderr (main folds it in, so it is checked apart here)
+reset; printf "$section" > "$md"
+printf '{"outputStyle":"x","pluginConfigs":{"junkd@m":{"options":{"orch_claude_md":false}},"junkd@n":{"options":{"orch_claude_md":true}},"junkd@inline":{"options":{"orch_claude_md":false}}}}\n' > "$settings"
+out=$(printf '{"session_id":"s1","hook_event_name":"SessionStart"}' | env -u CLAUDE_AGENT_ID "$setup" 2>"$CLAUDE_CONFIG_DIR/err") || fail "setup, merge: exit non-zero"
+expect "$md" "$with_block" "setup, merge: the later junkd@n true did not win"
+[ "$(cat "$CLAUDE_CONFIG_DIR/err")" = 'junkd: 3 junkd@* entries in settings.json (junkd@m, junkd@n, junkd@inline); using merged' ] ||
+    fail "setup, merge: stderr $(cat "$CLAUDE_CONFIG_DIR/err")"
 # no junkd@ entry, no pluginConfigs: the default, off
 reset; printf "$with_block" > "$md"; printf '{"outputStyle":"x"}\n' > "$settings"
 main >/dev/null

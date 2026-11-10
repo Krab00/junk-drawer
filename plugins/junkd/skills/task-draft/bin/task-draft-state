@@ -3,7 +3,7 @@
 # anything or reads a credential.
 #   task-draft-state settings [--host <h>]   # enabled=<bool>, models=<bool>, answers=<manual|auto>, host=<h>. On
 #                                            # claude: pluginConfigs of ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json,
-#                                            # the first junkd@ key, options.egm_enabled / egm_models (true, "true" or
+#                                            # the jd-rule entry, options.egm_enabled / egm_models (true, "true" or
 #                                            # "on" is true; models is false while enabled is; defaults false) and
 #                                            # egm_answers (auto in any case is auto, anything else manual). Other hosts:
 #                                            # enabled=false, models=true only with JUNKD_EGM_MODELS=1, answers=auto only
@@ -67,6 +67,34 @@ _host_arg() {
   printf '%s' "$h"
 }
 
+# >>> jd-rule: which pluginConfigs entry holds junkd's options. The same block is in every reader of settings.json
+# (tests/smoke.sh keeps the copies identical). junkd@<marketplace> when this copy runs from
+# plugins/cache/<marketplace>/junkd/<version>/ and settings.json has that entry. Else the options of all junkd@*
+# entries merged: junkd@inline lowest, the others in file order, a later one over an earlier one (one entry alone is
+# read as it is). jd_opts takes .pluginConfigs. jd_warn <file> [key] prints one line to stderr when the file has more
+# than one junkd@* entry (never to stdout: callers parse it).
+jd_mk="" jd_d=. jd_p=""
+case "$0" in */*) jd_d=${0%/*} ;; esac
+for jd_p in "$(cd "$jd_d" 2>/dev/null && pwd -L)" "$(cd "$jd_d" 2>/dev/null && pwd -P)"; do
+    case "$jd_p/" in */plugins/cache/*/junkd/*) jd_mk=${jd_p#*/plugins/cache/}; jd_mk=${jd_mk%%/*}; break ;; esac
+done
+jd_rule='def jd_opts($mk): [to_entries[] | select(.key | startswith("junkd@"))] as $e
+  | if $mk != "" and any($e[]; .key == "junkd@" + $mk) then .["junkd@" + $mk].options
+    elif ($e | length) < 2 then $e[0].value.options
+    else [($e[] | select(.key == "junkd@inline")), ($e[] | select(.key != "junkd@inline"))]
+      | reduce .[] as $x ({}; . * (($x.value | objects | .options | objects) // {})) end;
+def jd_note($mk; $key): ((.pluginConfigs? | objects) // {}) | [keys_unsorted[] | select(startswith("junkd@"))] as $k
+  | select(($k | length) > 1)
+  | "junkd: \($k | length) junkd@* entries in settings.json (\($k | join(", "))); using \(if $key != "" then $key
+      elif $mk != "" and any($k[]; . == "junkd@" + $mk) then "junkd@" + $mk else "merged" end)";
+'
+jd_warn() {
+    local w
+    w=$(jq -r --arg mk "$jd_mk" --arg key "${2:-}" "$jd_rule jd_note(\$mk; \$key)" "$1" 2>/dev/null) || return 0
+    case "$w" in "junkd: "*) printf '%s\n' "$w" >&2 ;; esac
+}
+# <<< jd-rule
+
 _settings() {
   local explicit host out answers
   explicit=$(_host_arg settings "$@")
@@ -78,10 +106,11 @@ _settings() {
     printf '%s\nanswers=%s\nhost=%s\n' "$out" "$answers" "$host"
     return 0
   fi
-  out=$(jq -rs '
+  jd_warn "$CFG/settings.json"
+  out=$(jq -rs --arg mk "$jd_mk" "$jd_rule"'
     def sw($k): .[$k] == true or .[$k] == "true" or .[$k] == "on";
     (if length == 1 then .[0] else error end).pluginConfigs
-    | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
+    | jd_opts($mk) // {}
     | sw("egm_enabled") as $e
     | "enabled=\($e)", "models=\($e and sw("egm_models"))",
       "answers=\(if (.egm_answers | type) == "string" and (.egm_answers | ascii_downcase | gsub("^\\s+|\\s+$"; "")) == "auto" then "auto" else "manual" end)"

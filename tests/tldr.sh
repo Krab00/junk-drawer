@@ -139,20 +139,41 @@ expect terse "tldr_enabled null, no tldr-off flag"
 : > "$off"
 expect silent "tldr_enabled null, a tldr-off flag"
 
-# the first junkd@ entry decides, under any marketplace's name
+# jd-rule, from the checkout: all junkd@* entries merge, junkd@inline lowest, a later one over an earlier one; with
+# more than one, one warning line on stderr (stdout, the context, stays clean)
+# expect2 <terse|silent> <what> [warning]: the hook's stdout, and its stderr exactly
+expect2() {
+    local out
+    out=$("${noh[@]}" CLAUDECODE=1 CLAUDE_CONFIG_DIR="$cfg" "${hb:-$hookbin}" 2>"$tmp/err") || fail "$2: hook exited non-zero"
+    if [ "$1" = terse ]; then [[ "$out" == "$TERSE"* ]] || fail "$2: expected the terse line, got '$out'"
+    else [ -z "$out" ] || fail "$2: expected nothing, got '$out'"; fi
+    [ "$(cat "$tmp/err")" = "${3:-}" ] || fail "$2: stderr '$(cat "$tmp/err")', expected '${3:-}'"
+}
+w2='junkd: 2 junkd@* entries in settings.json (junkd@a, junkd@b); using merged'
 reset; mkdir -p "$cfg/junkd"; : > "$on"
 cfgjson '{"junkd@a": {"options": {"tldr_enabled": false}}, "junkd@b": {"options": {"tldr_enabled": true}}}'
-expect silent "first junkd@ entry false, second true"
+expect2 terse "first junkd@ entry false, later true" "$w2"
 cfgjson '{"junkd@b": {"options": {"tldr_enabled": true}}, "junkd@a": {"options": {"tldr_enabled": false}}}'
-expect terse "first junkd@ entry true, second false"
+expect2 silent "first junkd@ entry true, later false" 'junkd: 2 junkd@* entries in settings.json (junkd@b, junkd@a); using merged'
+cfgjson '{"junkd@a": {"options": {"tldr_enabled": true}}, "junkd@inline": {"options": {"tldr_enabled": false}}}'
 : > "$off"
-expect terse "first junkd@ entry true wins over the tldr-off flag"
-# a first junkd@ entry with no tldr_enabled is no value, even when a later one names one: the flag decides
-cfgjson '{"junkd@a": {"options": {}}, "junkd@b": {"options": {"tldr_enabled": true}}}'
-expect silent "first junkd@ entry unset (later true), a tldr-off flag"
+expect2 terse "junkd@inline false after a true: inline is lowest, over the tldr-off flag" 'junkd: 2 junkd@* entries in settings.json (junkd@a, junkd@inline); using merged'
+# a later entry with no tldr_enabled keeps the earlier value; none names one: the flag decides
+cfgjson '{"junkd@a": {"options": {"tldr_enabled": true}}, "junkd@b": {"options": {}}}'
+expect2 terse "first true, later unset, a tldr-off flag" "$w2"
+cfgjson '{"junkd@a": {"options": {}}, "junkd@b": {}}'
+expect2 silent "both unset, a tldr-off flag" "$w2"
 rm "$off"
-cfgjson '{"junkd@a": {}, "junkd@b": {"options": {"tldr_enabled": false}}}'
-expect terse "first junkd@ entry without options (later false), no tldr-off flag"
+expect2 terse "both unset, no tldr-off flag" "$w2"
+cfgjson '{"junkd@a": {"options": {"tldr_enabled": false}}}'
+expect2 silent "one entry: no warning"
+# an installed copy (plugins/cache/<marketplace>/junkd/<version>/) reads junkd@<marketplace>, even before a later entry
+tcache="$tmp/tcache/plugins/cache/junk-drawer/junkd/0.12.2/skills/tldr"
+mkdir -p "$tcache" && cp -R "$plugin/skills/tldr/bin" "$tcache/"
+cfgjson '{"junkd@junk-drawer": {"options": {"tldr_enabled": true}}, "junkd@other": {"options": {"tldr_enabled": false}}}'
+hb="$tcache/bin/tldr-hook" expect2 terse "cache copy reads junkd@junk-drawer" \
+    'junkd: 2 junkd@* entries in settings.json (junkd@junk-drawer, junkd@other); using junkd@junk-drawer'
+rm -rf "$tmp/tcache"
 # another plugin's entry, or a key that merely contains junkd@, is not junkd's: the flag decides
 for other in '{"tldr@junk-drawer": {"options": {"tldr_enabled": false}}}' '{"xjunkd@m": {"options": {"tldr_enabled": false}}}' \
     '{"junkd": {"options": {"tldr_enabled": false}}}' '{"tldr@junk-drawer": {"options": {"enabled": false}}}'; do

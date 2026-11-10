@@ -648,8 +648,9 @@ test('configNote: one junkd config is no warning; a second names the one the lin
   expect(configNote({ ...configs('junkd@junk-drawer', KEY), ...line(WIRED) }, KEY, CFG)).toEqual({ key: KEY, warn: `two junkd configs: ${KEY} wins` })
   // two entries, the line reads the other one
   expect(configNote({ ...configs(KEY, 'junkd@junk-drawer'), ...line(`${COPY} --config junkd@junk-drawer`) }, KEY, CFG).warn).toBe(`two junkd configs: junkd@junk-drawer wins (this session writes ${KEY})`)
-  // a command with no --config reads the first junkd@ entry in the file
-  expect(configNote({ ...configs('junkd@junk-drawer', KEY), ...line(COPY) }, KEY, CFG).warn).toBe(`two junkd configs: junkd@junk-drawer wins (this session writes ${KEY})`)
+  // a command with no --config merges all junkd@ entries (statusline.sh's jd-rule), and reads one entry alone as it is
+  expect(configNote({ ...configs('junkd@junk-drawer', KEY), ...line(COPY) }, KEY, CFG).warn).toBe(`two junkd configs: the merge of all junkd@ entries wins (this session writes ${KEY})`)
+  expect(configNote({ ...configs('junkd@junk-drawer'), ...line(COPY) }, KEY, CFG).warn).toBe(`two junkd configs: junkd@junk-drawer wins (this session writes ${KEY})`)
   // a line that is not junkd's: the line reads nothing of ours, this session's key counts
   expect(configNote({ ...configs('junkd@junk-drawer'), ...line('/my/line.sh --config junkd@junk-drawer') }, KEY, CFG).warn).toBe(`two junkd configs: ${KEY} wins`)
   // the other config alone (this session's entry not stored yet) is already a second one

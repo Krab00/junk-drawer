@@ -157,13 +157,29 @@ for key in 'junkd@junk-drawer' 'junkd@other'; do
     expect none "setting $key orch_inject_rules=true, orch_enabled unset, the orch-off flag"
 done
 rm -f "$offflag"
-# the first junkd@ entry decides
-printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_inject_rules":true}},"junkd@b":{"options":{"orch_inject_rules":false}}}}' > "$hsettings"
+# jd-rule, from the checkout: the junkd@* entries merge, a later one over an earlier one, junkd@inline lowest
+printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_inject_rules":false}},"junkd@b":{"options":{"orch_inject_rules":true}}}}' > "$hsettings"
 : > "$flag"
-expect sheet "first junkd@ entry true, flag present"
+expect sheet "later junkd@ entry true, flag present"
 rm -f "$flag"
-printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":false}},"junkd@b":{"options":{"orch_enabled":true}}}}' > "$hsettings"
-expect none "first junkd@ entry orch_enabled false"
+printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":true}},"junkd@b":{"options":{"orch_enabled":false}}}}' > "$hsettings"
+expect none "later junkd@ entry orch_enabled false"
+printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":false}},"junkd@inline":{"options":{"orch_enabled":true}}}}' > "$hsettings"
+expect none "junkd@inline after junkd@a overrides it"
+err=$(hook_main 2>&1 >/dev/null)
+[ "$err" = 'junkd: 2 junkd@* entries in settings.json (junkd@a, junkd@inline); using merged' ] || fail "orch-context, two entries: warning '$err'"
+printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":true}}}}' > "$hsettings"
+err=$(hook_main 2>&1 >/dev/null)
+[ -z "$err" ] || fail "orch-context, one entry: warning '$err'"
+# an installed copy (plugins/cache/<marketplace>/junkd/<version>/) reads junkd@<marketplace>, even before a later entry
+hcache="$tmp/hcache/plugins/cache/junk-drawer/junkd/0.12.2/scripts"
+mkdir -p "$hcache" && ln -s "$hook" "$hcache/orch-context.sh"
+printf '{"pluginConfigs":{"junkd@inline":{"options":{"orch_enabled":false}},"junkd@junk-drawer":{"options":{"orch_enabled":true}},"junkd@other":{"options":{"orch_enabled":false}}}}' > "$hsettings"
+out=$(printf '{"session_id":"s1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hcache/orch-context.sh" 2>"$tmp/hcache.err") || fail "cache copy: exited non-zero"
+[ "$out" = "$(cat "$sheet")" ] || fail "orch-context cache copy does not read junkd@junk-drawer"
+[ "$(cat "$tmp/hcache.err")" = 'junkd: 3 junkd@* entries in settings.json (junkd@inline, junkd@junk-drawer, junkd@other); using junkd@junk-drawer' ] ||
+    fail "orch-context cache copy, warning: $(cat "$tmp/hcache.err")"
+rm -rf "$tmp/hcache" "$tmp/hcache.err"
 # never into a subagent, whatever the setting says
 printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_inject_rules":true}}}}' > "$hsettings"
 sub=$(printf '{"agent_id":"a1"}' | env -u CLAUDE_AGENT_ID ORCH_INJECT_RULES= "$hook") || fail "subagent with setting true: exit non-zero"
@@ -318,7 +334,7 @@ for input in '{"agent_id":"a1","agent_transcript_path":"x"}' '{"session_id":"s1"
     [ -z "$(records)" ] || fail "input $input: wrote $(records)"
 done
 
-# the gate, from settings.json (the first junkd@ entry): orch_enabled anything but true, or orch_guard off (any case,
+# the gate, from settings.json (the jd-rule options): orch_enabled anything but true, or orch_guard off (any case,
 # padded), writes nothing; no file, no junkd@ entry, no key, a file that does not parse = on
 rsettings="$rcfg/settings.json"
 # gated <settings or NOFILE> <none|record>
@@ -342,11 +358,30 @@ for key in 'junkd@junk-drawer' 'junkd@other'; do
         gated "{\"pluginConfigs\":{\"$key\":{\"options\":{\"orch_enabled\":true,\"orch_guard\":$g}}}}" record
     done
 done
-# the first junkd@ entry decides, both ways
-gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":false}},"junkd@b":{"options":{"orch_enabled":true}}}}' none
-gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":true}},"junkd@b":{"options":{"orch_enabled":false}}}}' record
-gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_guard":"off"}},"junkd@b":{"options":{"orch_guard":"fable"}}}}' none
-gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_guard":"fable"}},"junkd@b":{"options":{"orch_guard":"off"}}}}' record
+# jd-rule, from the checkout: the junkd@* entries merge, a later one over an earlier one, junkd@inline lowest
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":false}},"junkd@b":{"options":{"orch_enabled":true}}}}' record
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_enabled":true}},"junkd@b":{"options":{"orch_enabled":false}}}}' none
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_guard":"off"}},"junkd@b":{"options":{"orch_guard":"fable"}}}}' record
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_guard":"fable"}},"junkd@b":{"options":{"orch_guard":"off"}}}}' none
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_guard":"off"}},"junkd@inline":{"options":{"orch_guard":"fable"}}}}' none
+gated '{"pluginConfigs":{"junkd@a":{"options":{"orch_guard":"off"}},"junkd@b":{"options":{"orch_enabled":true}}}}' none
+# the warning: one line on stderr with two entries, none with one
+rm -rf "$rcfg"; mkdir -p "$rcfg"
+printf '%s' '{"pluginConfigs":{"junkd@inline":{"options":{}},"junkd@junk-drawer":{"options":{}}}}' > "$rsettings"
+err=$(stop_event '"s1"' '"w1"' "$tr_dir/plain.jsonl" | "$stop" 2>&1 >/dev/null)
+[ "$err" = 'junkd: 2 junkd@* entries in settings.json (junkd@inline, junkd@junk-drawer); using merged' ] || fail "orch-agent-stop, two entries: warning '$err'"
+printf '%s' '{"pluginConfigs":{"junkd@junk-drawer":{"options":{}}}}' > "$rsettings"
+err=$(stop_event '"s1"' '"w2"' "$tr_dir/plain.jsonl" | "$stop" 2>&1 >/dev/null)
+[ -z "$err" ] || fail "orch-agent-stop, one entry: warning '$err'"
+# an installed copy reads junkd@<marketplace>, even before a later entry
+scache="$tmp/scache/plugins/cache/junk-drawer/junkd/0.12.2/scripts"
+mkdir -p "$scache" && ln -s "$stop" "$scache/orch-agent-stop.sh"
+rm -rf "$rcfg"; mkdir -p "$rcfg"
+printf '%s' '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_guard":"off"}},"junkd@other":{"options":{"orch_guard":"fable"}}}}' > "$rsettings"
+err=$(stop_event '"s1"' '"c1"' "$tr_dir/plain.jsonl" | "$scache/orch-agent-stop.sh" 2>&1 >/dev/null)
+[ -z "$(records)" ] || fail "orch-agent-stop cache copy does not read junkd@junk-drawer: $(records)"
+[ "$err" = 'junkd: 2 junkd@* entries in settings.json (junkd@junk-drawer, junkd@other); using junkd@junk-drawer' ] || fail "orch-agent-stop cache copy, warning '$err'"
+rm -rf "$tmp/scache"
 # no value of junkd's: on
 for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"orch_enabled":false,"orch_guard":"off"}}}}' \
     '{"pluginConfigs":{"junkdx@x":{"options":{"orch_enabled":false}}}}' '{"pluginConfigs":{"xjunkd@x":{"options":{"orch_guard":"off"}}}}' \
@@ -797,9 +832,21 @@ for content in '{"pluginConfigs":{"tldr@junk-drawer":{"options":{"orch_rounds":9
     printf '%s' "$content" > "$settings_json"
     [ "$(settings)" = "$defaults" ] || fail "settings, file $content: expected the defaults, got: $(settings)"
 done
-# the first junkd@ entry decides (any marketplace)
-printf '{"pluginConfigs":{"junkd@other":{"options":{"orch_rounds":7}},"junkd@junk-drawer":{"options":{"orch_rounds":2}}}}' > "$settings_json"
-[ "$(settings | rg '^rounds=')" = rounds=7 ] || fail "settings: the first junkd@ entry does not decide"
+# jd-rule, from the checkout: the junkd@* entries merge, a later one over an earlier one, junkd@inline lowest
+printf '{"pluginConfigs":{"junkd@other":{"options":{"orch_rounds":7,"orch_lessons":false}},"junkd@junk-drawer":{"options":{"orch_rounds":2}}}}' > "$settings_json"
+[ "$(settings 2>/dev/null | rg '^(rounds|lessons)=' | tr '\n' ' ')" = 'rounds=2 lessons=false ' ] || fail "settings: the later junkd@ entry does not win key by key"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_rounds":2}},"junkd@inline":{"options":{"orch_rounds":7}}}}' > "$settings_json"
+[ "$(settings 2>/dev/null | rg '^rounds=')" = rounds=2 ] || fail "settings: junkd@inline is not the lowest"
+[ "$( (cd "$tmp" && "$bin/orch-state" settings) 2>&1 >/dev/null)" = 'junkd: 2 junkd@* entries in settings.json (junkd@junk-drawer, junkd@inline); using merged' ] ||
+    fail "orch-state settings, two entries: no warning"
+# an installed copy reads junkd@<marketplace>, even before a later entry
+ocache="$tmp/ocache/plugins/cache/junk-drawer/junkd/0.12.2/bin"
+mkdir -p "$ocache" && ln -s "$bin/orch-state" "$ocache/orch-state"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_rounds":4}},"junkd@other":{"options":{"orch_rounds":7}}}}' > "$settings_json"
+[ "$(cd "$tmp" && "$ocache/orch-state" settings 2>/dev/null | rg '^rounds=')" = rounds=4 ] || fail "orch-state cache copy does not read junkd@junk-drawer"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_rounds":4}}}}' > "$settings_json"
+[ -z "$( (cd "$tmp" && "$ocache/orch-state" settings) 2>&1 >/dev/null)" ] || fail "orch-state settings, one entry: a warning"
+rm -rf "$tmp/ocache"
 # no jq on PATH: the defaults, exit 0
 mkdir -p "$tmp/nojq"
 ln -sf "$(command -v bash)" "$tmp/nojq/bash"

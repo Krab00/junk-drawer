@@ -158,8 +158,36 @@ for v in 'false' '"yes"' '1' '"TRUE"' 'null'; do
     settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_enabled":'"$v"'}}}}'
     [ "$("$state" settings | head -1)" = 'enabled=false' ] || fail "the value $v counts as true"
 done
-settings_json '{"pluginConfigs":{"other@x":{"options":{"egm_enabled":true}},"junkd@a":{"options":{"egm_enabled":true}},"junkd@b":{"options":{"egm_enabled":false}}}}'
-[ "$("$state" settings | head -1)" = 'enabled=true' ] || fail "settings does not read the first junkd@ key"
+case_ "settings jd-rule: which junkd@ entry"
+# From the checkout the marketplace is unknown: all junkd@* entries merge, junkd@inline lowest, later over earlier.
+settings_json '{"pluginConfigs":{"junkd@inline":{"options":{"egm_enabled":true}},"junkd@junk-drawer":{"options":{"egm_answers":"auto","egm_enabled":true,"egm_models":true}}}}'
+run "$state" settings
+[ "$out" = $'enabled=true\nmodels=true\nanswers=auto\nhost=claude' ] || fail "inline first, junk-drawer second does not merge to auto/true: $out"
+[ "$err" = 'junkd: 2 junkd@* entries in settings.json (junkd@inline, junkd@junk-drawer); using merged' ] || fail "two entries, warning: $err"
+settings_json '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"egm_enabled":true,"egm_models":true}},"junkd@inline":{"options":{"egm_enabled":false,"egm_models":false}}}}'
+[ "$("$state" settings 2>/dev/null)" = $'enabled=true\nmodels=true\nanswers=manual\nhost=claude' ] || fail "junkd@inline after another entry overrides it"
+settings_json '{"pluginConfigs":{"other@x":{"options":{"egm_enabled":false}},"junkd@a":{"options":{"egm_enabled":false,"egm_models":true}},"junkd@b":{"options":{"egm_enabled":true}}}}'
+[ "$("$state" settings 2>/dev/null)" = $'enabled=true\nmodels=true\nanswers=manual\nhost=claude' ] || fail "two non-inline entries: the later does not win key by key"
+settings_json '{"pluginConfigs":{"junkd@a":{"options":{"egm_enabled":true}},"junkd@b":null,"junkd@c":{"options":"x"}}}'
+[ "$("$state" settings 2>/dev/null | head -1)" = 'enabled=true' ] || fail "an entry with no options object breaks the merge"
+settings_json '{"pluginConfigs":{"other@x":{"options":{}},"junkd@a":{"options":{"egm_enabled":true}}}}'
+run "$state" settings
+[ "$(printf '%s' "$out" | head -1)" = 'enabled=true' ] && [ -z "$err" ] || fail "one junkd@ entry: $out / warning '$err'"
+# An installed copy (plugins/cache/<marketplace>/junkd/<version>/) reads junkd@<marketplace>, even before a later entry.
+cache="$tmp/fakecache/plugins/cache/junk-drawer/junkd/0.12.2/skills/task-draft/bin"
+mkdir -p "$cache" && ln -s "$state" "$cache/task-draft-state"
+settings_json '{"pluginConfigs":{"junkd@inline":{"options":{"egm_enabled":false}},"junkd@junk-drawer":{"options":{"egm_enabled":true,"egm_answers":"auto"}},"junkd@other":{"options":{"egm_enabled":false,"egm_answers":"manual"}}}}'
+run "$cache/task-draft-state" settings
+[ "$out" = $'enabled=true\nmodels=false\nanswers=auto\nhost=claude' ] || fail "the cache copy does not read junkd@junk-drawer: $out"
+[ "$err" = 'junkd: 3 junkd@* entries in settings.json (junkd@inline, junkd@junk-drawer, junkd@other); using junkd@junk-drawer' ] || fail "cache copy, warning: $err"
+run at "$cache" ./task-draft-state settings
+[ "$(printf '%s' "$out" | sed -n 3p)" = 'answers=auto' ] || fail "the cache copy run by a relative path: $out"
+# A marketplace with no entry of its own falls back to the merge.
+settings_json '{"pluginConfigs":{"junkd@a":{"options":{"egm_enabled":false}},"junkd@b":{"options":{"egm_enabled":true}}}}'
+run "$cache/task-draft-state" settings
+[ "$(printf '%s' "$out" | head -1)" = 'enabled=true' ] && case "$err" in *"; using merged") true ;; *) false ;; esac ||
+    fail "no junkd@junk-drawer entry: $out / $err"
+rm -rf "$tmp/fakecache"
 settings_json '{"pluginConfigs":{"junkd@a":{"options":{"egm_enabled":true}}}}'
 [ "$(JUNKD_EGM_MODELS=1 "$state" settings)" = $'enabled=true\nmodels=false\nanswers=manual\nhost=claude' ] || fail "JUNKD_EGM_MODELS changed models on claude"
 case_ "settings answers"

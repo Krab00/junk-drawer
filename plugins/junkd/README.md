@@ -68,7 +68,7 @@ session runs one mod of that name: with `--plugin-dir` it is the folder you pass
 `1 mod active · junkd` with the marketplace copy installed and enabled), so an old marketplace copy such as 0.4.0
 does not draw a status line or write the line's rows next to it. Update or disable the installed copy
 (`/plugin disable junkd@junk-drawer`) all the same when you work from `--plugin-dir`: its `pluginConfigs` entry stays in
-settings.json and is the first one a script without `--config` would read.
+settings.json, and a shell script run from the checkout merges it with `junkd@inline` ([the shell rule](#settings)).
 
 The install is live when:
 
@@ -197,8 +197,12 @@ takes junkd's line out of settings.json; `tools_enabled` off closes the tools pa
 counts nothing. Scope: user-global; project/session overrides: planned.
 
 A shell hook runs before the hooks module at a session start and reads no plugin setting, so each shell hook reads
-its row from `settings.json` itself (`pluginConfigs`, the first entry whose key starts with `junkd@`, its
-`.options.<row>`), and only where that names no value a flag file the module mirrors the row into decides. The
+its row from `settings.json` itself (`pluginConfigs`, `.options.<row>`), and only where that names no value a flag
+file the module mirrors the row into decides. The shell rule for the entry: an installed copy (it runs from
+`plugins/cache/<marketplace>/junkd/<version>/`) reads `junkd@<marketplace>` when that entry exists. Else the options
+of all `junkd@*` entries merge, `junkd@inline` lowest and the others in file order, a later one over an earlier one.
+With more than one `junkd@*` entry, each script prints one `junkd: <n> junkd@* entries in settings.json (...); using
+<key or merged>` line to stderr. The
 flag files live under `~/.claude/junkd/` (`$CLAUDE_CONFIG_DIR/junkd/`): `output-style-off`, `tldr-on`,
 `tldr-off`, `orch-off`, `orch-rules-off`, ctx-limit's `ctx-limit-threshold`, `ctx-limit-action` and
 `ctx-limit-cmd`, the status line's copy `statusline.sh`, and the setup stamps `setup-<version>.stamp`.
@@ -290,8 +294,8 @@ compaction and every subagent are skipped. The hook always exits 0.
 key that exists, whatever its value, and `/output-style` changes it any time, `junkd:STE` included.
 
 **Turn the step off.** Set `core_output_style` to `off` in `/config` or in the junkd pane (`ste` is the
-default). The shell hook reads the row where Claude Code stores it (`pluginConfigs` in `settings.json`, the first
-`junkd@` entry), and the hooks module also mirrors it into the flag file `~/.claude/junkd/output-style-off`, at
+default). The shell hook reads the row where Claude Code stores it (`pluginConfigs` in `settings.json`, the entry of
+[the shell rule](#settings)), and the hooks module also mirrors it into the flag file `~/.claude/junkd/output-style-off`, at
 every write of the row and at session start, so the step is off from the first session on. The row in
 `settings.json` wins when it names a value (a hand edit from `off` to `ste` applies at the next session start);
 the flag file only stands in where it names none. While it is off no stamp is written, so `ste` again applies
@@ -741,7 +745,7 @@ main session only:
   input carries an `agent_id`;
 - `ORCH_INJECT_RULES=0` in the environment turns the injection off, and so do the `orch_enabled` and
   `orch_inject_rules` settings below. The hook reads them from `settings.json` itself (`pluginConfigs`,
-  the first `junkd@` entry, `.options.orch_enabled` and `.options.orch_inject_rules`; it runs before the
+  the entry of [the shell rule](#settings), `.options.orch_enabled` and `.options.orch_inject_rules`; it runs before the
   hooks module at a session start): `true` goes on, any other value skips. Only for a setting with no
   value there (or without `jq`) does its flag file decide, `~/.claude/junkd/orch-off` or
   `~/.claude/junkd/orch-rules-off` (under `CLAUDE_CONFIG_DIR` when set), which the hooks module writes
@@ -781,7 +785,7 @@ gets a CRLF block.
 
 It runs at once when the setting is flipped (the pane, `/config`, `$.junkd.set`; the change or the refusal is a
 toast), and again at every session start from `scripts/setup.sh`, which reads `orch_claude_md` and
-`orch_enabled` from `settings.json` (the first `junkd@` entry of `pluginConfigs`): on while `orch_claude_md` is
+`orch_enabled` from `settings.json` (the `pluginConfigs` entry of [the shell rule](#settings)): on while `orch_claude_md` is
 `true`, off otherwise. Neither runs while `orch_enabled` is off (or, where the entry names no `orch_enabled`,
 while `junkd/orch-off` is there), nor while `settings.json` is missing or does not parse. `tests/claude-md.sh`
 (run by `tests/smoke.sh`) covers both modes and the session-start run.
@@ -829,7 +833,7 @@ record to `<name>.json` beside it for a named agent (the name from the `.meta.js
 `tokens` is the input + cache-write + cache-read tokens of the last usage record in the agent's transcript (its
 last iteration when that request ran server tools), `null` when there is none. A session id, agent id or name
 that is not plain (`[A-Za-z0-9_-]+`) is ignored, so a record never lands outside its folder. The hook reads
-`orch_enabled` and `orch_guard` from `settings.json` (the first `junkd@` entry): with `orch_enabled` anything but
+`orch_enabled` and `orch_guard` from `settings.json` (the entry of [the shell rule](#settings)): with `orch_enabled` anything but
 `true`, or `orch_guard` `off`, it writes nothing; no file, no entry or no key counts as on. It always exits 0.
 
 The `SendMessage` rule reads the target's record file first (this session's folder, by the agent's id, or by
@@ -919,8 +923,8 @@ of truth — no separate manifest to drift):
 
 - `bin/orch-state` — task-store CRUD (`list` / `set` / `reset-stale [--blocked]` / `new` /
   `cfg <key>` / `id <id>` / `settings`). `settings` prints `enabled`, `rounds`, `ui_review`,
-  `implementer_ctx_k` and `inject_rules` as `/junkd:orch` uses them (read from `settings.json`, the first
-  `junkd@` entry's `orch_*` options, clamped like the hooks module).
+  `implementer_ctx_k` and `inject_rules` as `/junkd:orch` uses them (read from `settings.json`, the `orch_*`
+  options of [the shell rule](#settings)'s entry, clamped like the hooks module).
   All three scripts work on the checkout they run in; from a task worktree (`<project>/.worktrees/<id>`,
   which has no `.orch/`) on the nearest enclosing checkout that has one (`orch-state root` prints it). The config's `tasks_dir` must be a relative path to a folder under the project's `.orch/` (no `..` segment, and its real path, symlinks resolved, below `.orch/`; never `.orch/` itself), or the scripts stop. `list` hides `_lessons.md` and every other `_`-prefixed file (they are
   not tasks) and marks a file without a closed frontmatter block `invalid`; `set` refuses it.
@@ -1008,8 +1012,8 @@ The junkd pane (`/junkd`, or ✚ junkd under the prompt) shows the three rows in
   effect at the next write through `/config` or `$.junkd.set`.
 - `tldr-off` mirrors `tldr_enabled`: there while it is off, removed while it is on. The hooks module writes it at
   every write of the row (`$.junkd.set` and `/config`, the file first as above) and at every session start. The
-  hook reads `tldr_enabled` from settings.json itself first (`pluginConfigs`, the first entry whose key starts
-  with `junkd@`, `.options.tldr_enabled`), so a hand edit there counts at once; only where that names no value,
+  hook reads `tldr_enabled` from settings.json itself first (`pluginConfigs`, the entry of
+  [the shell rule](#settings), `.options.tldr_enabled`), so a hand edit there counts at once; only where that names no value,
   or `jq` is missing, or the file does not parse, the `tldr-off` file decides.
 
 A flag file that cannot be written (or an `rm` that fails) refuses the write: no row is stored, and `set` rejects
@@ -1152,8 +1156,9 @@ one settings.json, and each session writes its toggles to its own entry. The wir
 statusLine.command = ~/.claude/junkd/statusline.sh --config junkd@inline
 ```
 
-The renderer reads exactly that entry (no `--config`, the old behaviour: the first `junkd@` entry in the file, which
-is the installed copy's whenever both exist, so a `--plugin-dir` session's toggles never reached the line). The
+The renderer reads exactly that entry. With no `--config` (a command from before the key existed) it merges all
+`junkd@*` entries by [the shell rule](#settings): the copy under `~/.claude/junkd/` never runs from the plugin cache, so
+it knows no marketplace. The
 module derives its key from the plugin's folder (`<config>/plugins/cache/<marketplace>/junkd/<version>` is
 `junkd@<marketplace>`, any other folder is `junkd@inline`; the engine does not hand a module its own key), and
 `statusline-setup on --config <key>` (every `on`, and at session start whenever the command differs, the script is
@@ -1636,7 +1641,7 @@ pill shows the stored value, and a flip (pane or `/config`) is refused with
 `✗ egm.models działa dopiero przy egm.enabled = on`. Turning `egm_enabled` off keeps the stored `egm_models`, but
 every reader takes `egm_models` as off while `egm_enabled` is off (`task-draft-state settings` prints
 `models=false`). The skill reads the rows with `bin/task-draft-state settings` from `settings.json`
-(`pluginConfigs`, the first `junkd@` entry, `.options.egm_enabled` / `.options.egm_models` / `.options.egm_answers`;
+(`pluginConfigs`, the entry of [the shell rule](#settings), `.options.egm_enabled` / `.options.egm_models` / `.options.egm_answers`;
 it prints `answers=auto` only for `auto` in any case, else `answers=manual`). The other hosts have no
 userConfig: see [Hosts](#hosts-2).
 

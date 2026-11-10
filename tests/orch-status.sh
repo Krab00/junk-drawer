@@ -160,6 +160,25 @@ done
 printf '{"pluginConfigs":{"junkd@m":{"options":{"orch_dashboard_window_h":"6"}}}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 (cd "$proj" && "$bin" --out "$tmp/outw" >/dev/null 2>&1)
 expect "$tmp/outw/status.js" 'S.window.end - S.window.start === 6 * 3600000' "the orch_dashboard_window_h setting"
+# jd-rule, from the checkout: the junkd@* entries merge, a later one over an earlier one, junkd@inline lowest
+printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_dashboard_window_h":5}},"junkd@b":{"options":{"orch_dashboard_window_h":7}},"junkd@inline":{"options":{"orch_dashboard_window_h":9}}}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+(cd "$proj" && "$bin" --out "$tmp/outw" >/dev/null 2>"$tmp/err")
+expect "$tmp/outw/status.js" 'S.window.end - S.window.start === 7 * 3600000' "jd-rule merge: the later entry"
+[ "$(cat "$tmp/err")" = 'junkd: 3 junkd@* entries in settings.json (junkd@a, junkd@b, junkd@inline); using merged' ]
+ok $? "jd-rule warning on stderr: $(cat "$tmp/err")"
+# an installed copy (plugins/cache/<marketplace>/junkd/<version>/) reads junkd@<marketplace>, even before a later entry
+fc="$tmp/fc/plugins/cache/junk-drawer/junkd/0.12.2/skills/orch"
+mkdir -p "$fc" && ln -s "$junkd/skills/orch/bin" "$fc/bin"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_dashboard_window_h":4}},"junkd@other":{"options":{"orch_dashboard_window_h":7}}}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+(cd "$proj" && "$fc/bin/orch-status" --out "$tmp/outw" >/dev/null 2>"$tmp/err")
+expect "$tmp/outw/status.js" 'S.window.end - S.window.start === 4 * 3600000' "the cache copy reads junkd@junk-drawer"
+[ "$(cat "$tmp/err")" = 'junkd: 2 junkd@* entries in settings.json (junkd@junk-drawer, junkd@other); using junkd@junk-drawer' ]
+ok $? "cache copy warning on stderr: $(cat "$tmp/err")"
+(cd "$proj" && ORCH_DASHBOARD_WINDOW_H=2 "$fc/bin/orch-status" --out "$tmp/outw" >/dev/null 2>"$tmp/err")
+[ ! -s "$tmp/err" ]
+ok $? "no warning while the env decides the window"
+rm -rf "$tmp/fc" "$tmp/err"
+printf '{"pluginConfigs":{"junkd@m":{"options":{"orch_dashboard_window_h":"6"}}}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 (cd "$proj" && ORCH_DASHBOARD_WINDOW_H=2 "$bin" --out "$tmp/outw" >/dev/null 2>&1)
 expect "$tmp/outw/status.js" 'S.window.end - S.window.start === 2 * 3600000' "the env over the setting"
 rm -f "$CLAUDE_CONFIG_DIR/settings.json"
