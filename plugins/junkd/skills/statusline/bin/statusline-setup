@@ -9,7 +9,7 @@
 #           copied on every run, so a plugin update or a stale copy never stays. With --config <key> the command is
 #           `$CFG/junkd/statusline.sh --config <key>`: the pluginConfigs entry (`junkd@inline` for a --plugin-dir
 #           session, `junkd@<marketplace>` for an installed one) whose statusline_* options the script reads; without
-#           it the script reads the first `junkd@` entry. A different key than the wired one rewrites the command.
+#           it the script reads the jd-rule entry (see statusline.sh). A different key than the wired one rewrites the command.
 #   off     removes the statusLine key and the copies, only while its command is ours (the new path or the legacy
 #           one); a statusLine of the person's own is never touched (one line, exit 0).
 #   status  prints `on`, `off (<other command>)` or `off`.

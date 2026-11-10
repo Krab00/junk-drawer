@@ -152,6 +152,23 @@ printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_idle_stop_minute
 head -n1 <<<"$(run --once)" | grep -qF 'idle stop after 120 min' || fail "settings minutes not clamped"
 printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_idle_stop_minutes":"soon"}}}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 head -n1 <<<"$(run --once)" | grep -qF 'idle stop after 10 min' || fail "a word in settings is not the default"
+# jd-rule, from the checkout: the junkd@* entries merge, a later one over an earlier one, junkd@inline lowest; one
+# warning line on stderr with more than one entry
+printf '{"pluginConfigs":{"junkd@a":{"options":{"orch_idle_stop_minutes":7}},"junkd@b":{"options":{"orch_idle_stop_minutes":8}},"junkd@inline":{"options":{"orch_idle_stop_minutes":9}}}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+out=$(run --once 2>"$tmp/err")
+head -n1 <<<"$out" | grep -qF 'idle stop after 8 min' || fail "jd-rule merge: $(head -n1 <<<"$out")"
+[ "$(cat "$tmp/err")" = 'junkd: 3 junkd@* entries in settings.json (junkd@a, junkd@b, junkd@inline); using merged' ] || fail "jd-rule warning: $(cat "$tmp/err")"
+# an installed copy (plugins/cache/<marketplace>/junkd/<version>/) reads junkd@<marketplace>, even before a later entry
+fc="$tmp/fc/plugins/cache/junk-drawer/junkd/0.12.2/skills/orch"
+mkdir -p "$fc" && ln -s "$root/plugins/junkd/skills/orch/bin" "$fc/bin"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_idle_stop_minutes":5}},"junkd@other":{"options":{"orch_idle_stop_minutes":8}}}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+out=$(cd "$repo" && "$fc/bin/orch-watch" --once 2>"$tmp/err")
+head -n1 <<<"$out" | grep -qF 'idle stop after 5 min' || fail "cache copy: $(head -n1 <<<"$out")"
+[ "$(cat "$tmp/err")" = 'junkd: 2 junkd@* entries in settings.json (junkd@junk-drawer, junkd@other); using junkd@junk-drawer' ] || fail "cache copy warning: $(cat "$tmp/err")"
+printf '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"orch_idle_stop_minutes":5}}}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+run --once >/dev/null 2>"$tmp/err"
+[ ! -s "$tmp/err" ] || fail "one entry: a warning $(cat "$tmp/err")"
+rm -rf "$tmp/fc" "$tmp/err"
 printf 'not json' >"$CLAUDE_CONFIG_DIR/settings.json"
 head -n1 <<<"$(run --once)" | grep -qF 'idle stop after 10 min' || fail "a broken settings.json is not the default"
 rm "$CLAUDE_CONFIG_DIR/settings.json"

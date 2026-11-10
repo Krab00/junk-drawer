@@ -20,6 +20,8 @@ fail() { echo "junkd tests: $*" >&2; exit 1; }
 # The hook as a main session runs it: no agent marker, the given hook input on stdin; stderr is stdout here, so
 # any noise fails the one-line and the silent checks.
 main() { printf '%s' "${1:-{\"session_id\":\"s1\",\"hook_event_name\":\"SessionStart\"\}}" | env -u CLAUDE_AGENT_ID "$hook" 2>&1; }
+# mainq: main with stderr kept apart in $tmp/err (the jd-rule warning of a file with more than one junkd@* entry)
+mainq() { printf '%s' '{"session_id":"s1","hook_event_name":"SessionStart"}' | env -u CLAUDE_AGENT_ID "${hk:-$hook}" 2>"$tmp/err"; }
 reset() { rm -rf "$CLAUDE_CONFIG_DIR"; mkdir -p "$CLAUDE_CONFIG_DIR"; }
 
 # ---------------------------------------------------------------- the style (AC1)
@@ -127,38 +129,41 @@ rg -q '^junkd: ' <<<"$out" || fail "on again: expected the junkd: line, got: $ou
 [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "on again: outputStyle not set"
 # the setting itself in settings.json (the hooks module runs after this hook at a session start, so the flag
 # file is not yet there on a first session): core_output_style off under any marketplace's junkd entry skips, no
-# stamp; the first junkd@ entry decides, past another plugin's entry and before a later junkd@ one
+# stamp; jd-rule (from the checkout): all junkd@* entries merge, a later one over an earlier one, junkd@inline lowest,
+# another plugin's entry never counts
 for cfgjson in '{"junkd@junk-drawer": {"options": {"core_output_style": "off"}}}' '{"junkd@other": {"options": {"core_output_style": "off"}}}' \
-    '{"tldr@junk-drawer": {"options": {"core_output_style": "ste"}}, "junkd@a": {"options": {"core_output_style": "off"}}, "junkd@b": {"options": {"core_output_style": "ste"}}}'; do
+    '{"tldr@junk-drawer": {"options": {"core_output_style": "ste"}}, "junkd@a": {"options": {"core_output_style": "ste"}}, "junkd@b": {"options": {"core_output_style": "off"}}}' \
+    '{"junkd@a": {"options": {"core_output_style": "off"}}, "junkd@b": {"options": {}}}' \
+    '{"junkd@a": {"options": {"core_output_style": "off"}}, "junkd@inline": {"options": {"core_output_style": "ste"}}}'; do
     reset
     printf '{"theme": "dark", "pluginConfigs": %s}\n' "$cfgjson" > "$settings"
     before=$(cat "$settings")
-    out=$(main) || fail "setting off ($cfgjson): hook exited non-zero"
+    out=$(mainq) || fail "setting off ($cfgjson): hook exited non-zero"
     [ -z "$out" ] || fail "setting off ($cfgjson): hook printed output: $out"
     [ "$(cat "$settings")" = "$before" ] || fail "setting off ($cfgjson): settings.json changed"
     [ ! -e "$stamp" ] || fail "setting off ($cfgjson): stamped although skipped"
 done
 # ste there, a value the options do not name (the module reads it as ste), another plugin's off (alone, or ahead of
-# junkd's ste), a later junkd@ entry's off behind the first one's ste, the pre-T11 key output_style (no row any
-# more), or no options: the step applies
+# junkd's ste), a later junkd@ entry's ste over an earlier one's off, junkd@inline's off under another entry's ste,
+# the pre-T11 key output_style (no row any more), or no options: the step applies
 for cfgjson in '{"junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' '{"junkd@junk-drawer": {"options": {"core_output_style": "blue"}}}' \
     '{"tldr@junk-drawer": {"options": {"core_output_style": "off"}}}' \
     '{"other@x": {"options": {"core_output_style": "off"}}, "junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' \
     '{"my-junkd@x": {"options": {"core_output_style": "off"}}, "junkd-x@y": {"options": {"core_output_style": "off"}}, "junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}' \
-    '{"junkd@a": {"options": {"core_output_style": "ste"}}, "junkd@b": {"options": {"core_output_style": "off"}}}' \
-    '{"junkd@a": {"options": {}}, "junkd@b": {"options": {"core_output_style": "off"}}}' \
+    '{"junkd@a": {"options": {"core_output_style": "off"}}, "junkd@b": {"options": {"core_output_style": "ste"}}}' \
+    '{"junkd@b": {"options": {"core_output_style": "ste"}}, "junkd@inline": {"options": {"core_output_style": "off"}}}' \
     '{"junkd@junk-drawer": {"options": {"output_style": "off"}}}' '{"junkd@junk-drawer": {}}' '{}'; do
     reset
     printf '{"theme": "dark", "pluginConfigs": %s}\n' "$cfgjson" > "$settings"
-    out=$(main) || fail "pluginConfigs $cfgjson: hook exited non-zero"
+    out=$(mainq) || fail "pluginConfigs $cfgjson: hook exited non-zero"
     rg -q '^junkd: ' <<<"$out" || fail "pluginConfigs $cfgjson: expected the junkd: line, got: $out"
     [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "pluginConfigs $cfgjson: outputStyle not set"
     [ "$(jq -c .pluginConfigs "$settings")" = "$(jq -c . <<<"$cfgjson")" ] || fail "pluginConfigs $cfgjson: pluginConfigs changed"
 done
 # the setting in settings.json wins over the flag file, which only stands in where settings.json names none: a
 # hand edit off -> ste applies at once, though the flag the last session left is still there; an entry with no
-# core_output_style (the first junkd@ entry's: a later one's ste, another plugin's, or the old output_style key do
-# not count) leaves the flag in charge
+# core_output_style (in no junkd@ entry: another plugin's, or the old output_style key do not count) leaves the
+# flag in charge
 reset
 mkdir -p "$(dirname "$flag")" && : > "$flag"
 printf '{"theme": "dark", "pluginConfigs": {"junkd@junk-drawer": {"options": {"core_output_style": "ste"}}}}\n' > "$settings"
@@ -166,17 +171,38 @@ out=$(main) || fail "flag + setting ste: hook exited non-zero"
 rg -q '^junkd: ' <<<"$out" || fail "flag + setting ste: expected the junkd: line, got: $out"
 [ "$(jq -r .outputStyle "$settings")" = "junkd:STE" ] || fail "flag + setting ste: outputStyle not set"
 [ -e "$stamp" ] || fail "flag + setting ste: not stamped"
-for cfgjson in '{"junkd@junk-drawer": {"options": {}}}' '{"junkd@a": {"options": {}}, "junkd@b": {"options": {"core_output_style": "ste"}}}' \
+for cfgjson in '{"junkd@junk-drawer": {"options": {}}}' '{"junkd@a": {"options": {}}, "junkd@b": {"options": {}}}' \
     '{"tldr@junk-drawer": {"options": {"core_output_style": "ste"}}}' '{"junkd@junk-drawer": {"options": {"output_style": "ste"}}}'; do
     reset
     mkdir -p "$(dirname "$flag")" && : > "$flag"
     printf '{"theme": "dark", "pluginConfigs": %s}\n' "$cfgjson" > "$settings"
     before=$(cat "$settings")
-    out=$(main) || fail "flag + no setting ($cfgjson): hook exited non-zero"
+    out=$(mainq) || fail "flag + no setting ($cfgjson): hook exited non-zero"
     [ -z "$out" ] || fail "flag + no setting ($cfgjson): hook printed output: $out"
     [ "$(cat "$settings")" = "$before" ] || fail "flag + no setting ($cfgjson): settings.json changed"
     [ ! -e "$stamp" ] || fail "flag + no setting ($cfgjson): stamped although skipped"
 done
+# the jd-rule warning: one line on stderr with more than one junkd@* entry (once, though two steps read the file),
+# none with one; stdout keeps only the hook's own lines
+reset
+printf '{"pluginConfigs": {"junkd@inline": {"options": {}}, "junkd@junk-drawer": {"options": {"core_output_style": "off"}}}}\n' > "$settings"
+out=$(mainq) || fail "warning: hook exited non-zero"
+[ -z "$out" ] || fail "warning: stdout $out"
+[ "$(cat "$tmp/err")" = 'junkd: 2 junkd@* entries in settings.json (junkd@inline, junkd@junk-drawer); using merged' ] || fail "warning: stderr $(cat "$tmp/err")"
+printf '{"pluginConfigs": {"junkd@junk-drawer": {"options": {"core_output_style": "off"}}}}\n' > "$settings"
+out=$(mainq) || fail "one entry: hook exited non-zero"
+[ ! -s "$tmp/err" ] || fail "one entry: a warning $(cat "$tmp/err")"
+# an installed copy (plugins/cache/<marketplace>/junkd/<version>/) reads junkd@<marketplace>, even before a later entry
+fc="$tmp/fc/plugins/cache/junk-drawer/junkd/$ver"
+mkdir -p "$fc/.claude-plugin" "$fc/skills/junkd/scripts" && cp "$plugin/.claude-plugin/plugin.json" "$fc/.claude-plugin/" &&
+    ln -s "$plugin/skills/junkd/scripts/setup.sh" "$fc/skills/junkd/scripts/setup.sh" && ln -s "$plugin/skills/orch" "$fc/skills/orch"
+reset
+printf '{"pluginConfigs": {"junkd@junk-drawer": {"options": {"core_output_style": "off"}}, "junkd@other": {"options": {"core_output_style": "ste"}}}}\n' > "$settings"
+before=$(cat "$settings")
+out=$(hk="$fc/skills/junkd/scripts/setup.sh" mainq) || fail "cache copy: hook exited non-zero"
+[ -z "$out" ] && [ "$(cat "$settings")" = "$before" ] || fail "cache copy does not read junkd@junk-drawer (off): $out"
+[ "$(cat "$tmp/err")" = 'junkd: 2 junkd@* entries in settings.json (junkd@junk-drawer, junkd@other); using junkd@junk-drawer' ] || fail "cache copy: stderr $(cat "$tmp/err")"
+rm -rf "$tmp/fc"
 # neither CLAUDE_CONFIG_DIR nor HOME: nothing to do, exit 0, silent
 out=$(printf '{}' | env -u CLAUDE_AGENT_ID -u CLAUDE_CONFIG_DIR -u HOME "$hook" 2>&1) || fail "no HOME: hook exited non-zero"
 [ -z "$out" ] || fail "no HOME: hook printed output: $out"

@@ -64,14 +64,42 @@ fi
 command -v jq >/dev/null 2>&1 || { echo "orch-watch: needs jq (brew install jq, apt install jq); nothing checked"; exit 0; }
 
 cfg="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+# >>> jd-rule: which pluginConfigs entry holds junkd's options. The same block is in every reader of settings.json
+# (tests/smoke.sh keeps the copies identical). junkd@<marketplace> when this copy runs from
+# plugins/cache/<marketplace>/junkd/<version>/ and settings.json has that entry. Else the options of all junkd@*
+# entries merged: junkd@inline lowest, the others in file order, a later one over an earlier one (one entry alone is
+# read as it is). jd_opts takes .pluginConfigs. jd_warn <file> [key] prints one line to stderr when the file has more
+# than one junkd@* entry (never to stdout: callers parse it).
+jd_mk="" jd_d=. jd_p=""
+case "$0" in */*) jd_d=${0%/*} ;; esac
+for jd_p in "$(cd "$jd_d" 2>/dev/null && pwd -L)" "$(cd "$jd_d" 2>/dev/null && pwd -P)"; do
+    case "$jd_p/" in */plugins/cache/*/junkd/*) jd_mk=${jd_p#*/plugins/cache/}; jd_mk=${jd_mk%%/*}; break ;; esac
+done
+jd_rule='def jd_opts($mk): [to_entries[] | select(.key | startswith("junkd@"))] as $e
+  | if $mk != "" and any($e[]; .key == "junkd@" + $mk) then .["junkd@" + $mk].options
+    elif ($e | length) < 2 then $e[0].value.options
+    else [($e[] | select(.key == "junkd@inline")), ($e[] | select(.key != "junkd@inline"))]
+      | reduce .[] as $x ({}; . * (($x.value | objects | .options | objects) // {})) end;
+def jd_note($mk; $key): ((.pluginConfigs? | objects) // {}) | [keys_unsorted[] | select(startswith("junkd@"))] as $k
+  | select(($k | length) > 1)
+  | "junkd: \($k | length) junkd@* entries in settings.json (\($k | join(", "))); using \(if $key != "" then $key
+      elif $mk != "" and any($k[]; . == "junkd@" + $mk) then "junkd@" + $mk else "merged" end)";
+'
+jd_warn() {
+    local w
+    w=$(jq -r --arg mk "$jd_mk" --arg key "${2:-}" "$jd_rule jd_note(\$mk; \$key)" "$1" 2>/dev/null) || return 0
+    case "$w" in "junkd: "*) printf '%s\n' "$w" >&2 ;; esac
+}
+# <<< jd-rule
 agents_root="$cfg/junkd/orch/_agents"
 
-# The idle minutes when not given: orch_idle_stop_minutes of the first junkd@ entry of settings.json, rounded and
+# The idle minutes when not given: orch_idle_stop_minutes of the jd-rule options of settings.json, rounded and
 # clamped 1-120 as orch-lib.ts does; 10 when missing or unreadable.
 if [ -z "$idle_minutes" ]; then
-  idle_minutes=$(jq -rs '
+  jd_warn "$cfg/settings.json"
+  idle_minutes=$(jq -rs --arg mk "$jd_mk" "$jd_rule"'
     (if length == 1 then .[0] else error end).pluginConfigs
-    | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
+    | jd_opts($mk) // {}
     | .orch_idle_stop_minutes as $x
     | (if ($x | type) == "number" then $x
        elif ($x | type) == "string" then ($x | gsub("^\\s+|\\s+$"; "") | try tonumber catch null) else null end) as $n

@@ -5,8 +5,8 @@
 # Which segments are drawn: the junkd settings statusline_ctx, _branch, _worktree, _model, _effort and _limits, read
 # from the user settings.json (${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json, its pluginConfigs entry: the one
 # named by `--config <key>` (statusline-setup writes it into the statusLine command: `junkd@inline` for a --plugin-dir
-# session, `junkd@<marketplace>` for an installed one), else, with no --config, the first entry whose key starts with
-# `junkd@`). true, "true" or "on" is on, any other value off; a missing key, a missing entry, a file that does not
+# session, `junkd@<marketplace>` for an installed one), else, with no --config, the jd-rule
+# options below). true, "true" or "on" is on, any other value off; a missing key, a missing entry, a file that does not
 # parse, or no jq draws the segment.
 
 config_key=""
@@ -17,11 +17,40 @@ done
 input=$(cat)
 settings_file="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 
+# >>> jd-rule: which pluginConfigs entry holds junkd's options. The same block is in every reader of settings.json
+# (tests/smoke.sh keeps the copies identical). junkd@<marketplace> when this copy runs from
+# plugins/cache/<marketplace>/junkd/<version>/ and settings.json has that entry. Else the options of all junkd@*
+# entries merged: junkd@inline lowest, the others in file order, a later one over an earlier one (one entry alone is
+# read as it is). jd_opts takes .pluginConfigs. jd_warn <file> [key] prints one line to stderr when the file has more
+# than one junkd@* entry (never to stdout: callers parse it).
+jd_mk="" jd_d=. jd_p=""
+case "$0" in */*) jd_d=${0%/*} ;; esac
+for jd_p in "$(cd "$jd_d" 2>/dev/null && pwd -L)" "$(cd "$jd_d" 2>/dev/null && pwd -P)"; do
+    case "$jd_p/" in */plugins/cache/*/junkd/*) jd_mk=${jd_p#*/plugins/cache/}; jd_mk=${jd_mk%%/*}; break ;; esac
+done
+jd_rule='def jd_opts($mk): [to_entries[] | select(.key | startswith("junkd@"))] as $e
+  | if $mk != "" and any($e[]; .key == "junkd@" + $mk) then .["junkd@" + $mk].options
+    elif ($e | length) < 2 then $e[0].value.options
+    else [($e[] | select(.key == "junkd@inline")), ($e[] | select(.key != "junkd@inline"))]
+      | reduce .[] as $x ({}; . * (($x.value | objects | .options | objects) // {})) end;
+def jd_note($mk; $key): ((.pluginConfigs? | objects) // {}) | [keys_unsorted[] | select(startswith("junkd@"))] as $k
+  | select(($k | length) > 1)
+  | "junkd: \($k | length) junkd@* entries in settings.json (\($k | join(", "))); using \(if $key != "" then $key
+      elif $mk != "" and any($k[]; . == "junkd@" + $mk) then "junkd@" + $mk else "merged" end)";
+'
+jd_warn() {
+    local w
+    w=$(jq -r --arg mk "$jd_mk" --arg key "${2:-}" "$jd_rule jd_note(\$mk; \$key)" "$1" 2>/dev/null) || return 0
+    case "$w" in "junkd: "*) printf '%s\n' "$w" >&2 ;; esac
+}
+# <<< jd-rule
+
 # ── Segment switches ──────────────────────────────────────────────────────────
 show_ctx=on show_branch=on show_worktree=on show_model=on show_effort=on show_limits=on
 if command -v jq >/dev/null 2>&1 && [ -f "$settings_file" ]; then
-    switches=$(jq -r --arg key "$config_key" '(.pluginConfigs? // {}) as $c
-        | (if $key != "" then [$c[$key]] else [$c | to_entries[] | select(.key | startswith("junkd@")) | .value] end)[0].options? // {}
+    jd_warn "$settings_file" "$config_key"
+    switches=$(jq -r --arg key "$config_key" --arg mk "$jd_mk" "$jd_rule"'(.pluginConfigs? // {}) as $c
+        | (if $key != "" then $c[$key].options? else ($c | jd_opts($mk)) end) // {}
         | [.statusline_ctx, .statusline_branch, .statusline_worktree, .statusline_model, .statusline_effort, .statusline_limits]
         | map(if . == null or . == true or . == "true" or . == "on" then "on" else "off" end) | join(" ")' \
         "$settings_file" 2>/dev/null) || switches=""

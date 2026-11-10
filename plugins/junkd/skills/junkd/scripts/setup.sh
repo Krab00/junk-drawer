@@ -7,7 +7,7 @@
 # The run is stamped under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/junkd/ (one file per plugin version) once the key
 # is there, set or found, so each version looks once. No stamp while the step is off or while settings.json is
 # refused: the step applies once that changes. Off is the `core_output_style` setting at `off`, read from
-# settings.json itself (the first pluginConfigs entry whose key starts with `junkd@`, its
+# settings.json itself (the pluginConfigs entry the jd-rule block below picks, its
 # options.core_output_style: a shell hook reads no plugin setting, and this hook runs before the hooks module does
 # at a session start), which wins whenever it names a value; only where it names none, the flag file
 # .../junkd/output-style-off the hooks module mirrors the setting into.
@@ -45,13 +45,42 @@ manifest="$root/.claude-plugin/plugin.json"
 # nothing is stamped. A manifest that does not parse, or has no version, stamps nothing either.
 command -v jq >/dev/null 2>&1 || exit 0
 
+# >>> jd-rule: which pluginConfigs entry holds junkd's options. The same block is in every reader of settings.json
+# (tests/smoke.sh keeps the copies identical). junkd@<marketplace> when this copy runs from
+# plugins/cache/<marketplace>/junkd/<version>/ and settings.json has that entry. Else the options of all junkd@*
+# entries merged: junkd@inline lowest, the others in file order, a later one over an earlier one (one entry alone is
+# read as it is). jd_opts takes .pluginConfigs. jd_warn <file> [key] prints one line to stderr when the file has more
+# than one junkd@* entry (never to stdout: callers parse it).
+jd_mk="" jd_d=. jd_p=""
+case "$0" in */*) jd_d=${0%/*} ;; esac
+for jd_p in "$(cd "$jd_d" 2>/dev/null && pwd -L)" "$(cd "$jd_d" 2>/dev/null && pwd -P)"; do
+    case "$jd_p/" in */plugins/cache/*/junkd/*) jd_mk=${jd_p#*/plugins/cache/}; jd_mk=${jd_mk%%/*}; break ;; esac
+done
+jd_rule='def jd_opts($mk): [to_entries[] | select(.key | startswith("junkd@"))] as $e
+  | if $mk != "" and any($e[]; .key == "junkd@" + $mk) then .["junkd@" + $mk].options
+    elif ($e | length) < 2 then $e[0].value.options
+    else [($e[] | select(.key == "junkd@inline")), ($e[] | select(.key != "junkd@inline"))]
+      | reduce .[] as $x ({}; . * (($x.value | objects | .options | objects) // {})) end;
+def jd_note($mk; $key): ((.pluginConfigs? | objects) // {}) | [keys_unsorted[] | select(startswith("junkd@"))] as $k
+  | select(($k | length) > 1)
+  | "junkd: \($k | length) junkd@* entries in settings.json (\($k | join(", "))); using \(if $key != "" then $key
+      elif $mk != "" and any($k[]; . == "junkd@" + $mk) then "junkd@" + $mk else "merged" end)";
+'
+jd_warn() {
+    local w
+    w=$(jq -r --arg mk "$jd_mk" --arg key "${2:-}" "$jd_rule jd_note(\$mk; \$key)" "$1" 2>/dev/null) || return 0
+    case "$w" in "junkd: "*) printf '%s\n' "$w" >&2 ;; esac
+}
+# <<< jd-rule
+
 # The CLAUDE.md pointer block (orch_claude_md, off by default), every session start, before the stamp below:
 # skills/orch/scripts/orch-claude-md.sh on while the setting is true, off otherwise (no block: nothing happens).
-# Read from settings.json as the style step reads its own (the first junkd@ entry's options). Not run while orch is
+# Read from settings.json as the style step reads its own (the jd-rule options). Not run while orch is
 # disabled: orch_enabled false there, or, where the entry names no orch_enabled, the flag file .../junkd/orch-off
 # (a file only). Not run either while settings.json is missing, empty or not an object. Its `updated` line, or the
 # reason it refused, becomes one `junkd: ...` line.
-claude_md=$(jq -r '[(.pluginConfigs // {}) | to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
+jd_warn "$cfg/settings.json"
+claude_md=$(jq -r --arg mk "$jd_mk" "$jd_rule"'(.pluginConfigs // {}) | jd_opts($mk) // {}
     | def sw($k): if has($k) then .[$k] == true else "unset" end;
       "\(sw("orch_enabled")) \(sw("orch_claude_md"))"' "$cfg/settings.json" 2>/dev/null) || claude_md=""
 case "${claude_md%% *}" in
@@ -77,11 +106,11 @@ stamp="$cfg/junkd/setup-$ver.stamp"
 [ ! -e "$stamp" ] || exit 0
 
 s="$cfg/settings.json"
-# The setting itself, as Claude Code stores it, is the truth: the first junkd@<marketplace> entry decides (another
-# plugin's entry, or a later junkd@ one, never does); off there skips (no stamp), any other value applies (the
+# The setting itself, as Claude Code stores it, is the truth: the jd-rule options decide (another
+# plugin's entry never does); off there skips (no stamp), any other value applies (the
 # module reads a value the options do not name as the default, ste). The flag file stands in only where that entry
 # names no core_output_style.
-style=$(jq -r '[.pluginConfigs? // {} | to_entries[] | select(.key | startswith("junkd@"))][0].value.options?.core_output_style
+style=$(jq -r --arg mk "$jd_mk" "$jd_rule"'(.pluginConfigs? // {} | jd_opts($mk)).core_output_style
     // empty | if . == "off" then "off" else "ste" end' "$s" 2>/dev/null) || style=""
 case "$style" in
     off) exit 0 ;;

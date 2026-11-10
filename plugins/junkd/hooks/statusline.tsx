@@ -123,13 +123,15 @@ export function isWired(settings: Json | undefined, cfg: string): boolean {
 // What the pane shows about the key: `key` is the entry this session writes; `warn` is '' or the second-config warning.
 export type ConfigNote = { key: string; warn: string }
 // The entry the line reads is the statusLine command's --config key; a junkd command with none (installed before the
-// key existed) reads the first junkd@ entry; with no junkd command wired, this session's key is the one that counts.
+// key existed) reads its one junkd@ entry, or with more than one merges them (statusline.sh's jd-rule: that copy never
+// runs from plugins/cache, so it knows no marketplace); with no junkd command wired, this session's key is the one
+// that counts.
 export function configNote(settings: Json | undefined, key: string, cfg: string): ConfigNote {
   const keys = junkdKeys(settings)
   const line = settings?.statusLine
   const command = isObject(line) && typeof line.command === 'string' ? line.command : ''
   const wired = command !== '' && isJunkdCommand(command, cfg)
-  const reads = wired ? keyOfCommand(command) || keys[0] || key : key
+  const reads = wired ? keyOfCommand(command) || (keys.length > 1 ? 'the merge of all junkd@ entries' : keys[0]) || key : key
   const distinct = new Set([key, ...keys, reads])
   if (distinct.size < 2) return { key, warn: '' }
   return { key, warn: `two junkd configs: ${reads} wins${reads === key ? '' : ` (this session writes ${key})`}` }

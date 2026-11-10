@@ -98,9 +98,18 @@ draw "$(junkd_opts '{"statusline_ctx":false,"statusline_branch":false,"statuslin
 # Two off at the ends.
 draw "$(junkd_opts '{"statusline_ctx":false,"statusline_limits":false}')" > "$tmp/line"
 [ "$(cat "$tmp/line")" = "${parts[1]}$sep${parts[2]}$sep${parts[3]}$sep${parts[4]}" ] || fail "ctx and limits off: $(cat -v "$tmp/line")"
-# The first junkd@ entry decides; another plugin's entry never does.
-draw '{"pluginConfigs":{"other@x":{"options":{"statusline_model":false}},"junkd@junk-drawer":{"options":{"statusline_branch":false}},"junkd@fork":{"options":{"statusline_ctx":false}}}}' > "$tmp/line"
-[ "$(cat "$tmp/line")" = "$(without 1)" ] || fail "the first junkd@ entry does not decide alone: $(cat -v "$tmp/line")"
+# No --config (jd-rule; this copy never runs from plugins/cache): all junkd@* entries merge, junkd@inline lowest, a later
+# one over an earlier one; another plugin's entry never counts.
+no_ctx_branch="${parts[2]}$sep${parts[3]}$sep${parts[4]}$sep${parts[5]}"
+draw '{"pluginConfigs":{"other@x":{"options":{"statusline_model":false}},"junkd@junk-drawer":{"options":{"statusline_branch":false}},"junkd@fork":{"options":{"statusline_ctx":false}}}}' > "$tmp/line" 2>"$tmp/err"
+[ "$(cat "$tmp/line")" = "$no_ctx_branch" ] || fail "the junkd@ entries do not merge: $(cat -v "$tmp/line")"
+[ "$(cat "$tmp/err")" = 'junkd: 2 junkd@* entries in settings.json (junkd@junk-drawer, junkd@fork); using merged' ] || fail "two entries, warning: $(cat "$tmp/err")"
+draw '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"statusline_branch":false}},"junkd@fork":{"options":{"statusline_branch":true}}}}' > "$tmp/line" 2>/dev/null
+cmp -s "$tmp/line" "$golden" || fail "a later junkd@ entry does not win: $(cat -v "$tmp/line")"
+draw '{"pluginConfigs":{"junkd@junk-drawer":{"options":{"statusline_branch":false}},"junkd@inline":{"options":{"statusline_branch":true}}}}' > "$tmp/line" 2>/dev/null
+[ "$(cat "$tmp/line")" = "$(without 1)" ] || fail "junkd@inline is not the lowest: $(cat -v "$tmp/line")"
+draw "$(junkd_opts '{"statusline_branch":false}')" > "$tmp/line" 2>"$tmp/err"
+[ ! -s "$tmp/err" ] || fail "one junkd@ entry, a warning: $(cat "$tmp/err")"
 # --config <key>: the entry it names decides, whatever its place in the file (T29: a --plugin-dir session keeps its
 # options under junkd@inline, the marketplace copy under junkd@junk-drawer, and the first one used to win for both).
 # junkd@junk-drawer has branch off, junkd@inline has ctx off; both orders.
@@ -116,20 +125,26 @@ two_ba='{"pluginConfigs":{"junkd@inline":{"options":{"statusline_ctx":false}},"j
 check_pick() { # <order name> <settings> <expected index to be off> <script args...>
     local what=$1 content=$2 want=$3
     shift 3
-    drawc "$content" "$@" > "$tmp/line"
+    drawc "$content" "$@" > "$tmp/line" 2>/dev/null
     [ "$(cat "$tmp/line")" = "$(without "$want")" ] || fail "$what ${*:-(no args)}: got $(cat -v "$tmp/line"), want segment $want off"
 }
 check_pick "inline last" "$two_ab" 0 --config junkd@inline
 check_pick "inline last" "$two_ab" 1 --config junkd@junk-drawer
-check_pick "inline last" "$two_ab" 1
+drawc "$two_ab" > "$tmp/line" 2>"$tmp/err"
+[ "$(cat "$tmp/line")" = "$no_ctx_branch" ] || fail "inline last, no --config: the two entries do not merge: $(cat -v "$tmp/line")"
 check_pick "inline first" "$two_ba" 0 --config junkd@inline
 check_pick "inline first" "$two_ba" 1 --config junkd@junk-drawer
-check_pick "inline first" "$two_ba" 0
+drawc "$two_ba" --config junkd@inline > /dev/null 2>"$tmp/err"
+[ "$(cat "$tmp/err")" = 'junkd: 2 junkd@* entries in settings.json (junkd@inline, junkd@junk-drawer); using junkd@inline' ] || fail "--config, warning: $(cat "$tmp/err")"
+drawc "$two_ba" > "$tmp/line" 2>"$tmp/err"
+[ "$(cat "$tmp/line")" = "$no_ctx_branch" ] || fail "inline first, no --config: the two entries do not merge: $(cat -v "$tmp/line")"
 # The named entry is the only one read: absent means every segment drawn, not the first entry; an empty key is no key.
-drawc "$two_ab" --config junkd@nowhere > "$tmp/line"
+drawc "$two_ab" --config junkd@nowhere > "$tmp/line" 2>/dev/null
 cmp -s "$tmp/line" "$golden" || fail "--config of an absent entry fell back to another entry: $(cat -v "$tmp/line")"
-check_pick "an empty --config" "$two_ab" 1 --config ""
-check_pick "a trailing --config" "$two_ab" 1 --config
+drawc "$two_ab" --config "" > "$tmp/line" 2>/dev/null
+[ "$(cat "$tmp/line")" = "$no_ctx_branch" ] || fail "an empty --config: not the merge: $(cat -v "$tmp/line")"
+drawc "$two_ab" --config > "$tmp/line" 2>/dev/null
+[ "$(cat "$tmp/line")" = "$no_ctx_branch" ] || fail "a trailing --config: not the merge: $(cat -v "$tmp/line")"
 # The argument also works beside the others (position does not matter).
 check_pick "an unknown flag first" "$two_ab" 0 --x --config junkd@inline
 rm -f "$cfg/settings.json"
