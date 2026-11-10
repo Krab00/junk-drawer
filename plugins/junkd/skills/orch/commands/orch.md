@@ -307,7 +307,7 @@ tell it which apply; never ask for a check on an undeclared layer):
 Lessons are a queue that empties itself, not a diary. Three stores, one direction of promotion (local → repo →
 global):
 
-- **local** `<tasks_dir>/_lessons.md`: every lesson is born here; `.orch/` never enters the project's git.
+- **local** `<tasks_dir>/_lessons.md`: every lesson is born here. junkd never commits it and does not git-ignore it: the repo's own `.gitignore` decides whether it enters git.
 - **repo** `<project root>/lessons.md`: committed and pushed with the project. You commit it on the task branch of the
   task that produced the lesson, never on the base branch.
 - **global** `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/lessons.md`: one per machine, read by every repo.

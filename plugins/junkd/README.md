@@ -1512,7 +1512,7 @@ while one is pending, and a promotion turns it into something executable and del
 
 | Store | File | Lives |
 |---|---|---|
-| local | `<tasks_dir>/_lessons.md` (`.orch/tasks/_lessons.md`) | This checkout's orch store; every lesson is born here. `.orch/` never enters git |
+| local | `<tasks_dir>/_lessons.md` (`.orch/tasks/_lessons.md`) | This checkout's orch store; every lesson is born here. junkd never commits it and does not git-ignore it: the repo's own `.gitignore` decides whether it enters git |
 | repo | `<project root>/lessons.md` | Committed and pushed with the project (the team, other machines); made on the first promotion to it, committed on the task branch of the task that produced it |
 | global | `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/lessons.md` | One per machine, read by every repo |
 
@@ -1796,9 +1796,12 @@ draft.
    `## Verification` section of an existing file. It refuses (exit 4) while `questions.md` exists. The run ends
    with `task-draft <id>: <understood N/M on class X | EGM only> -> <task file>` and the host's orch command.
 
-The files under `.orch/taskdraft/<id>/` (git-ignored): `input.md` (the free-text input orch writes), `egm/` (EGM's
+The files under `.orch/taskdraft/<id>/`: `input.md` (the free-text input orch writes), `egm/` (EGM's
 artifacts and `gate_log.md`), `inline-files.txt`, the probes `probe-r<n>-<class>-<model>.prompt.md`, `.md`,
-`.meta.json` and `.judge.md`, and `questions.md` while a question is open.
+`.meta.json` and `.judge.md`, `questions.md` while a question is open, and `answers.md` and `blocks.md` (the input
+files of `decisions add --file` and `questions put --file`). Git ignores the whole of `.orch/taskdraft/` in any repo:
+`task-draft-state questions` (the run's first `answers` call, and every `put`) writes `.orch/taskdraft/.gitignore`
+with the line `*` when that file is not there.
 
 **Every question reaches the user.** The skill never answers a question for the user and never takes a default: an
 EGM draft gate, the review preset, an egm-resolve choice, a comprehension clarification and the inline-file
@@ -1812,7 +1815,8 @@ command or `/junkd:task-draft <id>` again: the next run reads the answers, hands
 deletes `questions.md` once the role has consumed them.
 
 **The decisions register.** A point that is already decided is not asked again. The register has two parts: the
-`## Decisions` section of the task's own spec, and the tracked file `.orch/decisions.md` (not git-ignored), one block
+`## Decisions` section of the task's own spec, and the file `.orch/decisions.md`. junkd does not git-ignore
+`.orch/decisions.md` or `.orch/tasks/`: they are ordinary repo files that you may commit. The file holds one block
 per decision:
 
     ## R<n> (<YYYY-MM-DD>) <the question, one line>
@@ -1825,7 +1829,7 @@ Before a role returns a question, it checks the register (the spec's `## Decisio
 disagree, the spec wins; when in doubt, the question is not covered. The open questions of one gate come as one
 batch: one numbered list, each with its proposed answer first, where `ok` takes every proposed answer and
 `<n>: <answer>` changes single ones. Every answer is appended to `.orch/decisions.md`: a session's answers with
-`task-draft-state decisions add <id> --source chat`, the answers of `questions.md` by `task-draft-state questions <id> done`
+`task-draft-state decisions add <id> --source chat --file .orch/taskdraft/<id>/answers.md`, the answers of `questions.md` by `task-draft-state questions <id> done`
 before it deletes the file. The roles only read the register. The inline-file confirmation is never answered from
 the register and never recorded in it. `task-draft-state` writes `questions.md` and `.orch/decisions.md` through one
 checked safe-write function: a failed step exits 2 and leaves the target unchanged.

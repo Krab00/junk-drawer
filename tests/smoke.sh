@@ -13,6 +13,23 @@ for file in $(rg --files "$root/plugins" | rg '/(bin/|[^/]+\.sh$)'); do
         bash -n "$file"
     fi
 done
+# Portability: a shell file under plugins/ or tests/ (a *.sh file, or a file whose #! line names bash or sh) runs on
+# stock macOS (bash 3.2, BSD mv, sed and env) as on Linux. It must not hold: mv with a T flag (GNU only); a bash 4
+# case change (a name followed by two commas or two carets in ${}); env's C flag (GNU only); declare's A flag and the
+# two builtins that read lines into an array (bash 4); sed's i flag followed by a blank (GNU only: BSD sed reads the
+# next word as the backup suffix). Each pattern spells its flag in brackets, so this file does not match itself.
+# Also: a wc count in double quotes compared with = as a string, unless tr -d cuts its blanks (BSD wc pads a count
+# with blanks; an arithmetic expansion or tr -d drops them). A count kept in a variable is not caught.
+port_re='mv +-[A-Za-z]*T\b|\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}|env +-[C]\b|declare +-[A]\b|\bma[p]file\b|\bre[a]darray\b|sed +-i[ ]'
+wc_re='"\$\([^)]*\bw[c] -[clwm][^)]*\)" *==? '
+port=""
+for file in $(rg -l -e "$port_re" -e "$wc_re" "$root/plugins" "$root/tests" || true); do
+    case "$file" in *.sh) ;; *) head -1 "$file" | rg -q '^#!.*\b(bash|sh)\b' || continue ;; esac
+    hits=$({ rg -n -e "$port_re" "$file" || true; rg -n -e "$wc_re" "$file" | rg -vF "| tr -d ' ')\"" || true; } |
+        sed "s|^|${file#"$root"/}:|")
+    [ -z "$hits" ] || port+="$hits"$'\n'
+done
+[ -z "$port" ] || { echo "GNU-only or bash-4-only shell (stock macOS runs neither):"; printf '%s' "$port"; exit 1; }
 for file in $(rg --files -uu "$root/.agents" "$root/plugins" | rg '\.json$'); do
     jq empty "$file"
 done
@@ -529,7 +546,7 @@ rg -qF '"$cfg/junkd/orch-lessons-off"' "$junkd/skills/orch/scripts/orch-context.
 orch_md="$junkd/skills/orch/commands/orch.md"
 for needle in \
     'Lessons are a queue that empties itself, not a diary.' \
-    '- **local** `<tasks_dir>/_lessons.md`: every lesson is born here; `.orch/` never enters the project'"'"'s git.' \
+    '- **local** `<tasks_dir>/_lessons.md`: every lesson is born here. junkd never commits it and does not git-ignore it: the repo'"'"'s own `.gitignore` decides whether it enters git.' \
     '- **global** `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/lessons.md`: one per machine, read by every repo.' \
     'A clean round-0 PASS writes nothing.' \
     '**Blocking.** Never print the `BACKLOG:` line (§8) while `orch-state lesson pending` exits 1.' \
