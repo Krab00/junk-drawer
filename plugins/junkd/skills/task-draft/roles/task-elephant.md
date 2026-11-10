@@ -1,11 +1,11 @@
 ---
 name: task-elephant
-description: "Owns one task's comprehension sub-loop: probes the registry ladder, has each answer judged, clarifies the spec, returns QUESTION: blocks for a human when needed, returns one line per task."
+description: "Owns one task's comprehension sub-loop: probes the registry ladder, has each answer judged, clarifies the spec, returns QUESTION: blocks for a human when needed (with egm_answers: auto it answers them itself and lists them), returns one line per task."
 model: opus
 tools: Read, Write, Edit, Bash, Agent
 ---
 
-Never answer a question yourself and never take a default: answer it from the decisions register when a recorded decision covers it (the spec's `## Decisions` first, then `task-draft-state decisions --match`), logging `answered from <decision id>` in `.orch/taskdraft/<id>/egm/gate_log.md`; otherwise return it as a `QUESTION:` block and wait.
+Unless your prompt has `egm_answers: auto`, never answer a question yourself and never take a default: answer it from the decisions register when a recorded decision covers it (the spec's `## Decisions` first, then `task-draft-state decisions --match`), logging `answered from <decision id>` in `.orch/taskdraft/<id>/egm/gate_log.md`; otherwise return it as a `QUESTION:` block and wait. With `egm_answers: auto`, ask nothing: after the register, answer every question yourself (the first option, or your own text for `(free text)`), log `answered auto: <question> => <answer>` in the same gate log, and return it as a `QUESTION:` block with an `ANSWER:` line before your final line ("Auto" in "Questions").
 
 Return every uncovered question of one gate in one reply, your proposed answer as the first option; never write `.orch/decisions.md`.
 
@@ -61,6 +61,16 @@ judge's reply is in "Judge".
     and waits. It never guesses the answer. The main loop continues it with `A<n>: <answer>`
     lines; it writes each answer into `## Clarifications` and runs the next
     round.
+*   Under `egm_answers: auto` it asks nothing and never returns
+    `WAITING <N>`: for each such mismatch (after the register) it takes its
+    proposed answer, or composes one for `(free text)`, writes it into
+    `## Clarifications`, appends `answered auto: <question> => <answer>` to
+    `.orch/taskdraft/<id>/egm/gate_log.md`, and runs the next round. Before
+    its final line it returns one `QUESTION:` / `CONTEXT:` / `OPTIONS:` /
+    `ANSWER:` block per such answer ("Auto" in "Questions"), and its last
+    line (each part's line after a split) ends with
+    ` (auto-answered <N>)` when `<N>` > 0. A resume `answers:` line
+    `A<n>: <question> => auto` is answered the same way.
 *   Resume: a fresh elephant whose prompt has `answers:` lines first writes
     each answer into `## Clarifications`, then starts again at the first class
     of the ladder, round 1, with a fresh 12-round cap.
@@ -104,7 +114,8 @@ that name disjoint files. A split never changes an AC's text.
 
 ## Questions
 
-**Questions.** The skill is always interactive. A role never
+**Questions.** With `egm_answers` = `manual` (the default) the skill is
+interactive; `auto` is in "Auto" below. Under `manual` a role never
 answers an EGM question itself and never takes a default on its own; the only
 answers it applies without asking are those of the decisions register
 (the task's spec `## Decisions` first, then `task-draft-state decisions --match "<text>"`),
@@ -125,13 +136,34 @@ question it can already state in one reply, one batch per gate, not one
 question per reply. The main loop handles a reply that ends with
 `WAITING <N>` in one of two ways:
 
-*   Without `--unattended`: ask the whole batch at once: one
-    AskUserQuestion on Claude Code, one plain question on the other hosts,
-    whose text is the numbered list `<n>. <question> [<option 1> (proposed) | <option 2> | …]`
-    and the line `Reply ok to take every proposed answer, or <n>: <answer> for the ones you change.`
-    `ok` takes the first option of every question; `<n>: <answer>` pairs
-    replace single answers and the rest take their first option. A
-    `(free text)` question left without an answer is asked again, alone.
+*   Without `--unattended`: ask one question per block, in block order.
+    On Claude Code, use AskUserQuestion with at most 4 questions per call
+    (`multiSelect` false); when the batch has more, call it again with the
+    next 4 until every block is asked. Never put more than one block in one
+    `question` string. Make each question from its block:
+    *   `header`: a short label of at most 12 characters for the step or
+        gate that CONTEXT names, for example `Detail impl` or `AC gate`.
+    *   `question`: the QUESTION line, then the CONTEXT line as a second
+        sentence. No option text and no reply instruction.
+    *   `options`: the OPTIONS entries, in their order. The first entry (the
+        proposed answer) gets the label suffix ` (Recommended)`. A long
+        entry gets a short label. Each option gets a `description` of one
+        short sentence: what the answer changes when CONTEXT says it, else
+        what the option means. A block with one option gets a second option
+        `Change it`, with the description `Pick Other and type your answer.`
+        A block with more than 4 options shows the first 4 and adds
+        `(further options: <the rest>)` to the question text. The tool adds
+        `Other` itself.
+
+    A `(free text)` block has no options: ask it as one plain question after
+    the AskUserQuestion calls. On a host without AskUserQuestion, ask the
+    same questions in the same order, one plain question per block, with
+    its options listed and the first one marked `(Recommended)`.
+    The answer to a question is the OPTIONS entry of the picked label
+    (without ` (Recommended)`), or the user's `Other` text. A pick of
+    `Change it`, or a `(free text)` question left without an answer, is
+    asked again, alone. To take every proposed answer, the user picks every
+    `(Recommended)` option.
     Then write the answers, one line per question,
     `A<n>: <question> => <answer>`, to `<out>/answers.md` with the Write
     tool and run
@@ -174,3 +206,57 @@ question per reply. The main loop handles a reply that ends with
     question whose options are `(free text)` it does not count as an answer.
     The answers of a `task-egm` or `task-elephant` file are copied into
     `.orch/decisions.md` by `questions done` before the file is deleted.
+
+**Auto.** With the line `egm_answers: auto` in a role's prompt (the
+setting `egm_answers` = `auto`), nothing is asked of anyone: no
+AskUserQuestion, no plain question, no `WAITING <N>`, no `questions.md`,
+with or without `--unattended`. The decisions register still answers first.
+A role answers every other question itself, where it would have returned
+the block: with the first OPTIONS entry (its proposed answer), or, for
+`OPTIONS: (free text)`, with an answer it composes from the spec, the repo
+and the input. It applies the answer where EGM's flow puts it, appends
+`answered auto: <question> => <answer>` to
+`.orch/taskdraft/<id>/egm/gate_log.md`, and goes on. Before its final line
+it returns one block of four lines per answer it took, in the order it took
+them:
+
+```text
+QUESTION: <the question, one line>
+CONTEXT: <one line: the EGM step or gate it belongs to, and what the answer changes>
+OPTIONS: <option 1> | <option 2> [| …]
+ANSWER: <the answer it applied>
+```
+
+Its final line then ends with ` (auto-answered <N>)`, for example
+`spec <path> (auto-answered 5)`; with no such block, nothing is added. For
+each role reply with `ANSWER:` blocks, the main loop:
+
+*   writes the answers, one line per block, `A<n>: <question> => <answer>`,
+    to `<out>/answers.md` with the Write tool and runs
+    `task-draft-state decisions add <id> --source auto --file <out>/answers.md`
+    (never for the step 4 answer);
+*   writes the blocks to `<out>/auto-answers.md` with the Write tool, after
+    the ones already there (the first auto answer of the run starts the
+    file; `## Q<n>` numbers on):
+
+    ```markdown
+    # task-draft <id>: auto-answered questions
+    Spec: <spec path or none>
+
+    ## Q1
+    Question: <question>
+    Context: <context>
+    Options: <option 1> | <option 2>
+    A: <answer>
+    ```
+
+    It is for the human's review after the run: no helper reads it, and it
+    never blocks `task-from-spec` (only `questions.md` does);
+*   keeps each pair for the closing list (step 5).
+
+The step 4 inline-file confirmation is not asked under `auto` either: the
+skill takes the safe choice, `skip non-local` (no repo file leaves the
+machine), appends
+`answered auto: Send these <n> files to non-local harnesses? => skip non-local` to
+`<out>/egm/gate_log.md`, adds it to `<out>/auto-answers.md` and to the
+closing list, and never records it in `.orch/decisions.md`.

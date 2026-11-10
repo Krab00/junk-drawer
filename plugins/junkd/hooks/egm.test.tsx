@@ -7,7 +7,7 @@ import { expect, test } from 'claude-code/testing'
 import { mock } from 'claude-code/testing'
 import type { Engine, Plugin } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { CLASSES, EFFORTS, HARNESSES, LEVELS, PASSES, SEED, coerce, isDuplicate, parseEntry, parseFile, serialize, sortEntries, thinkingLabel, effortLabel, type Entry } from './egm'
+import { ANSWERS, CLASSES, EFFORTS, HARNESSES, LEVELS, PASSES, SEED, coerce, coerceAnswers, isDuplicate, parseEntry, parseFile, serialize, sortEntries, thinkingLabel, effortLabel, type Entry } from './egm'
 
 const HOME = '/fake/home'
 const CFG = `${HOME}/.claude`
@@ -160,7 +160,7 @@ const MENU: Plugin = {
 }
 const PLUGINS = [HOST, MENU]
 const W = { plugins: PLUGINS }
-const withOptions = (options: Record<string, boolean>) => ({ plugins: PLUGINS, options })
+const withOptions = (options: Record<string, boolean | string>) => ({ plugins: PLUGINS, options })
 const ON = withOptions({ egm_enabled: true })
 
 type Opts = {
@@ -424,6 +424,42 @@ test('the dim egm.models pill shows the stored value and the egm footer shows th
   expect((await tab.find({ type: 'Box', key: 'egm-footer' }))?.text).toBe('egm.models = true: pętla rozumienia bierze modele z tej listy')
   await pane.press({ key: 'set:egm:models' })
   expect((await tab.find({ type: 'Box', key: 'egm-footer' }))?.text).toBe('egm.models = false: EGM pisze taski bez modeli z tej listy')
+})
+
+test('coerceAnswers: manual and auto in any case and blanks; anything else is no value', () => {
+  expect(ANSWERS).toEqual(['manual', 'auto'])
+  for (const [raw, v] of [['manual', 'manual'], ['auto', 'auto'], ['AUTO', 'auto'], [' Manual ', 'manual']] as const) expect(coerceAnswers(raw), raw).toBe(v)
+  for (const bad of ['bogus', '', 'on', true, 1, undefined, null]) expect(coerceAnswers(bad), String(bad)).toBeUndefined()
+})
+
+test('egm.answers: the row draws manual by default; a press picks auto then manual, each written to junkd.egm_answers', W, async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const pane = await openSet($)
+  expect((await pane.find({ type: 'Box', key: 'setting:egm:answers' }))?.text).toContain('Questions')
+  expect((await pane.find({ key: 'set:egm:answers=manual' }))?.text).toBe(' manual ')
+  expect(await pane.find({ type: 'Button', key: 'set:egm:answers=manual' })).toBeUndefined()
+  expect((await pane.find({ type: 'Button', key: 'set:egm:answers=auto' }))?.text).toBe('auto')
+  // works while egm_enabled is off too: it only says who answers once task-draft runs
+  await pane.press({ key: 'set:egm:answers=auto' })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ egm.answers = "auto"')
+  expect((await pane.find({ key: 'set:egm:answers=auto' }))?.text).toBe(' auto ')
+  await pane.press({ key: 'set:egm:answers=manual' })
+  expect((await pane.find({ key: 'note' }))?.text).toBe('✓ egm.answers = "manual"')
+  expect((await pane.find({ key: 'set:egm:answers=manual' }))?.text).toBe(' manual ')
+  expect(rec.config.filter(c => c.key === 'junkd.egm_answers').map(c => c.value)).toEqual(['auto', 'manual'])
+  expect(await panes($)).toEqual(SET_TABS) // the tab stays shut
+})
+
+test('egm.answers: the option auto is read at start; config.set takes auto in any case, refuses bogus', withOptions({ egm_answers: 'auto' }), async ($, on) => {
+  const rec = world(on)
+  await start($)
+  const pane = await openSet($)
+  expect((await pane.find({ key: 'set:egm:answers=auto' }))?.text).toBe(' auto ')
+  expect(await menuSet($, 'junkd.egm_answers', 'manual')).toEqual({ value: 'manual' })
+  expect(await menuSet($, 'junkd.egm_answers', 'Auto')).toEqual({ value: 'auto' })
+  expect(await menuSet($, 'junkd.egm_answers', 'bogus')).toEqual({ deny: 'junkd: bogus is not a valid egm_answers (manual or auto)' })
+  expect(rec.config.filter(c => c.key === 'junkd.egm_answers').map(c => c.value)).toEqual(['manual', 'auto'])
 })
 
 // the seed --------------------------------------------------------------------------------------------------------

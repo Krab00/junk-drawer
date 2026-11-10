@@ -273,7 +273,7 @@ const MAIN_ROWS = [
   'setting:ctx:enabled', 'setting:ctx:threshold', 'setting:ctx:action',
   'setting:statusline:enabled',
   'setting:tools:enabled',
-  'setting:egm:enabled', 'setting:egm:models',
+  'setting:egm:enabled', 'setting:egm:models', 'setting:egm:answers',
 ]
 const GROUP_BOXES = ['group:core', 'group:handoff', 'group:orch', 'group:tldr', 'group:ctx', 'group:statusline', 'group:tools', 'group:egm']
 
@@ -1475,7 +1475,7 @@ const MANIFEST_KEYS = [
   'ctx_enabled', 'ctx_threshold', 'ctx_action', 'ctx_cmd',
   'statusline_enabled', 'statusline_ctx', 'statusline_branch', 'statusline_worktree', 'statusline_model', 'statusline_effort', 'statusline_limits',
   'tools_enabled', 'tools_refresh', 'tools_agents_only',
-  'egm_enabled', 'egm_models',
+  'egm_enabled', 'egm_models', 'egm_answers',
 ]
 
 test('$.junkd.schema() is the manifest rows: keys, groups and fields, in order, each feature group led by enabled', W, async ($, on) => {

@@ -14,7 +14,7 @@ import { isSets, setIsOpen, shutSet } from './set'
 import { panelToggle } from './panel'
 import { configKey, configKeys, fieldOf, groupOptions, keyOf } from './settings'
 import {
-  CLASSES, E, EFFORTS, HARNESSES, JSON_EXAMPLE, LEVELS, PASSES, SEED, coerce, editDraft, isDuplicate, newDraft, parseEntry, parseFile, resetEgm,
+  CLASSES, E, EFFORTS, HARNESSES, JSON_EXAMPLE, LEVELS, PASSES, SEED, coerce, coerceAnswers, editDraft, isDuplicate, newDraft, parseEntry, parseFile, resetEgm,
   serialize, sortEntries, type Entry,
 } from './egm'
 import { egmView, type EgmActs, type Els, type Field } from './egm-views'
@@ -317,26 +317,37 @@ async function closePane($: $) {
 }
 
 // A value the row took lands in E. enabled on while the set is open opens the tab as the set's (no keys); off closes
-// it wherever it is.
-async function apply($: $, field: string, value: boolean): Promise<void> {
-  if (field === 'models') E.models = value
-  else E.enabled = value
-  if (field === 'enabled' && value && setIsOpen() && !isOpen) await egmShow($, { owner: SET_OWNER }).catch(() => undefined)
-  if (field === 'enabled' && !value) await closePane($)
+// it wherever it is. answers only lands: the tab does not show it.
+async function apply($: $, field: string, value: boolean | string): Promise<void> {
+  if (field === 'answers') E.answers = coerceAnswers(value) ?? 'manual'
+  else if (field === 'models') E.models = value === true
+  else E.enabled = value === true
+  if (field === 'enabled' && value === true && setIsOpen() && !isOpen) await egmShow($, { owner: SET_OWNER }).catch(() => undefined)
+  if (field === 'enabled' && value === false) await closePane($)
   redraw($)
 }
 
+// A row's raw value as its field reads it: answers lowercased and checked against its options, a switch by coerce.
+function read(field: string, raw: unknown): { value: boolean | string; deny?: undefined } | { deny: string; value?: undefined } {
+  if (field !== 'answers') return { value: coerce(raw) }
+  const v = coerceAnswers(raw)
+  return v === undefined ? { deny: `junkd: ${String(raw)} is not a valid egm_answers (manual or auto)` } : { value: v }
+}
+const FIELDS = ['enabled', 'models', 'answers']
+
 // what dispatch.ts, panel.tsx and index.tsx call ---------------------------------------------------------------------
 
-// The stored value (the pill shows it, even while egm.models is dim).
-export async function egmGet(_$: $, field: string): Promise<boolean> {
-  return field === 'models' ? E.models : E.enabled
+// The stored value (the pill shows it, even while egm.models is dim); answers is its option.
+export async function egmGet(_$: $, field: string): Promise<boolean | string> {
+  return field === 'answers' ? E.answers : field === 'models' ? E.models : E.enabled
 }
 // The host sends this write past our own config.set hook, so the value is applied here.
 export async function egmSet($: $, field: string, raw: unknown): Promise<SetResult> {
-  if (field !== 'enabled' && field !== 'models') return { deny: `junkd: no setting ${keyOf('egm', field)}` }
-  const value = coerce(raw)
-  if (field === 'models' && value && !E.enabled) return { deny: MODELS_DENY }
+  if (!FIELDS.includes(field)) return { deny: `junkd: no setting ${keyOf('egm', field)}` }
+  const r = read(field, raw)
+  if (r.deny !== undefined) return { deny: r.deny }
+  const value = r.value
+  if (field === 'models' && value === true && !E.enabled) return { deny: MODELS_DENY }
   const { deny } = await $.config.set({ key: configKey(keyOf('egm', field)), value })
   if (deny !== undefined) return { deny }
   await apply($, field, value)
@@ -381,14 +392,17 @@ export function registerEgm(on: On, options: Record<string, unknown>): void {
   const o = groupOptions(options, 'egm')
   E.enabled = coerce(o.enabled)
   E.models = coerce(o.models)
+  E.answers = coerceAnswers(o.answers) ?? 'manual'
 
   // The /config menu's own writes to an egm row land here (a hook never sees its plugin's own `$.config.set`): read as
   // `set` reads it, refused where `set` refuses, applied once the row took it.
   on('config.set', { key: configKeys('egm') }, async ($, e, next) => {
     const field = fieldOf('egm', e.key)
-    if (field !== 'enabled' && field !== 'models') return next(e)
-    const value = coerce(e.value)
-    if (field === 'models' && value && !E.enabled) return { deny: MODELS_DENY }
+    if (field === undefined || !FIELDS.includes(field)) return next(e)
+    const v = read(field, e.value)
+    if (v.deny !== undefined) return { deny: v.deny }
+    const value = v.value
+    if (field === 'models' && value === true && !E.enabled) return { deny: MODELS_DENY }
     const r = await next({ ...e, value })
     if (r?.deny === undefined) await apply($, field, value)
     return r

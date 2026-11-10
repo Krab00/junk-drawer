@@ -187,7 +187,7 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 | ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
 | statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
 | tools | `tools_enabled`, `tools_refresh`, `tools_agents_only` | [tools settings](#settings-6) |
-| egm | `egm_enabled`, `egm_models` | [egm settings](#settings-9) |
+| egm | `egm_enabled`, `egm_models`, `egm_answers` | [egm settings](#settings-9) |
 
 The `enabled` rows: `handoff_enabled` off is no auto handoff loop and no 🪃 segment (`/junkd:handoff`,
 `/junkd:handon` and the pane still work); `orch_enabled` off is no main-loop guard and no rule sheet at session
@@ -1625,15 +1625,19 @@ the [egm plugin](https://github.com/google/elephant-goldfish-model) (a dependenc
 |---|---|---|---|
 | `egm_enabled` | boolean | `false` | On: `/junkd:orch` runs `/junkd:task-draft <id>` before the criteria freeze of a task that is not yet drafted (EGM draft + review), and the egm tab shows in the /junkd set. Off: orch writes task files as before, and `/junkd:task-draft` on Claude Code prints `task-draft is off: turn on egm_enabled in the /junkd pane (Settings, egm) or /config` and stops |
 | `egm_models` | boolean | `false` | On (needs `egm_enabled`): `/junkd:task-draft` checks that the first model of each class in `models.json` understands the spec before the task file is written (the comprehension sub-loop). Off: EGM only |
+| `egm_answers` | choice | `manual` | Who answers the questions of `/junkd:task-draft`. `manual`: you do (AskUserQuestion, or `questions.md` under `--unattended`). `auto`: nobody is asked anything; the roles answer every EGM question themselves and the skill takes the safe choice, `skip non-local`, at the inline-file confirmation; each answer is logged and listed in the closing reply ([Auto answers](#auto-answers)) |
 
-Both are main rows of the /junkd pane (Settings, egm, last, after tools; `egm.enabled` takes the letter `n`,
-`egm.models` the letter `o`) and `/config` rows (`junkd.egm_enabled`, `junkd.egm_models`); `true`, `'true'` and
-`'on'` are on. While `egm_enabled` is off, the `egm.models` row is dim with the title suffix ` · wymaga enabled`, its
+All three are main rows of the /junkd pane (Settings, egm, last, after tools; `egm.enabled` takes the letter `n`,
+`egm.models` the letter `o`, `egm.answers` is a choice of two buttons, `manual` and `auto`) and `/config` rows
+(`junkd.egm_enabled`, `junkd.egm_models`, `junkd.egm_answers`); `true`, `'true'` and `'on'` are on, and
+`egm_answers` takes `manual` or `auto` in any case (anything else is refused with
+`junkd: <value> is not a valid egm_answers (manual or auto)`); it is stored whether `egm_enabled` is on or off. While `egm_enabled` is off, the `egm.models` row is dim with the title suffix ` · wymaga enabled`, its
 pill shows the stored value, and a flip (pane or `/config`) is refused with
 `✗ egm.models działa dopiero przy egm.enabled = on`. Turning `egm_enabled` off keeps the stored `egm_models`, but
 every reader takes `egm_models` as off while `egm_enabled` is off (`task-draft-state settings` prints
-`models=false`). The skill reads both rows with `bin/task-draft-state settings` from `settings.json`
-(`pluginConfigs`, the first `junkd@` entry, `.options.egm_enabled` / `.options.egm_models`). The other hosts have no
+`models=false`). The skill reads the rows with `bin/task-draft-state settings` from `settings.json`
+(`pluginConfigs`, the first `junkd@` entry, `.options.egm_enabled` / `.options.egm_models` / `.options.egm_answers`;
+it prints `answers=auto` only for `auto` in any case, else `answers=manual`). The other hosts have no
 userConfig: see [Hosts](#hosts-2).
 
 ### The egm tab
@@ -1749,7 +1753,7 @@ Found, it prints `egm: installed` and `root=<abs>` (exit 0). The hint line per h
 
 | Capability | Claude Code | Codex, Kimi Code, OpenCode |
 |---|---|---|
-| `egm_enabled`, `egm_models` | userConfig rows, `/junkd` pane and `/config` | none; an explicit `/junkd:task-draft` skips the gate; `egm_models` = `JUNKD_EGM_MODELS=1` (default off) |
+| `egm_enabled`, `egm_models`, `egm_answers` | userConfig rows, `/junkd` pane and `/config` | none; an explicit `/junkd:task-draft` skips the gate; `egm_models` = `JUNKD_EGM_MODELS=1` (default off); `egm_answers` = `JUNKD_EGM_ANSWERS=auto` (default manual) |
 | `egm` tab | yes | no |
 | `models.json` | edited in the tab | read only; the user edits the file by hand |
 | EGM detection | `installed_plugins.json`, else `EGM_ROOT` | `installed_plugins.json` (when Claude Code is also installed), else `EGM_ROOT` |
@@ -1803,7 +1807,7 @@ files of `decisions add --file` and `questions put --file`). Git ignores the who
 `task-draft-state questions` (the run's first `answers` call, and every `put`) writes `.orch/taskdraft/.gitignore`
 with the line `*` when that file is not there.
 
-**Every question reaches the user.** The skill never answers a question for the user and never takes a default: an
+**Every question reaches the user** (with `egm_answers` = `manual`, the default). The skill never answers a question for the user and never takes a default: an
 EGM draft gate, the review preset, an egm-resolve choice, a comprehension clarification and the inline-file
 confirmation all go to the user (AskUserQuestion on Claude Code, a plain question on the other hosts), and the run
 waits. In `/loop`, `batch` and `all`, orch passes `--unattended`, which changes only where a question goes, never its
@@ -1814,6 +1818,24 @@ question (one of the options, your own text, or `ok` for the proposed answer, th
 command or `/junkd:task-draft <id>` again: the next run reads the answers, hands them to the role, continues, and
 deletes `questions.md` once the role has consumed them.
 
+#### Auto answers
+
+With `egm_answers` = `auto` nobody is asked anything, `--unattended` or not: no AskUserQuestion, no `WAITING <N>`, no
+`questions.md`. After the decisions register, the role answers each question itself (the first option, its proposed
+answer; for a `(free text)` question, an answer it composes), applies it, logs
+`answered auto: <question> => <answer>` in `.orch/taskdraft/<id>/egm/gate_log.md`, and returns the block with an
+`ANSWER:` line; its final line carries the count, e.g. `spec <path> (auto-answered 5)`. The skill records the
+answers with `task-draft-state decisions add <id> --source auto` (`source: auto (task <id>)`) and writes them, in the
+`questions.md` layout with every `A:` filled, to `.orch/taskdraft/<id>/auto-answers.md`, a review file no helper reads
+(a `questions.md` would block `task-from-spec`). The step-4 confirmation takes the safe choice, `skip non-local`, the same way (logged,
+listed and in `auto-answers.md`, never in `.orch/decisions.md`). The closing reply lists every auto answer as
+`<n>. <question> => <answer>`, under a `<gate>:` line per gate, then the three file paths.
+
+**D7b (2026-11-10).** D7 ("every question reaches the user", 2026-11-08) stays the default: `egm_answers` = `manual`
+is the D7 behaviour. `auto` reverses it only for those who turn it on in the settings: it asks nothing, including the
+step-4 confirmation (the step-4 confirmation takes the safe choice, `skip non-local`), and every answer it takes is logged in `gate_log.md`, `auto-answers.md` and `.orch/decisions.md`
+(step 4 excepted) and listed in the closing reply.
+
 **The decisions register.** A point that is already decided is not asked again. The register has two parts: the
 `## Decisions` section of the task's own spec, and the file `.orch/decisions.md`. junkd does not git-ignore
 `.orch/decisions.md` or `.orch/tasks/`: they are ordinary repo files that you may commit. The file holds one block
@@ -1821,14 +1843,14 @@ per decision:
 
     ## R<n> (<YYYY-MM-DD>) <the question, one line>
     A: <the answer>
-    source: <spec D<n> | questions.md of task <id> | chat>
+    source: <spec D<n> | questions.md of task <id> | chat | auto (task <id>)>
 
 Before a role returns a question, it checks the register (the spec's `## Decisions` first, then
 `task-draft-state decisions --match "<key words>"`). A covered question is answered from that decision and logged as
 `answered from <decision id>: <question>` in `.orch/taskdraft/<id>/egm/gate_log.md`; when the spec and the file
 disagree, the spec wins; when in doubt, the question is not covered. The open questions of one gate come as one
-batch: one numbered list, each with its proposed answer first, where `ok` takes every proposed answer and
-`<n>: <answer>` changes single ones. Every answer is appended to `.orch/decisions.md`: a session's answers with
+batch: one structured question per block (AskUserQuestion on Claude Code, at most 4 per call), its proposed answer
+first as the `(Recommended)` option; the user picks an option or types an own answer. Every answer is appended to `.orch/decisions.md`: a session's answers with
 `task-draft-state decisions add <id> --source chat --file .orch/taskdraft/<id>/answers.md`, the answers of `questions.md` by `task-draft-state questions <id> done`
 before it deletes the file. The roles only read the register. The inline-file confirmation is never answered from
 the register and never recorded in it. `task-draft-state` writes `questions.md` and `.orch/decisions.md` through one

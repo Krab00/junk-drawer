@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # task-draft-state — the reads and the two small stores of /junkd:task-draft. Bash and jq; nothing here installs
 # anything or reads a credential.
-#   task-draft-state settings [--host <h>]   # enabled=<bool>, models=<bool>, host=<h>. On claude: pluginConfigs of
-#                                            # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json, the first junkd@ key,
-#                                            # options.egm_enabled / egm_models (true, "true" or "on" is true; models is
-#                                            # false while enabled is); defaults false. Other hosts: enabled=false,
-#                                            # models=true only with JUNKD_EGM_MODELS=1.
+#   task-draft-state settings [--host <h>]   # enabled=<bool>, models=<bool>, answers=<manual|auto>, host=<h>. On
+#                                            # claude: pluginConfigs of ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json,
+#                                            # the first junkd@ key, options.egm_enabled / egm_models (true, "true" or
+#                                            # "on" is true; models is false while enabled is; defaults false) and
+#                                            # egm_answers (auto in any case is auto, anything else manual). Other hosts:
+#                                            # enabled=false, models=true only with JUNKD_EGM_MODELS=1, answers=auto only
+#                                            # with JUNKD_EGM_ANSWERS=auto (any case).
 #   task-draft-state egm [--host <h>]        # egm: installed + root=<abs> (exit 0), else one install hint (exit 1).
 #                                            # installed_plugins.json egm@egm (the user record, else the first), then
 #                                            # EGM_ROOT; either counts only when skills/egm-draft/SKILL.md is there.
@@ -20,7 +22,7 @@
 #                                            # deletes it. put and answers write .orch/taskdraft/.gitignore (`*`) when
 #                                            # it is not there.
 #   task-draft-state decisions [--match "<text>"]
-#   task-draft-state decisions add <id> --source <chat|questions|D<n>> [--file <path>]
+#   task-draft-state decisions add <id> --source <chat|questions|auto|D<n>> [--file <path>]
 #                                            # .orch/decisions.md, the register: print it, print the blocks that match
 #                                            # (exit 1 none), or append one R<n> block per A<n>: line of stdin (or of
 #                                            # --file).
@@ -66,12 +68,14 @@ _host_arg() {
 }
 
 _settings() {
-  local explicit host out
+  local explicit host out answers
   explicit=$(_host_arg settings "$@")
   host=$(_host "$explicit")
   if [ "$host" != claude ]; then
     if [ "${JUNKD_EGM_MODELS:-}" = 1 ]; then out=$'enabled=false\nmodels=true'; else out=$'enabled=false\nmodels=false'; fi
-    printf '%s\nhost=%s\n' "$out" "$host"
+    answers=manual
+    if [ "$(printf '%s' "${JUNKD_EGM_ANSWERS:-}" | tr '[:upper:]' '[:lower:]')" = auto ]; then answers=auto; fi
+    printf '%s\nanswers=%s\nhost=%s\n' "$out" "$answers" "$host"
     return 0
   fi
   out=$(jq -rs '
@@ -79,8 +83,9 @@ _settings() {
     (if length == 1 then .[0] else error end).pluginConfigs
     | [to_entries[] | select(.key | startswith("junkd@"))][0].value.options // {}
     | sw("egm_enabled") as $e
-    | "enabled=\($e)", "models=\($e and sw("egm_models"))"
-  ' "$CFG/settings.json" 2>/dev/null) || out=$'enabled=false\nmodels=false'
+    | "enabled=\($e)", "models=\($e and sw("egm_models"))",
+      "answers=\(if (.egm_answers | type) == "string" and (.egm_answers | ascii_downcase | gsub("^\\s+|\\s+$"; "")) == "auto" then "auto" else "manual" end)"
+  ' "$CFG/settings.json" 2>/dev/null) || out=$'enabled=false\nmodels=false\nanswers=manual'
   printf '%s\nhost=%s\n' "$out" "$host"
 }
 
@@ -354,8 +359,9 @@ _dadd() {
   case "$source" in
     chat) src=chat ;;
     questions) src="questions.md of task $id" ;;
-    D[0-9]*) [[ "$source" =~ ^D[0-9]+$ ]] || die "decisions: --source must be chat, questions or D<n>, not '$source'"; src="spec $source" ;;
-    *) die "decisions: --source must be chat, questions or D<n>, not '$source'" ;;
+    auto) src="auto (task $id)" ;;
+    D[0-9]*) [[ "$source" =~ ^D[0-9]+$ ]] || die "decisions: --source must be chat, questions, auto or D<n>, not '$source'"; src="spec $source" ;;
+    *) die "decisions: --source must be chat, questions, auto or D<n>, not '$source'" ;;
   esac
   [ ! -L "$file" ] || die "decisions: .orch/decisions.md is a symlink; left unchanged"
   # every read runs before the write, each checked: a failed read never reaches _safe_write
@@ -402,7 +408,7 @@ _decisions() {
   if [ "${1:-}" = add ]; then
     shift
     local id="${1:-}" source="" have="" in=""
-    [ -n "$id" ] || die "decisions: usage: task-draft-state decisions add <id> --source <chat|questions|D<n>> [--file <path>]"
+    [ -n "$id" ] || die "decisions: usage: task-draft-state decisions add <id> --source <chat|questions|auto|D<n>> [--file <path>]"
     shift
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -412,7 +418,7 @@ _decisions() {
       esac
     done
     _check_id "$id" decisions
-    [ -n "$have" ] || die "decisions: --source must be chat, questions or D<n>"
+    [ -n "$have" ] || die "decisions: --source must be chat, questions, auto or D<n>"
     root=$(_root)
     # --file: the A<n>: lines are read from that file, not from stdin
     if [ -n "$in" ]; then _input decisions "$in"; _dadd "$id" "$source" "$root" < "$in"; else _dadd "$id" "$source" "$root"; fi

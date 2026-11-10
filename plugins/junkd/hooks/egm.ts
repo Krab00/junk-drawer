@@ -104,6 +104,14 @@ export const effortLabel = (e: Entry): string => (e.effort === 'none' ? '—' : 
 
 // A switch's raw value: true for true, 'true' or 'on' (the rule of tools.ts), false for anything else.
 export const coerce = (raw: unknown): boolean => raw === true || raw === 'true' || raw === 'on'
+// egm_answers: who answers an EGM question of /junkd:task-draft. manual (the default) asks the human; auto lets the
+// role answer it and log it. A raw value is trimmed and lowercased; anything else is no answers value.
+export const ANSWERS = ['manual', 'auto'] as const
+export type Answers = (typeof ANSWERS)[number]
+export const coerceAnswers = (raw: unknown): Answers | undefined => {
+  const v = String(raw ?? '').trim().toLowerCase()
+  return (ANSWERS as readonly string[]).includes(v) ? (v as Answers) : undefined
+}
 
 export const newDraft = (): Draft => ({
   mode: 'form',
@@ -120,10 +128,11 @@ export const editDraft = (entry: Entry, index: number): Draft => ({
   editIndex: index,
 })
 
-// The tab's state. `enabled` and `models` are the stored egm_* rows; the rest is the view.
+// The tab's state. `enabled`, `models` and `answers` are the stored egm_* rows; the rest is the view.
 export const E = {
   enabled: false,
   models: false,
+  answers: 'manual' as Answers,
   view: 'list' as 'list' | 'form' | 'json',
   list: [] as Entry[],
   fileError: undefined as string | undefined,
@@ -133,7 +142,7 @@ export const E = {
   note: '',
 }
 
-// Back to a fresh view: the list, nothing selected past the first row, no draft, no note. The two stored rows stay
+// Back to a fresh view: the list, nothing selected past the first row, no draft, no note. The stored rows stay
 // (a closed pane does not turn egm off).
 export function resetEgm(): void {
   E.view = 'list'
