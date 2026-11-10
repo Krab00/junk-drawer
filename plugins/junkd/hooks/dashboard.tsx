@@ -19,9 +19,9 @@ import type { AgentInfo, AgentSpawnInput, AgentSpawnResult, On, ToolCallInput, T
 import type { $ } from './feature'
 import { O } from './orch-lib'
 import {
-  MAX_AGENT_EVENTS, MAX_EVENTS, buildStatus, ctxText, isTaskFile, kindOf, mergePhases, openArgv, orchRoot, parseLessons, parseTask, parseVerification,
+  MAX_AGENT_EVENTS, MAX_EVENTS, buildStatus, ctxText, isTaskFile, kindOf, mergePhases, openArgv, orchRoot, parseTask, parseVerification,
   readStatusJs, relTo, roleOf, shortModel, stateOf, statusJs, stepOf, taskOf, tasksDirOf,
-  type DashAgent, type DashEvent, type Lesson, type Phase, type TaskHead, type Verdicts,
+  type DashAgent, type DashEvent, type Phase, type TaskHead, type Verdicts,
 } from './dashboard.ts'
 
 export const DASH_OFF = 'junkd: the orch dashboard is off while orch is disabled (/junkd:orch panel → Orchestrator: enabled)'
@@ -126,7 +126,7 @@ async function hasRecord($: $, id: string): Promise<boolean> {
 
 // the store ---------------------------------------------------------------------------------------------------------
 
-type Store = { root: string; tasks: { head: TaskHead; verdicts?: Verdicts }[]; lessons: Lesson[] }
+type Store = { root: string; tasks: { head: TaskHead; verdicts?: Verdicts }[] }
 async function storeDir($: $, top: string): Promise<{ root: string; dir: string }> {
   const candidates = [top]
   for (let up = top; up.includes('/.worktrees/'); ) candidates.push((up = up.slice(0, up.lastIndexOf('/.worktrees/'))))
@@ -137,9 +137,9 @@ async function storeDir($: $, top: string): Promise<{ root: string; dir: string 
   return { root, dir: `${root}/${tasksDirOf(config)}` }
 }
 const byId = (a: string, b: string) => a.localeCompare(b, 'en', { numeric: true })
-// Each task file of the store (a file that cannot be read, or has no frontmatter, is left out) and _lessons.md.
+// Each task file of the store (a file that cannot be read, or has no frontmatter, is left out).
 async function readStore($: $, top: string): Promise<Store> {
-  if (!top) return { root: '', tasks: [], lessons: [] }
+  if (!top) return { root: '', tasks: [] }
   const { root, dir } = await storeDir($, top)
   const names = (await $.fs.list(dir).catch(() => [])).filter(e => e.kind === 'file' && isTaskFile(e.name)).map(e => e.name).sort(byId)
   const tasks: Store['tasks'] = []
@@ -151,7 +151,7 @@ async function readStore($: $, top: string): Promise<Store> {
     tasks.push(verdicts ? { head, verdicts } : { head })
   }
   D.ids = tasks.map(t => t.head.id)
-  return { root, tasks, lessons: parseLessons(await $.fs.read(`${dir}/_lessons.md`).catch(() => '')) }
+  return { root, tasks }
 }
 // the history -------------------------------------------------------------------------------------------------------
 
@@ -338,7 +338,6 @@ export async function dashboardWrite($: $): Promise<WriteResult> {
       phases: D.phases,
       agents,
       events: D.events,
-      lessons: store.lessons,
       usage: usage?.rateLimits ?? [],
     })
     await writeAtomic($, `${where.dir}/status.js`, statusJs(status))

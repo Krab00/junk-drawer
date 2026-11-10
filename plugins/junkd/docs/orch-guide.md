@@ -17,25 +17,23 @@ behaviour.
 2. [How it works — the loop](#2-how-it-works--the-loop)
 3. [The criteria freeze ladder](#3-the-criteria-freeze-ladder)
 4. [Standing checks, gated by capabilities](#4-standing-checks-gated-by-capabilities)
-5. [Learning — the retro / `_lessons.md`](#5-learning--the-retro--_lessonsmd)
-6. [Modes & flags](#6-modes--flags)
-7. [Setup & usage walkthrough](#7-setup--usage-walkthrough)
-8. [Backends](#8-backends)
-9. [The bin scripts](#9-the-bin-scripts)
-10. [Config reference](#10-config-reference)
-11. [Limitations — v0.1 notes](#11-limitations--v01-notes)
+5. [Modes & flags](#5-modes--flags)
+6. [Setup & usage walkthrough](#6-setup--usage-walkthrough)
+7. [Backends](#7-backends)
+8. [The bin scripts](#8-the-bin-scripts)
+9. [Config reference](#9-config-reference)
+10. [Limitations — v0.1 notes](#10-limitations--v01-notes)
 
 ---
 
 ## 1. The idea — why it exists
 
-A naive "agent, go build my backlog" loop fails in four predictable ways. `orch` is built around
+A naive "agent, go build my backlog" loop fails in three predictable ways. `orch` is built around
 an answer to each.
 
 | The failure mode | What goes wrong | orch's answer |
 |---|---|---|
 | **Context drift** | One agent implements, verifies, reads build logs, drives the browser, and reflects — all in one context. Heavy output (installs, boot logs, test runs, screenshots) fills the window, and quality degrades task after task. | The **orchestrator never codes or verifies itself.** Implementation goes to an `implementer`; the whole verification goes to a `verify-coordinator`. The noisy output lives in *their* contexts. The orchestrator only ever sees a short plan in and a compact verdict out — so `all` can drain many more tasks before its own window fills. |
-| **No memory** | The loop repeats the same mistake on task 7 that it made on task 2. Nothing learned in one task informs the next. | A **retro step** adds a lesson to `_lessons.md` when a resolve had a signal (a fix round, a surviving mutant, a verify FAIL). Those lessons are fed back into the next task's plan and the next verification. A pattern that recurs across ≥2 tasks is proposed for promotion into a permanent standing check. |
 | **Tokens burned on unreachable goals** | "Make it work" isn't checkable, so the agent grinds without ever knowing whether it's done — or declares victory on vibes. | Every task's goal is a set of **verifiable acceptance criteria, frozen before any code is written.** A criterion that no tool can check isn't a criterion. A description too thin to derive one goes `blocked` with a question — never implemented on a guess. |
 | **Happy-path-only verification** | The gate improvises checks from a *positive* acceptance list, on data that happens to cooperate — so the empty / error / edge branches never get hit, and the task bounces later. | Verification derives its cases from the **diff, not the feature description** (`test-planner`), and runs a set of **standing checks** — real-data provenance, malformed-input handling, FE-actually-calls-the-API, E2E-through-the-UI — that hit exactly the branches a lucky run skips. **No PASS without tool evidence.** |
 
@@ -64,7 +62,7 @@ Two more principles hold the whole thing together:
                     └─────────┬──────────┘   (criteria are IMMUTABLE for the whole round loop)
                               │
                     ┌─────────▼──────────┐
-                    │  3. PLAN + DELEGATE│  short plan + lessons → implementer
+                    │  3. PLAN + DELEGATE│  short plan → implementer
                     └─────────┬──────────┘   (or lead-implementer fan-out for a big task)
                               │
                     ┌─────────▼──────────┐
@@ -81,11 +79,7 @@ Two more principles hold the whole thing together:
                   └───────────┬───────────┘        final round FRESH impl. + diff + why
                               │                     still failing after R → blocked + escalate
                     ┌─────────▼──────────┐
-                    │  6. RETRO          │  lesson add on a signal → _lessons.md
-                    └─────────┬──────────┘
-                              │
-                    ┌─────────▼──────────┐
-                    │  7. DRAFT PR        │  gh pr create --draft  (humans merge, never orch)
+                    │  6. DRAFT PR        │  gh pr create --draft  (humans merge, never orch)
                     └─────────┬──────────┘
                               │
                   next task (chain/batch/all)  … then  BACKLOG: DRAINED | REMAINING | BLOCKED
@@ -103,9 +97,8 @@ Step by step, as the shipped `commands/orch.md` runs it:
    immutable for the rest of the loop — see [§3](#3-the-criteria-freeze-ladder).
 
 3. **Plan + delegate.** The orchestrator writes a short implementation plan (files to touch,
-   contracts, any spec to follow), folds in the current `_lessons.md`, and hands it to an
-   implementer. It chooses `lead-implementer` when the work cuts into ≥2 file-disjoint slices (or
-   `--deep` is passed), else the plain `implementer`. The agent is spawned worktree-isolated and is
+   contracts, any spec to follow) and hands it to an implementer. It chooses `lead-implementer`
+   when the work cuts into ≥2 file-disjoint slices (or `--deep` is passed), else the plain `implementer`. The agent is spawned worktree-isolated and is
    fed the **config facts it needs** — dev-server commands, ports, test commands — because the
    agent itself assumes no stack.
 
@@ -123,9 +116,7 @@ Step by step, as the shipped `commands/orch.md` runs it:
    - **Still failing after round R** → the task is `blocked`, the escalation reason is appended,
      and the loop moves on.
 
-6. **Retro.** A resolve with a signal adds a lesson to `_lessons.md` — see [§5](#5-learning--the-retro--_lessonsmd).
-
-7. **Draft PR + iterate.** In `chain`/`all` the next task branches off the one just finished; in
+6. **Draft PR + iterate.** In `chain`/`all` the next task branches off the one just finished; in
    `batch` verdicts are consumed as coordinators finish. At end of run `orch-sync push` reflects
    statuses to the backend, and the run prints its `BACKLOG:` line.
 
@@ -190,7 +181,7 @@ exist.
 | **`ui-reviewer` drives the real browser** — a screenshot per criterion, every state | `web` declared | Screen/flow/state criteria are proven visually, at the project's target viewport, against the design tokens — not taken on the implementer's word. |
 | **Every path from `test-planner`'s matrix** — happy + each edge (empty/loading/error/no-permission/boundary), each induced for real | always (scaled to declared layers) | The branches a lucky random run skips are actually hit. A state that genuinely can't be reached this run is a visible FAIL/PM-REVIEW row with a reason — never a silently missing line. |
 | **Security review of the diff** — one fresh reviewer runs the built-in `security-review` skill; each finding at or above `severity` is a FAIL row | `security` declared | The change adds no injection, XSS, SSRF, IDOR, auth bypass, leaked secret, unsafe deserialization or path traversal at the declared severity. See *Security* below. |
-| **Everything in `standing_checks_extra`** | project config | Project-specific lessons already promoted to permanent checks (see [§5](#5-learning--the-retro--_lessonsmd)). |
+| **Everything in `standing_checks_extra`** | project config | Project-specific permanent checks from the config (see *Rules need checks* below and [§9](#9-config-reference)). |
 
 ### Break rows
 
@@ -231,51 +222,18 @@ stops, on a diff other agents move, and its findings stay in that agent where no
 Its commit/push review stays on, because it runs in the implementer at the moment of the commit, on that
 commit alone, and is a cheap early warning. The verdict that gates `done` is the standing check above.
 
----
+### Rules need checks
 
-## 5. Learning — the retro / `_lessons.md`
-
-`orch` learns *within a run* and, with your approval, *across runs*.
-
-- **The retro step.** At a task resolve that had a signal — a fix round, a surviving mutant, a
-  PM-REVIEW that found a bug, a dead or stalled agent, a verify FAIL — the orchestrator adds a lesson
-  with `orch-state lesson add`: 2–3 sentences, *what failed, why, and what check would have caught
-  it*, and a promotion target. A clean round-0 PASS writes nothing.
-- **Fed forward immediately.** Those lessons are handed into the next task's plan (step 3) and into
-  the next `verify-coordinator` spawn (step 4). So a mistake made on task 2 informs task 3 in the
-  same run.
-- **Promotion to a standing check.** When the **same pattern recurs across ≥2 tasks**, the
-  orchestrator proposes promoting it into `standing_checks_extra` in the config — where it becomes a
-  permanent, always-on check for every future task. This **asks you first; the loop never edits the
-  config silently.**
-- **Rules need checks.** A rule written in `CLAUDE.md` ("never", "always", "must", "only", a
-  "Binding rules" section) holds only on the prompt until a tool checks it. `/junkd:orch-init` scans
-  every `CLAUDE.md`/`AGENTS.md` and proposes, per rule, a `standing_checks_extra` row with a concrete
-  recipe (grep / test / curl), a pointer to the test that already pins it, or "stays prose". You confirm
-  each row; re-runs propose only new rules. The starter `TEST-POLICY.md` it offers makes this a
-  standing rule: a task that adds a binding rule adds its check in the same branch. The retro
-  shortcut: a lesson that names a rule already in `CLAUDE.md` is proposed for promotion at once
-  ("rule exists in CLAUDE.md §X, no check"), without waiting for a second task.
-
-**Lessons.** The lessons are a queue that empties itself, not a diary. They live in three stores,
-promoted one way: **local** `<tasks_dir>/_lessons.md` (born there; junkd never commits it and does not git-ignore it: the repo's own `.gitignore` decides whether it enters git), **repo**
-`lessons.md` at the project root (committed with the project, for the team and other machines) and
-**global** `~/.claude/junkd/lessons.md` (one per machine, read by every repo). Each lesson carries a
-`stack:` tag (node, python, shell, tsx-mods, go, rust, any) and a `to:` target: `test` or `smoke` (the
-implementer of the same task adds the check in a fix round), `check` (a `standing_checks_extra` row,
-after you say yes), `role` (a task for the agents' role files in junk-drawer), `repo` or `global`
-(moved up a store), or `drop`. Every orch session starts with the lessons whose stack meets the
-repo's, as data in a fenced block. A run does not end — no `BACKLOG:` line — while a lesson is
-pending: the orchestrator resolves each with you (on Claude Code in the lessons tab of the junkd pane,
-which opens by itself; the `📒 N` segment under the prompt counts them), and a new run starts with
-the same dialog. The `orch_lessons` setting switches the whole loop off; the files are then left alone.
-
-This is the missing feedback loop in naive agent runs: without it, the same class of bug gets
-re-litigated task after task.
+A rule written in `CLAUDE.md` ("never", "always", "must", "only", a "Binding rules" section) holds only
+on the prompt until a tool checks it. `/junkd:orch-init` scans every `CLAUDE.md`/`AGENTS.md` and
+proposes, per rule, a `standing_checks_extra` row with a concrete recipe (grep / test / curl), a pointer
+to the test that already pins it, or "stays prose". You confirm each row; re-runs propose only new
+rules. The starter `TEST-POLICY.md` it offers makes this a standing rule: a task that adds a binding
+rule adds its check in the same branch. The loop never edits the config silently.
 
 ---
 
-## 6. Modes & flags
+## 5. Modes & flags
 
 `orch` is one command with several shapes. Parse them from the arguments:
 
@@ -347,7 +305,7 @@ report (when it is an ancestor), else to the run's base commit; the report names
 
 ---
 
-## 7. Setup & usage walkthrough
+## 6. Setup & usage walkthrough
 
 ### Install
 
@@ -379,9 +337,9 @@ the rule-sheet flag file `~/.claude/junkd/orch-rules-off` (formerly `~/.claude/o
 - the **test runner** per package (a layer with no runner is recorded as absent, never forced to
   grow one).
 
-It then **asks which backend** fits ([§8](#8-backends)), shows you the filled config to confirm the
-run/test commands + ports it detected, and on approval writes `.orch/config.md`, creates
-`tasks_dir`, and seeds an empty `_lessons.md`. If a config already exists it shows a diff and asks
+It then **asks which backend** fits ([§7](#7-backends)), shows you the filled config to confirm the
+run/test commands + ports it detected, and on approval writes `.orch/config.md` and creates
+`tasks_dir`. If a config already exists it shows a diff and asks
 before overwriting — a hand-tuned config is never clobbered silently.
 
 ### The canonical task file
@@ -419,7 +377,7 @@ Evidence files land in `<tasks_dir>/<ID>.evidence/`.
 2. **Criteria frozen (interactively).** No structured DoD exists, so the loop *derives* criteria —
    e.g. *"AC1: after a successful login the user lands on `/dashboard`, not `/login` (modality:
    ui)"* — each traceable to a sentence in your prompt, and shows them to you for approval.
-3. **Delegated.** A short plan + the current lessons go to an `implementer`, spawned in its own
+3. **Delegated.** A short plan goes to an `implementer`, spawned in its own
    worktree on branch `task/adhoc-1-fix-login-redirect`, fed the dev-server and test commands from
    the config.
 4. **Verified.** `verify-coordinator` boots the app, derives the matrix from the
@@ -427,14 +385,14 @@ Evidence files land in `<tasks_dir>/<ID>.evidence/`.
    real browser through the redirect on a fresh random account, runs the standing checks, and
    returns a merged verdict.
 5. **Resolved.** All PASS → the task is `done`, a **draft PR** is opened
-   (`gh pr create --draft …`), and a lesson is appended to `_lessons.md`. The run prints
+   (`gh pr create --draft …`). The run prints
    `BACKLOG: DRAINED`.
 
 You review and merge the PR — `orch` never does.
 
 ---
 
-## 8. Backends
+## 7. Backends
 
 The backend decides where tasks come from and what `orch-sync` does. Set it in the config.
 
@@ -443,7 +401,7 @@ The backend decides where tasks come from and what `orch-sync` does. Set it in t
 | **`adhoc`** | The task files in `tasks_dir` are the whole source of truth; `/junkd:orch "<free text>"` creates them. | `orch-sync` is a **no-op** (the files *are* canon). |
 | **`manifest`** | Same as adhoc, but you maintain the task files **by hand**. | No-op. |
 | **`github-issues`** | GitHub issues carrying a configured label (default `orch`). | **Pull:** issues → task files (`id` becomes `GH-<number>`, the body checklist → acceptance criteria, `updatedAt` stamped as `source_updated_at`). **Push:** a status comment with the verification table + PR link. Needs the `gh` CLI authenticated. |
-| **`linear-mcp`** | Linear, via the Linear MCP. | Sync happens **in-conversation** through the MCP — `/junkd:orch` does the pull/push itself. Thin in v0.1 (see [§11](#11-limitations--v01-notes)). |
+| **`linear-mcp`** | Linear, via the Linear MCP. | Sync happens **in-conversation** through the MCP — `/junkd:orch` does the pull/push itself. Thin in v0.1 (see [§10](#10-limitations--v01-notes)). |
 
 **Field ownership + drift guard (`github-issues`).** The tool owns human-set fields (issue state,
 labels); `orch` owns its status comment and never overwrites human edits. Pull stamps
@@ -453,7 +411,7 @@ have no rich workflow states); push **never closes an issue and never merges**.
 
 ---
 
-## 9. The bin scripts
+## 8. The bin scripts
 
 Three small, zero-dependency bash scripts carry the **deterministic mechanics** — the mechanical,
 error-prone steps that shouldn't be an LLM's job. Keeping them out of the model's hands is why the
@@ -474,7 +432,7 @@ frontmatter never drifts and ports never collide.
 
 ---
 
-## 10. Config reference
+## 9. Config reference
 
 `/junkd:orch` reads every project fact from `.orch/config.md`. **No config → it stops and tells you
 to run `/junkd:orch-init`.** YAML frontmatter + free-form prose notes:
@@ -490,7 +448,7 @@ capabilities:
   api:  { run: "npm run start:dev", port_base: 3180, health: "/health" }  # omit if no api
   tests: { api: "npm test" }   # use `root` for a repo-level suite; omit absent runners
   security: { severity: high } # omit unless there is a web app, an api, or a security-named file
-standing_checks_extra: []      # project lessons promoted to standing checks (starts empty)
+standing_checks_extra: []      # project-specific standing checks (starts empty)
 specs: [PRD.md, specs/*.md]    # spec files /junkd:direction checks; omit when none
 github: { label: "orch" }      # github-issues backend only; drop otherwise
 ---
@@ -500,14 +458,14 @@ calibration values that must never be guessed, etc.
 
 | Field | Meaning |
 |---|---|
-| `backend` | Which task source drives the run — see [§8](#8-backends). |
+| `backend` | Which task source drives the run — see [§7](#7-backends). |
 | `tasks_dir` | Directory holding the canonical `<ID>.md` task files (default `.orch/tasks`). |
 | `default_base` | Detected git default branch; overridden by `--base`. |
 | `branch_prefix` | Per-task branch name = `<branch_prefix><id>-<slug>`. |
 | `capabilities.web` / `.api` | `run` (dev-server command), `port_base`, `health` path. **Omit the whole block if the layer doesn't exist** — its standing checks are then skipped. |
 | `capabilities.tests` | Test command map (`{ pkg: "cmd" }`); use `root` for a repo-level suite. |
 | `capabilities.security` | `severity` (`low` / `medium` / `high`, proposed as `high`): the lowest finding severity that is a `FAIL` row; a missing or other value is read as `high`, with a note under the table. Absent → no security check (see [§4](#4-standing-checks-gated-by-capabilities)). |
-| `standing_checks_extra` | Project-specific checks promoted from `_lessons.md` (starts empty). |
+| `standing_checks_extra` | Project-specific standing checks (starts empty); `/junkd:orch-init` proposes rows from the rules in `CLAUDE.md`/`AGENTS.md`. |
 | `specs` | Paths or globs of the requirement documents `/junkd:direction` scores the code against. `/junkd:orch-init` proposes them from `PRD*`, `SPEC*`, `specs/`, `docs/ARCHITECTURE*`, `docs/PLAN*` and writes no key when none exist; without it the direction check stops and an `all` run skips it. |
 | `github.label` | Only for the `github-issues` backend — the label to pull. |
 | *(prose below the frontmatter)* | Anything the orchestrator should know: conventions, the visual-spec path, calibration values that must never be guessed. |
@@ -517,7 +475,7 @@ far enough apart that a few parallel tasks won't collide (e.g. `5180` web / `318
 
 ---
 
-## 11. Limitations — v0.1 notes
+## 10. Limitations — v0.1 notes
 
 - **`linear-mcp` is thin.** The sync runs in-conversation through the Linear MCP; `bin/orch-sync`
   is only a stub for that backend.

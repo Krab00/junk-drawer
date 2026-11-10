@@ -80,7 +80,7 @@ Codex notes:
 handoff, orch, tldr, ctx-limit, ctx-tokens and statusline are part of junkd; every command is `/junkd:<name>`
 (`/junkd:handoff`, `/junkd:handon`, `/junkd:ahandoff`, `/junkd:orch`, `/junkd:orch-init`, `/junkd:tldr`,
 `/junkd:ctx-limit`, `/junkd:ctx-tokens`, `/junkd:statusline`, `/junkd:direction`, `/junkd:tools`, `/junkd:dashboard`,
-`/junkd:lessons`, `/junkd:explain`, `/junkd:task-draft`). Coming from the separate `handoff`, `orch`, `tldr`,
+`/junkd:explain`, `/junkd:task-draft`). Coming from the separate `handoff`, `orch`, `tldr`,
 `ctx-limit`, `ctx-tokens` or `statusline` plugins: uninstall them and see "Moving from the handoff, orch, tldr,
 ctx-limit, ctx-tokens and statusline plugins" in [`plugins/junkd/README.md`](plugins/junkd/README.md) for the renamed
 commands, settings keys and state files.
@@ -124,12 +124,11 @@ any FAIL. Run it through the Bash tool of a session, so it sees `CLAUDE_CODE_SES
 
 One plugin for handoff, orch, tldr, ctx-limit, ctx-tokens and the status line, and the frame over the marketplace.
 Its skills (`handoff`, `handon`, `ahandoff`, `orch`, `orch-init`, `direction`, `tldr`, `ctx-limit`, `ctx-tokens`, `statusline`,
-`junkd`, `tools`, `explain`, `dashboard`, `lessons`, `task-draft`) run on every host; on Claude Code each is `/junkd:<name>`, and the hooks module adds
+`junkd`, `tools`, `explain`, `dashboard`, `task-draft`) run on every host; on Claude Code each is `/junkd:<name>`, and the hooks module adds
 the automatic handoff loop, the orch main-loop guard, the panes (the tools pane among them: this session's agents over
 the repo's worktrees, and the tools, MCP servers and skills it used), the live orch dashboard (a local page with the
-task board and the agents' timeline; `bin/orch-status` writes a snapshot of it on the other hosts), the lessons tab
-and its 📒 segment (orch's lessons queue; `orch-state lesson` on every host), the status line's wiring and `$.junkd`
-for other mods.
+task board and the agents' timeline; `bin/orch-status` writes a snapshot of it on the other hosts), the status
+line's wiring and `$.junkd` for other mods.
 
 - Claude Code: `/plugin install junkd@junk-drawer`, then `/reload-plugins`.
 - Codex: `codex plugin add junkd@junk-drawer`; the skills answer as `$handoff`, `$orch-init`, `$orch`, `$direction`,
@@ -147,7 +146,7 @@ Code and `/direction` on OpenCode: it scores the code against the spec files of 
 The mod parts (the pane, the auto handoff loop, the guard) and the status line are Claude Code only.
 
 `/junkd`, or a click on the `✚ junkd` segment under the prompt, opens a set of panes as tabs (junkd, handoff's,
-orch's, statusline's, tools' and lessons') and closes them together: `×` or `q` in any pane of the set closes the whole set at once, while
+orch's, statusline's and tools') and closes them together: `×` or `q` in any pane of the set closes the whole set at once, while
 a pane opened on its own (`/junkd:orch panel`, a `settings ▸` jump) closes alone. The junkd pane has three sections:
 
 - **Plugins**: every plugin of the marketplace, on or off at user scope; a number flips one, then
@@ -206,7 +205,7 @@ lifecycle hooks, so `tldr` and `ctx-limit` lose their automatic hook behavior an
 them explicitly instead.
 
 ```bash
-npx skills add Krab00/junk-drawer                     # all seventeen skills
+npx skills add Krab00/junk-drawer                     # all sixteen skills
 npx skills add Krab00/junk-drawer --skill orch        # just one
 npx skills add Krab00/junk-drawer --list              # preview, install nothing
 ```
@@ -236,9 +235,9 @@ Known limits of the skills-only install:
 
 - `$junk-drawer` catalogs sibling skills instead of plugins, since no plugin manifests are present,
   so it cannot report versions or slash commands.
-- `orch-init`, `dashboard` and `lessons` borrow `orch`'s helpers through a sibling symlink, so their own tree
+- `orch-init` and `dashboard` borrow `orch`'s helpers through a sibling symlink, so their own tree
   hashes do not move when those helpers change. Once `npx skills update` has refreshed `orch`, refresh
-  them explicitly with `npx skills add Krab00/junk-drawer --skill orch-init --skill dashboard --skill lessons`; `add`
+  them explicitly with `npx skills add Krab00/junk-drawer --skill orch-init --skill dashboard`; `add`
   always reinstalls. `dashboard`'s `orch-status` takes the page from the sibling `orch` skill.
 - Codex's plugin installer drops every symlink (the plugin-root `bin/`, `agents/` and `scripts/` too).
   Under the previous layout that left Codex plugin installs with no `bin/` inside the skills at all;
@@ -257,7 +256,7 @@ Known limits of the skills-only install:
 | Plugin | What it does | Codex / Kimi entry point |
 |---|---|---|
 | `junk-drawer` | Runtime catalog of the marketplace | `$junk-drawer` / `/skill:junk-drawer` |
-| `junkd` | handoff (`/junkd:handoff`, `/junkd:handon`; `/junkd:ahandoff` continues past a context threshold and resumes after the 5h rate limit on Claude Code), orch (`/junkd:orch-init`, then `/junkd:orch`: implementation and independent verification through subagents; `/junkd:direction` scores the code against the spec files), tldr (`/junkd:tldr`: summarize on demand, optional persistent terse mode), ctx-limit (`/junkd:ctx-limit`: a context threshold hook that blocks, warns or runs a command), ctx-tokens (`/junkd:ctx-tokens`: context usage from Claude, Codex or Kimi transcripts), statusline (`/junkd:statusline`: the Claude Code status line with a switch per segment; Codex footer configuration; Kimi footer notes), and on Claude Code the `/junkd` frame: tabs for junkd, handoff, orch, statusline, tools and lessons, every plugin on/off, the setting groups, the commands | `$handoff`, `$orch-init`, `$orch`, `$direction`, `$tldr`, `$ctx-limit`, `$ctx-tokens`, `$statusline` / `/skill:<name>` |
+| `junkd` | handoff (`/junkd:handoff`, `/junkd:handon`; `/junkd:ahandoff` continues past a context threshold and resumes after the 5h rate limit on Claude Code), orch (`/junkd:orch-init`, then `/junkd:orch`: implementation and independent verification through subagents; `/junkd:direction` scores the code against the spec files), tldr (`/junkd:tldr`: summarize on demand, optional persistent terse mode), ctx-limit (`/junkd:ctx-limit`: a context threshold hook that blocks, warns or runs a command), ctx-tokens (`/junkd:ctx-tokens`: context usage from Claude, Codex or Kimi transcripts), statusline (`/junkd:statusline`: the Claude Code status line with a switch per segment; Codex footer configuration; Kimi footer notes), and on Claude Code the `/junkd` frame: tabs for junkd, handoff, orch, statusline and tools, every plugin on/off, the setting groups, the commands | `$handoff`, `$orch-init`, `$orch`, `$direction`, `$tldr`, `$ctx-limit`, `$ctx-tokens`, `$statusline` / `/skill:<name>` |
 
 ## Layout
 

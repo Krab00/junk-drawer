@@ -9,7 +9,7 @@
 #   --open        also copy the page (index.html, scale.js) beside it, touch the `open` flag and open index.html
 #                 (`open` on macOS, `xdg-open` elsewhere, else the path is all you get)
 # Prints the written file's path. Built from: the task store (.orch/tasks/*.md frontmatter and the last
-# "## Verification round N" or "## Verification — <branch>" table; files starting with `_` are not tasks), _lessons.md, the SubagentStop records under
+# "## Verification round N" or "## Verification — <branch>" table; files starting with `_` are not tasks), the SubagentStop records under
 # junkd/orch/_agents/<session>/ (ORCH_SESSION, else the newest folder), the OAuth usage endpoint (macOS keychain; any
 # failure is no usage), git for repo and branch. Env: ORCH_DASHBOARD_WINDOW_H (hours the timeline shows, 1-168; else the
 # orch_dashboard_window_h setting, else 24), ORCH_NOW_MS (the clock), ORCH_STATUS_NO_USAGE=1 (no keychain, no network).
@@ -147,7 +147,7 @@ jd_warn() {
 # <<< jd-rule
 
 build() {
-  local config="" lessons="" settings="null" branch=""
+  local config="" settings="null" branch=""
   tasks_dir=""
   if [ -n "$root" ]; then
     config=$(cat "$root/.orch/config.md" 2>/dev/null) || config=""
@@ -156,7 +156,6 @@ build() {
       ($c | gsub("\r\n?"; "\n") | split("\n") | map(select(test("^tasks_dir:"))) | first // null) as $l
       | (if $l == null then "" else $l | sub("^tasks_dir:\\s*"; "") | sub("\\s+#.*$"; "") | unquote | sub("/+$"; "") end) as $d
       | if ($d | test("^\\.orch/[^/]")) and ($d | split("/") | index("..") | not) then $d else ".orch/tasks" end')"
-    lessons=$(cat "$tasks_dir/_lessons.md" 2>/dev/null) || lessons=""
   fi
   [ -n "$top" ] && { branch=$(git -C "$top" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=""; }
   settings=$(jq -cs 'if length == 1 then .[0] else null end' "$cfg/settings.json" 2>/dev/null) || settings=null
@@ -165,7 +164,7 @@ build() {
   local repo="${root:-$top}"
   repo="${repo%/}"; repo="${repo##*/}"
   inputs | jq -sc \
-    --argjson now "$now" --arg repo "$repo" --arg branch "$branch" --arg lessons "$lessons" \
+    --argjson now "$now" --arg repo "$repo" --arg branch "$branch" \
     --arg winenv "${ORCH_DASHBOARD_WINDOW_H-}" --arg haswin "${ORCH_DASHBOARD_WINDOW_H+1}" \
     --argjson settings "$settings" --argjson usage "$(usage_json)" --arg mk "$jd_mk" "$jd_rule"'
     def trim: sub("^\\s+"; "") | sub("\\s+$"; "");
@@ -223,18 +222,6 @@ build() {
           + (if $r.acx[1] > 0 then {acx: $r.acx} else {} end)
           + (if $note != "" then {note: "round \($round): \($note)"} else {} end)
         end;
-    # _lessons.md: each "## T<n> (date)" or "## L<n> (date) … · from: T<n>" heading (the task is its from: when it has one)
-    # and the first sentence of its paragraph, newest first
-    def lessons:
-      lines as $ls
-      | def body($j; $acc):
-          if $j >= ($ls | length) or ($ls[$j] | test("^##\\s")) then $acc
-          elif ($ls[$j] | trim) == "" then (if $acc != "" then $acc else body($j + 1; $acc) end)
-          else body($j + 1; $acc + (if $acc != "" then " " else "" end) + ($ls[$j] | trim)) end;
-        [range(0; $ls | length) as $i | ($ls[$i] | capture("^##\\s+(?<t>\\S+)")?) as $m | select($m != null)
-         | body($i + 1; "") as $b | ((($b | capture("^(?<s>.*?[.!?])(\\s|$)")?) | .s) // $b) as $s
-         | ([$ls[$i] | capture("\\bfrom:\\s*(?<f>[^\\s·,]+)")] | .[0].f) as $from
-         | select($s != "") | {task: ($from // $m.t), text: $s}] | reverse;
     def column: (. | trim | ascii_downcase) as $s
       | if $s == "done" or $s == "blocked" or $s == "todo" or $s == "in_progress" or $s == "verify" then $s else "todo" end;
     def ctx: if type != "number" or isinfinite or isnan then "—" elif . < 1000 then (round | tostring) else "\((. / 1000) | round)k" end;
@@ -259,7 +246,6 @@ build() {
         | {name: .id, role: ((.rec.type // "") | tostring | sub("^.*:"; "")), model: "—", status: "done", lastCallSec: null,
            ctx: (.rec.tokens | ctx)}],
       events: [],
-      lessons: ($lessons | lessons),
       usage: $usage,
       watchdog: {}
     }'
@@ -275,9 +261,9 @@ else
   if command -v jq >/dev/null 2>&1 && json=$(build) && [ -n "$json" ]; then
     write "$name" "window.ORCH = $json;"$'\n'
   else
-    command -v jq >/dev/null 2>&1 || echo "orch-status: jq is not installed: status.js holds no tasks, agents or lessons (install jq)" >&2
+    command -v jq >/dev/null 2>&1 || echo "orch-status: jq is not installed: status.js holds no tasks or agents (install jq)" >&2
     command -v jq >/dev/null 2>&1 && echo "orch-status: the status could not be built: status.js holds an empty status" >&2
-    write "$name" 'window.ORCH = {"mock":false,"generatedAt":'"$now"',"tasks":[],"agents":[],"events":[],"lessons":[],"usage":{},"watchdog":{}};'$'\n'
+    write "$name" 'window.ORCH = {"mock":false,"generatedAt":'"$now"',"tasks":[],"agents":[],"events":[],"usage":{},"watchdog":{}};'$'\n'
   fi
 fi
 

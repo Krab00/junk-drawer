@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/orch-status, the shell writer of the orch dashboard's status.js: a fixture task store (todo, done with a block
-# list of deps, in_progress with CRLF and two verification rounds, no frontmatter, an `_notes.md`, an unreadable file,
-# _lessons.md) and agent records → status.js parsed by node; the window clamp; the atomic write; the store found from
+# list of deps, in_progress with CRLF and two verification rounds, no frontmatter, an `_notes.md`, an unreadable
+# file) and agent records → status.js parsed by node; the window clamp; the atomic write; the store found from
 # a task worktree; the default folder (host-lib's jd_hash8 of the toplevel); --sample; --open with stub openers; no jq
 # (the fallback file); a bad flag; the same store through hooks/dashboard.ts (parity); the write through an mv spy and a
 # refusing mv; the usage endpoint through stub security/curl; a failing jq. Never the network: ORCH_STATUS_NO_USAGE=1
@@ -57,7 +57,6 @@ printf 'no frontmatter here\n' >"$T/T3.md"
 printf -- '---\nid: N1\nstatus: todo\n---\n' >"$T/_notes.md"
 printf -- '---\nid: T4\nstatus: todo\n---\n' >"$T/T4.md"
 chmod 000 "$T/T4.md"
-printf '## T1 (2026-10-18)\nFirst lesson. More text\nwrapped here.\n\n## T2 (2026-10-19)\nSecond lesson is about e.g\nwrapping? Yes.\n\n## T3 (2026-10-20)\n\n' >"$T/_lessons.md" # T3: a heading with no body is no lesson
 mkdir -p "$CLAUDE_CONFIG_DIR/junkd/orch/_agents/aa-old" "$CLAUDE_CONFIG_DIR/junkd/orch/_agents/sid-new"
 printf '{"type":"x:old","tokens":1}\n' >"$CLAUDE_CONFIG_DIR/junkd/orch/_agents/aa-old/old.json"
 printf '{"type":"junkd:implementer","tokens":148213}\n' >"$CLAUDE_CONFIG_DIR/junkd/orch/_agents/sid-new/impl-T10.json"
@@ -90,7 +89,6 @@ expect "$S" 'S.tasks[2].round === 2' "the last round"
 expect "$S" 'JSON.stringify(S.tasks[2].ac) === "[1,4]"' "ac [pass, total] of round 2"
 expect "$S" 'JSON.stringify(S.tasks[2].acx) === "[1,2]"' "acx [pass, total]"
 expect "$S" 'S.tasks[2].note === "round 2: FAIL: AC2, AC3, ACX2 · PM-REVIEW: AC4"' "the note"
-expect "$S" 'JSON.stringify(S.lessons) === JSON.stringify([{task: "T2", text: "Second lesson is about e.g wrapping?"}, {task: "T1", text: "First lesson."}])' "lessons newest first, first sentence"
 expect "$S" 'S.agents.length === 3 && S.agents.every(a => a.model === "—" && a.status === "done" && a.lastCallSec === null)' "agents of the newest session (not the first by name), the bad record skipped"
 expect "$S" 'JSON.stringify(S.agents.find(a => a.name === "impl-T10")) === JSON.stringify({name: "impl-T10", role: "implementer", model: "—", status: "done", lastCallSec: null, ctx: "148k"})' "an agent: role after the colon, ctx 148k"
 expect "$S" 'S.agents.find(a => a.name === "ver").ctx === "512" && S.agents.find(a => a.name === "ver").role === "verify-coordinator" && S.agents.find(a => a.name === "tp").ctx === "—"' "ctx under 1000 and unknown"
@@ -121,27 +119,21 @@ printf -- '---\nid: T30\nstatus: in_progress\n---\n\n## Verification round 3\n\n
 expect "$tmp/outnv/status.js" 'JSON.stringify(S.tasks.find(t => t.id === "T30")) === JSON.stringify({id: "T30", title: "", column: "in_progress", round: 3})' "a table with no Verdict column: the round alone"
 rm -f "$T/T30.md"
 
-# the spec's `## Verification — <branch>` heading (verify-coordinator.md) is round 1, its table read all the same; a
-# lesson block `## L<n> (date) … · from: T<n>` is named by its from:
+# the spec's `## Verification — <branch>` heading (verify-coordinator.md) is round 1, its table read all the same
 printf -- '---\nid: T5\nstatus: verify\n---\n\n## Verification — task/T5-thing\n\n| Criterion | Evidence | Verdict |\n|---|---|---|\n| AC1 a | ok | PASS |\n| AC2 b | no | FAIL |\n| ACX1 c | ? | PM-REVIEW |\n' >"$T/T5.md"
 # the same branch heading appended again by a re-verify: the second is round 2, with its own verdicts
 printf -- '---\nid: T6\nstatus: verify\n---\n\n## Verification — task/T6\n\n| Criterion | Verdict |\n|---|---|\n| AC1 a | FAIL |\n\n## Verification — task/T6\n\n| Criterion | Verdict |\n|---|---|\n| AC1 a | PASS |\n' >"$T/T6.md"
-cp "$T/_lessons.md" "$tmp/_lessons.keep"
-printf '# Lessons\n\n## L1 (2026-10-18) scope: local · stack: shell · to: smoke · from: T2\nA ported script. More.\n\n## L2 (2026-10-19) scope: local\nNo from here.\n' >"$T/_lessons.md"
 (cd "$proj" && "$bin" --out "$tmp/outv" >/dev/null 2>&1)
 expect "$tmp/outv/status.js" 'JSON.stringify(S.tasks.find(t => t.id === "T5")) === JSON.stringify({id: "T5", title: "", column: "verify", round: 1, ac: [1, 2], acx: [0, 1], note: "round 1: FAIL: AC2 · PM-REVIEW: ACX1"})' "## Verification — <branch>: round 1 with its table"
-expect "$tmp/outv/status.js" 'JSON.stringify(S.lessons) === JSON.stringify([{task: "L2", text: "No from here."}, {task: "T2", text: "A ported script."}])' "lesson blocks: the task is the from:, else the heading"
 node --input-type=module -e '
   const fs = await import("node:fs")
   const D = await import(process.argv[1])
   const S = JSON.parse(/^window\.ORCH = ([\s\S]*);\n$/.exec(fs.readFileSync(process.argv[3], "utf8"))[1])
   const t5 = D.parseVerification(fs.readFileSync(`${process.argv[2]}/T5.md`, "utf8"))
-  const same = JSON.stringify(D.parseLessons(fs.readFileSync(`${process.argv[2]}/_lessons.md`, "utf8"))) === JSON.stringify(S.lessons)
   const t = S.tasks.find(t => t.id === "T5")
-  process.exit(same && JSON.stringify({ round: t.round, ac: t.ac, acx: t.acx, note: t.note }) === JSON.stringify(t5) ? 0 : 1)
+  process.exit(JSON.stringify({ round: t.round, ac: t.ac, acx: t.acx, note: t.note }) === JSON.stringify(t5) ? 0 : 1)
 ' "$junkd/hooks/dashboard.ts" "$T" "$tmp/outv/status.js"
-ok $? "dashboard.ts reads the spec heading and the lesson blocks like orch-status"
-cp "$tmp/_lessons.keep" "$T/_lessons.md"
+ok $? "dashboard.ts reads the spec heading like orch-status"
 expect "$tmp/outv/status.js" 'JSON.stringify(S.tasks.find(t => t.id === "T6")) === JSON.stringify({id: "T6", title: "", column: "verify", round: 2, ac: [1, 1]})' "two branch-style headings: the second is round 2"
 node --input-type=module -e '
   const fs = await import("node:fs")
@@ -188,7 +180,7 @@ mkdir -p "$proj/.orch/other"
 printf -- '---\nid: Z1\nstatus: blocked\n---\n' >"$proj/.orch/other/Z1.md"
 printf -- '---\r\ntasks_dir: ".orch/other/"  # moved\r\n---\r\n' >"$proj/.orch/config.md"
 (cd "$proj" && "$bin" --out "$tmp/outc" >/dev/null 2>&1)
-expect "$tmp/outc/status.js" 'S.tasks.length === 1 && S.tasks[0].id === "Z1" && S.tasks[0].column === "blocked" && S.lessons.length === 0' "tasks_dir from a CRLF config"
+expect "$tmp/outc/status.js" 'S.tasks.length === 1 && S.tasks[0].id === "Z1" && S.tasks[0].column === "blocked"' "tasks_dir from a CRLF config"
 printf -- '---\ntasks_dir: ../elsewhere\n---\n' >"$proj/.orch/config.md"
 (cd "$proj" && "$bin" --out "$tmp/outc" >/dev/null 2>&1)
 expect "$tmp/outc/status.js" 'S.tasks.length >= 3 && S.tasks[0].id === "T1"' "a tasks_dir outside .orch/ is .orch/tasks"
@@ -214,8 +206,8 @@ expect "$tmp/outs/status.js" '!S.tasks.some(t => t.id === "T23")' "an unclosed f
 rm -f "$T/T20.md" "$T/T21.md" "$T/T22.md" "$T/T23.md"
 
 # ---------------------------------------------------------------- the two writers agree (hooks/dashboard.ts under node)
-# The same store through dashboard.ts's parsers (parseTask, columnOf, parseVerification, parseLessons) gives the tasks
-# and lessons orch-status wrote, field for field.
+# The same store through dashboard.ts's parsers (parseTask, columnOf, parseVerification) gives the tasks orch-status
+# wrote, field for field.
 (cd "$proj" && "$bin" --out "$tmp/outp" >/dev/null 2>&1)
 node --input-type=module -e '
   const fs = await import("node:fs")
@@ -231,13 +223,11 @@ node --input-type=module -e '
     if (!h) continue
     tasks.push({ id: h.id, title: h.title, column: D.columnOf(h.status, []), ...(h.deps.length ? { deps: h.deps } : {}), ...(D.parseVerification(text) ?? {}) })
   }
-  const lessons = D.parseLessons(fs.readFileSync(`${dir}/_lessons.md`, "utf8"))
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
   if (!same(tasks, S.tasks)) { console.error("tasks differ:\n" + JSON.stringify(tasks) + "\n" + JSON.stringify(S.tasks)); process.exit(1) }
-  if (!same(lessons, S.lessons)) { console.error("lessons differ"); process.exit(1) }
   if (tasks.length < 3) process.exit(1)
 ' "$junkd/hooks/dashboard.ts" "$T" "$tmp/outp/status.js"
-ok $? "orch-status and dashboard.ts read the store alike (tasks, columns, deps, rounds, ac/acx, notes, lessons)"
+ok $? "orch-status and dashboard.ts read the store alike (tasks, columns, deps, rounds, ac/acx, notes)"
 
 # ---------------------------------------------------------------- the atomic write through mv
 spy="$tmp/spy"
@@ -294,7 +284,7 @@ ok "$rc" "a failing jq: exit 0"
 [[ "$err" == *"could not be built"* ]]; ok $? "a failing jq: stderr says the status could not be built ($err)"
 expect "$tmp/outbj/status.js" 'S.mock === false && S.tasks.length === 0 && S.agents.length === 0' "a failing jq: the empty status parses"
 
-# ---------------------------------------------------------------- a task worktree with no .orch/ (lesson T2)
+# ---------------------------------------------------------------- a task worktree with no .orch/
 git -C "$proj" worktree add -q "$proj/.worktrees/T10" -b task/T10 2>/dev/null
 [ ! -e "$proj/.worktrees/T10/.orch" ]; ok $? "the task worktree has no .orch/"
 (cd "$proj/.worktrees/T10" && "$bin" --out "$tmp/outwt" >/dev/null 2>&1)
@@ -353,7 +343,7 @@ for f in "$lim"/*; do [ "${f##*/}" = jq ] || ln -sf "$(readlink "$f")" "$nojq/${
 err=$(cd "$proj" && PATH="$nojq" "$bin" --out "$tmp/outnj" 2>&1 >/dev/null); rc=$?
 ok "$rc" "no jq: exit 0"
 [[ "$err" == *jq* ]]; ok $? "no jq: stderr names jq ($err)"
-expect "$tmp/outnj/status.js" 'S.mock === false && S.generatedAt === 1800000000000 && S.tasks.length === 0 && S.agents.length === 0 && S.lessons.length === 0 && JSON.stringify(S.usage) === "{}"' "no jq: the fallback file parses"
+expect "$tmp/outnj/status.js" 'S.mock === false && S.generatedAt === 1800000000000 && S.tasks.length === 0 && S.agents.length === 0 && JSON.stringify(S.usage) === "{}"' "no jq: the fallback file parses"
 [ -z "$(ls -A "$tmp/outnj" | grep -F .tmp)" ]; ok $? "no jq: no .tmp left"
 
 # ---------------------------------------------------------------- bad arguments

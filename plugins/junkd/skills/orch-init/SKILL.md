@@ -28,4 +28,4 @@ Some plugin installers strip symlinks, so if `./bin` or `./commands` is missing 
 
 Scan the repository before asking questions. Detect the default branch, package manager, applications, dev commands, ports, health routes, and test commands. Ask only for the real backend choice and confirmation of detected commands and ports.
 
-Never overwrite an existing `.orch/config.md` without showing the diff and receiving confirmation. If only legacy `.claude/orch.config.md` exists, offer to migrate it while preserving its content. Create the configured task directory and `_lessons.md`, then confirm `./bin/orch-state list` succeeds.
+Never overwrite an existing `.orch/config.md` without showing the diff and receiving confirmation. If only legacy `.claude/orch.config.md` exists, offer to migrate it while preserving its content. Create the configured task directory, then confirm `./bin/orch-state list` succeeds.

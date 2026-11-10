@@ -14,7 +14,7 @@ const CFG = '/fake/claude'
 const FABLE = 'claude-fable-5-1'
 const OPUS = 'claude-opus-5-5'
 const BIN = '/p/bin/'
-const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, lessons: true, dashboard_refresh: 30, dashboard_window_h: 24 }
+const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 }
 const main = (tool: string, args: Record<string, unknown> = {}) => ({ tool, ...args })
 const REPO = '/repo'
 const st = (s: Partial<OrchState> = {}): OrchState => ({ model: FABLE, binDir: BIN, configDir: CFG, repo: REPO, ...s })
@@ -130,7 +130,7 @@ test('Edit: a .md in .orch/taskdraft/<id>/ and the project memory, as Write; eve
     expect(edit(p), p).toMatch(/may not run Edit\. .* Edit passes only on a \.md in the repo's \.orch\/taskdraft\/<id>\/ and on a file in the project memory/)
   }
   // places Write takes but Edit does not: the rest of the task store, the scratchpad, the orch state, the handoffs, any new .md
-  for (const p of [`${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/_lessons.md`, `${REPO}/.orch/taskdraft/notes.md`, `${SCRATCH}/plan.md`,
+  for (const p of [`${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/_notes.md`, `${REPO}/.orch/taskdraft/notes.md`, `${SCRATCH}/plan.md`,
     `${CFG}/orch/-repo/tasks/T-1.md`, `${CFG}/handoffs/a.md`, '/repo/docs/design.md', '/repo/src/a.ts'])
     expect(edit(p), p).toMatch(/may not run Edit/)
   // the path spelling and its placement, as for Write
@@ -214,10 +214,10 @@ test('Read and Write: a plain absolute ASCII spelling only; the placed path must
 test("Read and Write: the repo's .orch/ task store (Read all of it; Write a .md, never the existing config); nothing beside it or above it", () => {
   const guard = (tool: string, file_path: string, extra: Partial<OrchState> = {}) =>
     orchGuard(main(tool, { file_path, content: 'x' }), st({ exists: true, ...extra }), on_)
-  for (const p of [`${REPO}/.orch/config.md`, `${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/tasks/_lessons.md`, `${REPO}/.orch/tasks/T-1.evidence/ac1.png`,
+  for (const p of [`${REPO}/.orch/config.md`, `${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/tasks/_notes.md`, `${REPO}/.orch/tasks/T-1.evidence/ac1.png`,
     `${REPO}//.orch/./tasks/T-1.md`, `${REPO}/.orch/tasks/T-1.ts`]) expect(guard('Read', p), `Read ${p}`).toBeUndefined()
-  // Write in the store: an existing .md (task file, lessons, a policy note), any case of the extension
-  for (const p of [`${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/tasks/_lessons.md`, `${REPO}//.orch/./tasks/T-1.md`, `${REPO}/.orch/TEST-POLICY.md`,
+  // Write in the store: an existing .md (task file, notes, a policy note), any case of the extension
+  for (const p of [`${REPO}/.orch/tasks/T-1.md`, `${REPO}/.orch/tasks/_notes.md`, `${REPO}//.orch/./tasks/T-1.md`, `${REPO}/.orch/TEST-POLICY.md`,
     `${REPO}/.orch/tasks/T-1.MD`, `${REPO}/.orch/tasks/config.md`, `${REPO}/.orch/config.md.md`, `${REPO}/.orch/x/config.md`])
     expect(guard('Write', p), `Write ${p}`).toBeUndefined()
   // ...but not an existing config (its tasks_dir steers the bin scripts) in any spelling, nor a file that is no .md
@@ -452,11 +452,11 @@ test('T35: a recipient is trimmed and its id read in lower case, so a known suba
 
 test('settings: defaults for missing or wrong types, the number rows clamped to their bounds at load', () => {
   applyOrchSettings({})
-  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, lessons: true, dashboard_refresh: 30, dashboard_window_h: 24 })
-  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 121, stall_minutes: 500, lessons: false })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 120, stall_minutes: 120, lessons: false, dashboard_refresh: 30, dashboard_window_h: 24 })
-  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0, claude_md: 'true', watchdog: 'on', idle_stop: 1, idle_stop_minutes: 0, stall_minutes: 'x', lessons: 'on' })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1, claude_md: false, watchdog: false, idle_stop: false, idle_stop_minutes: 1, stall_minutes: 15, lessons: false, dashboard_refresh: 30, dashboard_window_h: 24 })
+  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 })
+  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 121, stall_minutes: 500 })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 120, stall_minutes: 120, dashboard_refresh: 30, dashboard_window_h: 24 })
+  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0, claude_md: 'true', watchdog: 'on', idle_stop: 1, idle_stop_minutes: 0, stall_minutes: 'x' })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1, claude_md: false, watchdog: false, idle_stop: false, idle_stop_minutes: 1, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 })
   // claude_md at load, one assertion per value: only a JSON true is on (the default is off)
   for (const [v, want] of [[true, true], [undefined, false], [false, false], ['true', false], ['on', false], [1, false], [null, false]] as const) {
     applyOrchSettings(v === undefined ? {} : { claude_md: v })
@@ -490,7 +490,7 @@ test('coerce: one check for every write path; the exact bounds of the number row
 })
 
 test("SCHEMA is settings.ts's orch rows, by field and in manifest order: enabled first, the guard the one choice row", () => {
-  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds', 'claude_md', 'dashboard_refresh', 'dashboard_window_h', 'watchdog', 'idle_stop', 'idle_stop_minutes', 'stall_minutes', 'lessons'])
+  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds', 'claude_md', 'dashboard_refresh', 'dashboard_window_h', 'watchdog', 'idle_stop', 'idle_stop_minutes', 'stall_minutes'])
   expect(SCHEMA.map(f => ({ ...f, key: `orch_${f.key}` }))).toEqual(rowsOf('orch').map(({ group: _g, field: _f, ...f }) => f))
   expect(SCHEMA.filter(f => f.options).map(f => [f.key, f.options])).toEqual([['guard', ['fable', 'always', 'off']]])
 })
@@ -671,13 +671,12 @@ function world(on: On) {
 
 const start = ($: Engine) => $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
 // What session start itself ran, asserted and then cleared, so a test that counts the guard's calls starts at 0: the
-// flag files removed (the lessons switch's `orch-lessons-off` among them), the statusline set up, and the lessons loop
-// asking for the repo of the session's cwd.
+// flag files removed (`orch-rules-off` among them) and the statusline set up.
 function startedRuns(rec: ReturnType<typeof world>) {
   const rm = rec.runs.filter(r => r[0] === 'rm').map(r => r[3])
-  expect(rm).toContain('/fake/claude/junkd/orch-lessons-off')
-  expect(rec.runs.filter(r => r[0] === 'git')).toEqual([['git', '-C', '/tmp', 'rev-parse', '--show-toplevel']])
-  expect(rec.runs.length).toBe(rm.length + 2) // the removals, the statusline setup, that one repo lookup: nothing else
+  expect(rm).toContain('/fake/claude/junkd/orch-rules-off')
+  expect(rec.runs.filter(r => r[0] === 'git')).toEqual([])
+  expect(rec.runs.length).toBe(rm.length + 1) // the removals and the statusline setup: nothing else
   rec.runs.splice(0)
 }
 const run = ($: Engine, command: string, args: string) =>
@@ -1359,7 +1358,7 @@ test("the script's answer: an updated line is a toast, up to date or skipped is 
 
 // ------------------------------------------------------------------ $.junkd's orch rows and the pane
 
-const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md', 'orch_dashboard_refresh', 'orch_dashboard_window_h', 'orch_watchdog', 'orch_idle_stop', 'orch_idle_stop_minutes', 'orch_stall_minutes', 'orch_lessons']
+const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md', 'orch_dashboard_refresh', 'orch_dashboard_window_h', 'orch_watchdog', 'orch_idle_stop', 'orch_idle_stop_minutes', 'orch_stall_minutes']
 
 test("$.junkd: the orch calls answer; schema's orch rows mirror the manifest; get answers the defaults; guard is the choice row", WITH_FRAME, async ($, on) => {
   world(on)
@@ -1374,7 +1373,7 @@ test("$.junkd: the orch calls answer; schema's orch rows mirror the manifest; ge
     expect(await frame($, 'get', { key: f.key }), `get(${f.key}) is the manifest default`).toBe(f.default)
   }
   expect(schema.find(f => f.key === 'orch_guard')?.options).toEqual(['fable', 'always', 'off'])
-  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_claude_md', 'orch_lessons'])
+  expect(schema.filter(f => f.main).map(f => f.key)).toEqual(['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_claude_md'])
   await expect(frame($, 'get', { key: 'nope' })).rejects.toThrow(/no setting nope/)
   await expect(frame($, 'get', { key: 'orch_nope' })).rejects.toThrow(/no setting orch_nope/)
   await expect(frame($, 'get', { key: 'guard' })).rejects.toThrow(/no setting guard/) // the field alone is no key

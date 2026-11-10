@@ -18,7 +18,6 @@
      agents[]     {name, role, model, status: running | waiting | done | dead | queued, lastCallSec, ctx, task, round,
                    branch, worktree, lastStep, deadNote, events[]}
      events[]     {t, text, kind: info | pass | fail}, newest first; t is "HH:MM" or epoch ms (an agent's events too)
-     lessons[]    {task, text}, newest first
      usage        {fiveHour, week}: percent of the rate-limit windows
      watchdog     {on, minutes}
 */
@@ -145,11 +144,6 @@ window.ORCH={
     { t: "21:00", text: "impl-T17b resumed", kind: "info" },
     { t: "20:40", text: "T16 first commit", kind: "info" },
     { t: "20:12", text: "impl-T17 killed: context 400k", kind: "fail" }
-  ],
-  lessons: [
-    { task: "T16", text: "physical temp paths / settings ▸ press test" },
-    { task: "T15", text: "live-run each host" },
-    { task: "T13", text: "manifest min/max" }
   ]
 };
 window.ORCH.tasks=mockPast().concat(window.ORCH.tasks);

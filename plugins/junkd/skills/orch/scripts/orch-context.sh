@@ -9,10 +9,8 @@
 # module does at a session start): true goes on, any other value skips. Only for a setting that is
 # not there (or when jq is missing, or the file does not parse) its flag file decides, which the
 # hooks module writes while the setting is off: .../junkd/orch-off (orch_enabled) and
-# .../junkd/orch-rules-off (orch_inject_rules). After the sheet come the lessons of the repo
-# (`orch-state lesson inject`: the three stores' lessons whose stack meets the repo's), unless
-# orch_lessons is off (its row, else the flag file .../junkd/orch-lessons-off). Always exits 0: a
-# hook failure would block the session for a sheet of advice.
+# .../junkd/orch-rules-off (orch_inject_rules). Always exits 0: a hook failure would block the
+# session for a sheet of advice.
 set -u
 
 input=""
@@ -53,14 +51,14 @@ jd_warn() {
 # <<< jd-rule
 
 cfg="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
-# "<orch_enabled> <orch_inject_rules> <orch_lessons>", each true, false or unset.
+# "<orch_enabled> <orch_inject_rules>", each true, false or unset.
 jd_warn "$cfg/settings.json"
 settings=$(jq -rs --arg mk "$jd_mk" "$jd_rule"'(if length == 1 then .[0] else error end).pluginConfigs
     | jd_opts($mk)
     | def sw($k): if has($k) then .[$k] == true else "unset" end;
-      "\(sw("orch_enabled")) \(sw("orch_inject_rules")) \(sw("orch_lessons"))"' \
-    "$cfg/settings.json" 2>/dev/null) || settings="unset unset unset"
-read -r s_enabled s_rules s_lessons _ <<<"$settings"
+      "\(sw("orch_enabled")) \(sw("orch_inject_rules"))"' \
+    "$cfg/settings.json" 2>/dev/null) || settings="unset unset"
+read -r s_enabled s_rules _ <<<"$settings"
 # on <setting> <flag>: whether the switch is on; a file only is a flag (a directory of that name is none)
 on() {
     case "$1" in
@@ -83,8 +81,4 @@ while [ -L "$src" ]; do
 done
 sheet="$(cd -P "$(dirname "$src")" && cd .. && pwd)/ORCHESTRATOR.md"
 [ -f "$sheet" ] && cat "$sheet"
-if on "${s_lessons:-unset}" "$cfg/junkd/orch-lessons-off"; then
-    lessons=$("$(dirname "$sheet")/bin/orch-state" lesson inject 2>/dev/null) || true
-    [ -z "$lessons" ] || printf '\n%s\n' "$lessons"
-fi
 exit 0

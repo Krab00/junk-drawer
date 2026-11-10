@@ -25,7 +25,6 @@ not a fix. You are always spawned fresh: never resumed for a second round.
   test commands — you verify only the layers the config declares; never invent a check for a layer
   it doesn't (no api → skip the malformed-body check; no web → no `ui-reviewer`; no test runner →
   build/behaviour checks stand in; no `security` → no security reviewer).
-- the current **lessons** (fold them into your checks and the prompts you spawn).
 - on a re-verify round: the list of **only the failing criteria** to recheck. The `security`
   standing check is not narrowed by it: it runs in full on every round, because a fix round changes
   the diff.

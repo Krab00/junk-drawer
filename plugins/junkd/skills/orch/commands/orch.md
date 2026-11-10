@@ -43,7 +43,6 @@ without the `orch_` prefix. Use them for the whole run:
 - `implementer_ctx_k=<n>` — the fix-round context cap (§5): a fix round goes to the same
   implementer only while its context is under `<n>`k tokens; above it, a fresh implementer.
 - `inject_rules` — read by the SessionStart hook; nothing to do here.
-- `lessons=true|false` — the lessons loop (§7). `false`: §7 is off whole: no `lesson add`, no blocking, no dialog.
 
 **Session env:** the orchestrator session runs with `ENABLE_STOP_REVIEW=0` (recommended, set by the
 user where the session starts, never from a hook). It turns off only the Stop-time diff review of the
@@ -69,8 +68,6 @@ or reinvent their logic):
   `.claude/worktrees/agent-*` (one per `isolation: worktree` spawn) — only clean ones with every commit on a
   remote, never a locked one; `derived` drops the Xcode DerivedData of gone worktrees.
 - `${CLAUDE_PLUGIN_ROOT}/bin/orch-sync pull|push [id...]` — the task-store ⇄ backend bridge.
-- `${CLAUDE_PLUGIN_ROOT}/bin/orch-state lesson add|list|promote|up|drop|prune|pending|inject` — the three lesson
-  stores (§7). It is the only writer of them: never edit a lessons file by hand.
 
 ## Canonical task file (single source of truth — no separate manifest)
 
@@ -119,8 +116,6 @@ files + git; the loop keys off the final `BACKLOG:` line and stops on `DRAINED`,
 
 ### 1. Sync + select
 
-0. **Lessons first** (only while `lessons=true`): `orch-state lesson pending`. Exit 1 (lessons pending) → resolve
-   every pending lesson with the user (§7, the dialog) before you select a task.
 1. `orch-sync pull` — refresh the store from the backend (no-op for `adhoc`/`manifest`; for
    `linear-mcp` do the pull yourself via the Linear MCP; `github-issues` uses `gh`).
 2. `orch-state reset-stale` — any `in_progress` task (leftover from a killed run) returns to
@@ -201,9 +196,8 @@ A critical task gets one Break row per break kind in the verify leg instead of o
 Per task:
 1. Write a SHORT implementation plan (files to touch, contracts, any prototype/spec to follow).
    Keep it in your context — hand it straight to the implementer, don't push it to the backend.
-2. **Include the current lessons** (the set `orch-state lesson inject` prints, §7) in the plan you hand over,
-   and say when the task is `critical: true`: the verify leg then tries every break kind (concurrency,
-   ordering, replay, interrupted flow, resource exhaustion, privilege edge) against the change.
+2. Say in the plan you hand over when the task is `critical: true`: the verify leg then tries every break
+   kind (concurrency, ordering, replay, interrupted flow, resource exhaustion, privilege edge) against the change.
 3. Choose the implementer by whether the work splits — your judgment:
    - **`lead-implementer`** when the plan decomposes into **≥2 non-trivial file-disjoint slices**
      (parallelism beats the contract-freeze + merge overhead), or when `--deep` is passed. It
@@ -211,7 +205,7 @@ Per task:
      them back, and **falls back to flat** if the cut isn't truly disjoint. See **Deep mode**.
    - **`implementer`** (default) otherwise — one agent builds the whole task.
    Spawn it (worktree isolation) with: task id, branch `<branch_prefix><id>-<slug>`, base branch
-   (`<base>` in batch; **the previous task's branch** in chain), the plan, the lessons, and the
+   (`<base>` in batch; **the previous task's branch** in chain), the plan, and the
    **config facts it needs** (dev-server run commands, ports from `orch-worktree`, test commands
    from `capabilities.tests`) — the agent assumes no stack; you feed it from the config. In
    `batch`, spawn all task implementers in parallel.
@@ -220,7 +214,7 @@ Per task:
 
 Spawn one `verify-coordinator` per task (parallel in `batch`). Hand it: task id, the
 implementer's `branch`, the verify slot (`orch-worktree slot <id>`), the task file path, the
-current lessons, the `ui_review` setting (§0), the **config capabilities** (run commands, ports, health paths, test commands),
+`ui_review` setting (§0), the **config capabilities** (run commands, ports, health paths, test commands),
 and — on a re-verify round (§5) — **only the failing criteria** (the `security` check still runs in
 full). It owns the verify env end to
 end: builds the worktree, boots the declared servers, derives the test matrix from the diff itself, spawns
@@ -261,7 +255,7 @@ tell it which apply; never ask for a check on an undeclared layer):
   `security` absent from the config → no reviewer and no security row at all. A `severity` that is
   missing or not one of `low`, `medium`, `high` is read as `high`, with the note
   `security: severity <value> read as high` under the table.
-- Plus every entry in the config's `standing_checks_extra` (project lessons already promoted).
+- Plus every entry in the config's `standing_checks_extra` (the project's own extra checks).
 
 ### 5. Resolve (round strategy)
 
@@ -285,7 +279,6 @@ tell it which apply; never ask for a check on an undeclared layer):
 - **Task resolved (`done` or `blocked`)** → `orch-ops` runs `orch-deps reap --apply --branch <branch>`: the
   task's implementer (and slice) worktrees go once clean and pushed. Never earlier: a fix round resumes the
   same implementer in its worktree.
-- **Retro (§7)**: a lesson on a signal, none on a clean round-0 PASS.
 
 ### 6. Iterate
 
@@ -293,7 +286,7 @@ tell it which apply; never ask for a check on an undeclared layer):
 - `chain`: after a task resolves, select the next eligible task and branch it **from the branch
   just finished**; stop after N.
 - `all`: like `chain`, drain until no eligible `todo` remains.
-- **Direction check, `all` or `--single-pr` only, end of run:** when `.orch/config.md` declares `specs:`, run the direction check (`/junkd:direction`; `$direction` on Codex, `/skill:direction` on Kimi Code, `/direction` on OpenCode) after the last task resolves and before the PR step and the push, with `--head` the branch that holds the run's code (the last finished branch; in `batch --single-pr`, the integration branch once merged). `batch`, `chain` and single-task runs do not run it unless the user asks. Its decisions stay open for the human; §8 quotes its last line.
+- **Direction check, `all` or `--single-pr` only, end of run:** when `.orch/config.md` declares `specs:`, run the direction check (`/junkd:direction`; `$direction` on Codex, `/skill:direction` on Kimi Code, `/direction` on OpenCode) after the last task resolves and before the PR step and the push, with `--head` the branch that holds the run's code (the last finished branch; in `batch --single-pr`, the integration branch once merged). `batch`, `chain` and single-task runs do not run it unless the user asks. Its decisions stay open for the human; §7 quotes its last line.
 - **`--single-pr` only, end of run:** build the single PR (see **Single-PR mode**) before the push.
 - **End of run (all modes):** `orch-sync push` — reflect statuses + post the verification tables
   (no-op for `adhoc`/`manifest`; `github-issues` comments via `gh`; `linear-mcp` you push via MCP).
@@ -301,47 +294,6 @@ tell it which apply; never ask for a check on an undeclared layer):
   unlocked; the rest print as `keep`) and tears down or PRs the orch worktree per **Branch rule**.
 - **Context guard:** if context is getting long, finish the current task cleanly, stop early, and
   print the resume command: `/junkd:orch <mode> [remaining-N] --base <last-finished-branch>`.
-
-### 7. Retro + lessons (the learning step)
-
-Lessons are a queue that empties itself, not a diary. Three stores, one direction of promotion (local → repo →
-global):
-
-- **local** `<tasks_dir>/_lessons.md`: every lesson is born here. junkd never commits it and does not git-ignore it: the repo's own `.gitignore` decides whether it enters git.
-- **repo** `<project root>/lessons.md`: committed and pushed with the project. You commit it on the task branch of the
-  task that produced the lesson, never on the base branch.
-- **global** `${CLAUDE_CONFIG_DIR:-~/.claude}/junkd/lessons.md`: one per machine, read by every repo.
-
-Each lesson is one block, `## L<n> (<date>) scope: … · stack: … · to: … · from: T<id>` and 2–3 sentences: what
-failed, why, and what check would have caught it. `to` is its promotion target: `test`, `smoke`, `check`, `role`,
-`repo`, `global` or `drop`. The SessionStart hook injects the lessons whose stack meets the repo's; you hand that set to
-the implementer (§3) and the verify-coordinator (§4).
-
-**The signal rule.** A lesson is written only on a signal: a fix round, a surviving mutant, a PM-REVIEW that found a
-bug, a dead or stalled agent (the watchdog's line), a verify FAIL. A clean round-0 PASS writes nothing.
-
-**At every task resolve** with a signal: `orch-state lesson add --to <target> --from T<id> "<text>"`. Then promote what
-needs no consent at once: `to: test` or `to: smoke` → `orch-state lesson promote <id>` prints the fix-round line; send it
-to the implementer of the same task as a fix round, and once the test is on the branch, `orch-state lesson drop <id>`
-closes the lesson. Everything else stays pending.
-
-**Blocking.** Never print the `BACKLOG:` line (§8) while `orch-state lesson pending` exits 1. Resolve each pending
-lesson with the user first: promote it (`orch-state lesson promote <id>`), drop it (`orch-state lesson drop <id>`) or
-move it a store up (`orch-state lesson up <id>`). On Claude Code the lessons tab of the junkd pane is that dialog (it
-opens by itself, and a `lessons:` context line says how many are pending); elsewhere ask with `AskUserQuestion` or
-plain questions, one lesson at a time. A new `/junkd:orch` with lessons pending starts with the same dialog (§1, step
-0). There is no "later".
-
-**Consent.** `to: check` writes a row of `standing_checks_extra` in `.orch/config.md`: `orch-state lesson promote <id>`
-without `--yes` prints the proposed line and exits 3; ask the user, and only on a yes run it again with `--yes`.
-`to: role` writes a task into junk-drawer's backlog when this repo is junk-drawer (the role files are edited only
-there); elsewhere it prints the text to paste into one. When the **same pattern recurs across ≥2 tasks**, propose `to:
-check` for it — **ask the user; never edit the config silently.**
-Shortcut: when a lesson names a rule already written in a `CLAUDE.md`/`AGENTS.md`, do not wait for the recurrence: propose the promotion at once and say so ("rule exists in CLAUDE.md §X, no check").
-
-`orch-state lesson prune [--months N]` lists lessons older than N months (default 6) whose stack is not this repo's,
-for dropping in the same dialog (`--yes` drops them). With `lessons=false` (§0) this whole section is off: no lesson is
-written, nothing blocks, and the files are left as they are.
 
 ## Deep mode (`--deep` / large tasks)
 
@@ -369,10 +321,7 @@ its branch is **held**, not PR'd. End of run, before the push:
 Record the single PR URL in every merged task's verification section. `blocked` tasks are excluded
 and listed. Never merge, never mark ready.
 
-## 8. Final summary
-
-First, while `lessons=true`: `orch-state lesson pending` must exit 0. Exit 1 → back to §7's dialog; no summary and no
-`BACKLOG:` line until it exits 0.
+## 7. Final summary
 
 Print: tasks completed (id → branch → PR URL → status), escalations (id + reason), every
 PM-REVIEW criterion awaiting a human, and `deps` prerequisites that need a human call.

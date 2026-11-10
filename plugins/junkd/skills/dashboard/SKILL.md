@@ -1,6 +1,6 @@
 ---
 name: dashboard
-description: Open the orch dashboard, a local HTML page with the task board, the agents' timeline, recent events and the lessons, fed by a status.js written beside it; `close` stops the writes. Use when the user runs /junkd:dashboard or /junkd:orch dashboard, or asks to see the orch run in a browser.
+description: Open the orch dashboard, a local HTML page with the task board, the agents' timeline and recent events, fed by a status.js written beside it; `close` stops the writes. Use when the user runs /junkd:dashboard or /junkd:orch dashboard, or asks to see the orch run in a browser.
 argument-hint: "[open | close]"
 ---
 

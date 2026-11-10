@@ -59,4 +59,4 @@ Read `./commands/orch.md` from this skill directory completely before acting. Tr
 - Browser-based UI verification (`ui-reviewer`) needs a browser tool (e.g. Playwright MCP); if none is available, state the gap and gate on the remaining checks — never fabricate screenshots.
 - `/loop /junkd:orch all` has no native equivalent: resume manually with the spec's `BACKLOG:` resume line; on `BACKLOG: WAITING`, answer the named questions.md first.
 
-Preserve the specification's immutable-criteria ladder, capability-gated checks, maximum fix rounds, draft-only PR rule, cleanup, lessons, and final `BACKLOG:` state line. Never merge a PR or mark it ready.
+Preserve the specification's immutable-criteria ladder, capability-gated checks, maximum fix rounds, draft-only PR rule, cleanup, and final `BACKLOG:` state line. Never merge a PR or mark it ready.

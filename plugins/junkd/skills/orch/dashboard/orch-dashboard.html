@@ -165,7 +165,7 @@ h2 small{font:inherit;letter-spacing:0;text-transform:none;color:var(--faint);ma
 .pbar{height:4px;border-radius:2px;background:var(--line);overflow:hidden}
 .pbar i{display:block;height:100%;background:var(--accent)}
 .barlbl{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--faint)}
-.bottom{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px}
+.bottom{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 .panel{min-width:0;overflow-wrap:anywhere;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
 .tl{list-style:none;margin:0;padding:0 0 0 14px;border-left:1px solid var(--line);display:grid;gap:9px}
 .tl li{position:relative;display:flex;gap:12px;font-size:13.5px}
@@ -173,10 +173,7 @@ h2 small{font:inherit;letter-spacing:0;text-transform:none;color:var(--faint);ma
 .tl li.fail::before{background:var(--red)} .tl li.pass::before{background:var(--green)}
 .tl time{font-family:var(--mono);color:var(--faint);font-size:12.5px;flex:0 0 42px}
 .tl li.fail span{color:var(--red)} .tl li.pass span{color:var(--green)}
-.ls{list-style:none;margin:0;padding:0;display:grid;gap:9px}
-.ls li{display:flex;gap:10px;font-size:13.5px}
-.ls b{font-family:var(--mono);color:var(--accent);font-weight:600;flex:0 0 36px}
-@media (max-width:1000px){.board,.abrd{grid-template-columns:repeat(2,minmax(0,1fr))}.bottom{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:1000px){.board,.abrd{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:700px){.abrd{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:600px){.detail{border-left:0}}
 @media (max-width:560px){:root{--lw:150px}.board{grid-template-columns:minmax(0,1fr)}.spacer{display:none}main{padding:12px}header{padding:10px 12px}}
@@ -201,7 +198,6 @@ h2 small{font:inherit;letter-spacing:0;text-transform:none;color:var(--faint);ma
   </section>
   <div class="bottom">
     <section class="panel"><h2>Recent events</h2><ul class="tl" id="events"></ul></section>
-    <section class="panel"><h2>Lessons</h2><ul class="ls" id="lessons"></ul></section>
   </div>
 </main>
 <div class="ov" id="ov" role="dialog" aria-modal="true" aria-labelledby="otitle">
@@ -223,7 +219,7 @@ h2 small{font:inherit;letter-spacing:0;text-transform:none;color:var(--faint);ma
 /* No status.js beside the page (or one that did not run): an empty page and the "status.js unreachable" note.
    The demo data is status.sample.js, the data contract at its top. */
 var ORCH_UNREACHABLE=!window.ORCH;
-if(!window.ORCH){window.ORCH={mock:true,generatedAt:Date.now(),tasks:[],agents:[],events:[],lessons:[],usage:{},watchdog:{}};}
+if(!window.ORCH){window.ORCH={mock:true,generatedAt:Date.now(),tasks:[],agents:[],events:[],usage:{},watchdog:{}};}
 (function(){
 function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
 function ago(s){s=Math.round(s);if(s<60)return s+" s";var m=Math.round(s/60);return m<60?m+" m":Math.floor(m/60)+" h "+(m%60)+" m"}
@@ -252,7 +248,7 @@ function clear(n){n.textContent=""}
 /* every field of status.js is optional: what is missing is empty, so each section draws its empty state */
 function arr(x){return Array.isArray(x)?x:[]}
 function norm(O){
-  O.tasks=arr(O.tasks);O.agents=arr(O.agents);O.events=arr(O.events);O.lessons=arr(O.lessons);
+  O.tasks=arr(O.tasks);O.agents=arr(O.agents);O.events=arr(O.events);
   O.usage=O.usage||{};O.watchdog=O.watchdog||{};
   if(typeof O.generatedAt!=="number")O.generatedAt=Date.now();
   var w=O.window||{},we=w.end!=null?w.end:O.generatedAt;
@@ -285,7 +281,7 @@ var ab=el("button","abtn");ab.type="button";ab.setAttribute("aria-haspopup","dia
 h.appendChild(ab);
 
 var mm=document.getElementById("mm"),gw=document.getElementById("gw"),g=document.getElementById("gantt"),ag=document.getElementById("agents"),b=document.getElementById("board");
-var ev=document.getElementById("events"),lsn=document.getElementById("lessons");
+var ev=document.getElementById("events");
 
 /* legend (static) */
 var lg=document.getElementById("legend");
@@ -657,9 +653,6 @@ function render(){
   clear(ev);
   if(!O.events.length)ev.appendChild(el("li","none","no events yet"));
   O.events.forEach(function(e){var li=el("li",e.kind);li.appendChild(el("time",null,hmT(e.t)));li.appendChild(el("span",null,e.text));ev.appendChild(li)});
-  clear(lsn);
-  if(!O.lessons.length)lsn.appendChild(el("li","none","no lessons yet"));
-  O.lessons.forEach(function(l){var li=el("li");li.appendChild(el("b",null,l.task));li.appendChild(el("span",null,l.text));lsn.appendChild(li)});
   renderDetail();
 }
 

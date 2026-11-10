@@ -146,7 +146,7 @@ grep -qF 's.src="status.js?t="+Date.now();' "$page" && grep -qF 'setInterval(pol
     { echo "dashboard.sh: the page does not re-read status.js every 5 s"; exit 1; }
 node -e '
   global.window = {}; require(process.argv[1]); const O = window.ORCH
-  const need = ["tasks", "agents", "events", "lessons"].filter(k => !(Array.isArray(O[k]) && O[k].length))
+  const need = ["tasks", "agents", "events"].filter(k => !(Array.isArray(O[k]) && O[k].length))
   if (need.length || !O.window || !O.usage || !O.watchdog) { console.log("status.sample.js lacks " + need.join(" ")); process.exit(1) }
 ' "$dash/status.sample.js"
 echo "dashboard tests passed"
