@@ -51,6 +51,12 @@ The helpers `task-draft-state` and `task-probe` live in junkd's `bin/` folder (o
     continues it with a SendMessage of `A<n>: <answer>` lines, and it applies
     each answer where EGM's flow puts it (for example in the spec's
     Decisions).
+*   Escalated findings: when egm-resolve gives findings to the user
+    (`ESCALATE`), it returns each escalated finding as its own `QUESTION:` /
+    `CONTEXT:` / `OPTIONS:` block, one block per ESCALATE item. It never
+    pastes the findings into its reply as chat text. The options are the
+    egm-resolve choices, for example
+    `Confirm (no change) | Add the fact to the document`.
 *   Resume: when its prompt has `answers:` lines, it first reads
     `.orch/taskdraft/<id>/egm/` and the spec (when it exists) to find where
     EGM stopped, applies each answer at the gate its question came from, and
@@ -83,13 +89,34 @@ question it can already state in one reply, one batch per gate, not one
 question per reply. The main loop handles a reply that ends with
 `WAITING <N>` in one of two ways:
 
-*   Without `--unattended`: ask the whole batch at once: one
-    AskUserQuestion on Claude Code, one plain question on the other hosts,
-    whose text is the numbered list `<n>. <question> [<option 1> (proposed) | <option 2> | …]`
-    and the line `Reply ok to take every proposed answer, or <n>: <answer> for the ones you change.`
-    `ok` takes the first option of every question; `<n>: <answer>` pairs
-    replace single answers and the rest take their first option. A
-    `(free text)` question left without an answer is asked again, alone.
+*   Without `--unattended`: ask one question per block, in block order.
+    On Claude Code, use AskUserQuestion with at most 4 questions per call
+    (`multiSelect` false); when the batch has more, call it again with the
+    next 4 until every block is asked. Never put more than one block in one
+    `question` string. Make each question from its block:
+    *   `header`: a short label of at most 12 characters for the step or
+        gate that CONTEXT names, for example `Detail impl` or `AC gate`.
+    *   `question`: the QUESTION line, then the CONTEXT line as a second
+        sentence. No option text and no reply instruction.
+    *   `options`: the OPTIONS entries, in their order. The first entry (the
+        proposed answer) gets the label suffix ` (Recommended)`. A long
+        entry gets a short label. Each option gets a `description` of one
+        short sentence: what the answer changes when CONTEXT says it, else
+        what the option means. A block with one option gets a second option
+        `Change it`, with the description `Pick Other and type your answer.`
+        A block with more than 4 options shows the first 4 and adds
+        `(further options: <the rest>)` to the question text. The tool adds
+        `Other` itself.
+
+    A `(free text)` block has no options: ask it as one plain question after
+    the AskUserQuestion calls. On a host without AskUserQuestion, ask the
+    same questions in the same order, one plain question per block, with
+    its options listed and the first one marked `(Recommended)`.
+    The answer to a question is the OPTIONS entry of the picked label
+    (without ` (Recommended)`), or the user's `Other` text. A pick of
+    `Change it`, or a `(free text)` question left without an answer, is
+    asked again, alone. To take every proposed answer, the user picks every
+    `(Recommended)` option.
     Then write the answers, one line per question,
     `A<n>: <question> => <answer>`, to `<out>/answers.md` with the Write
     tool and run

@@ -1827,8 +1827,8 @@ Before a role returns a question, it checks the register (the spec's `## Decisio
 `task-draft-state decisions --match "<key words>"`). A covered question is answered from that decision and logged as
 `answered from <decision id>: <question>` in `.orch/taskdraft/<id>/egm/gate_log.md`; when the spec and the file
 disagree, the spec wins; when in doubt, the question is not covered. The open questions of one gate come as one
-batch: one numbered list, each with its proposed answer first, where `ok` takes every proposed answer and
-`<n>: <answer>` changes single ones. Every answer is appended to `.orch/decisions.md`: a session's answers with
+batch: one structured question per block (AskUserQuestion on Claude Code, at most 4 per call), its proposed answer
+first as the `(Recommended)` option; the user picks an option or types an own answer. Every answer is appended to `.orch/decisions.md`: a session's answers with
 `task-draft-state decisions add <id> --source chat --file .orch/taskdraft/<id>/answers.md`, the answers of `questions.md` by `task-draft-state questions <id> done`
 before it deletes the file. The roles only read the register. The inline-file confirmation is never answered from
 the register and never recorded in it. `task-draft-state` writes `questions.md` and `.orch/decisions.md` through one
