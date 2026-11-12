@@ -87,7 +87,7 @@ commands, settings keys and state files.
 
 After installing or updating: `/plugin marketplace update junk-drawer`, then `/reload-plugins`.
 
-`/junkd:task-draft <id>` (off until `egm_enabled` on Claude Code) turns a task into a reviewed EGM spec and an orch task file, and with `egm_models` on checks that the lowest class of the model registry understands it (with `egm_answers` = `auto` it asks nothing and lists the answers it took); it needs the `egm` plugin, a dependency of junkd (`claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm`), see [egm](plugins/junkd/README.md#egm).
+`/junkd:task-draft <id>` (off until `egm_enabled` on Claude Code) turns a task into a reviewed EGM spec and an orch task file, and with `egm_models` on checks that the lowest class of the model registry understands it (with `egm_answers` = `auto` it asks nothing and lists the answers it took); it needs the `egm` plugin, which is optional: junkd loads and works without it, and only task-draft stops with the install line (`claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm`), see [egm](plugins/junkd/README.md#egm).
 
 ### Develop from a checkout
 

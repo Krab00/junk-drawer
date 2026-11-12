@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# junkd's EGM dependency: the Claude manifest
-# pins egm@egm at exactly 0.1.1, the root marketplace allowlists the egm marketplace, and the SessionStart step
-# (skills/junkd/scripts/setup.sh) prints nothing about egm or task-draft, even with egm_enabled on and no egm
+# junkd's optional EGM: the Claude manifest declares no dependency (a missing egm marketplace must not stop junkd
+# from loading), the root marketplace has no cross-marketplace allowlist, /junkd:task-draft gates on
+# `task-draft-state egm` and that gate prints the one install line when egm is not installed, and the SessionStart
+# step (skills/junkd/scripts/setup.sh) prints nothing about egm or task-draft, even with egm_enabled on and no egm
 # installed. Runs over a temp HOME and CLAUDE_CONFIG_DIR; nothing is installed and no model is called.
 # Each case prints `case: <name>` and fails with a line on the first mismatch.
 # Run: bash tests/egm-dep.sh (tests/smoke.sh runs it too).
@@ -24,18 +25,29 @@ mkdir -p "$HOME" "$CLAUDE_CONFIG_DIR"
 fail() { echo "egm-dep tests: $*" >&2; exit 1; }
 case_() { echo "case: $*"; }
 
-# ---------------------------------------------------------------- manifest dependency
-case_ "manifest dependency"
+# ---------------------------------------------------------------- no hard dependency
+case_ "manifest has no egm dependency"
 [ -f "$manifest" ] || fail "no $manifest"
-dep=$(jq -c .dependencies "$manifest")
-[ "$dep" = '[{"name":"egm","marketplace":"egm","version":"0.1.1"}]' ] ||
-    fail "the Claude manifest's dependencies are not exactly egm@egm 0.1.1: $dep"
+jq -e '(.dependencies // []) | map(select((.name // .) == "egm" or (.marketplace // "") == "egm")) | length == 0' "$manifest" >/dev/null ||
+    fail "the Claude manifest still depends on egm: $(jq -c .dependencies "$manifest")"
 
-# ---------------------------------------------------------------- marketplace allowlist
-case_ "marketplace allowlist"
+case_ "marketplace has no egm allowlist"
 [ -f "$marketplace" ] || fail "no $marketplace"
-jq -e '.allowCrossMarketplaceDependenciesOn == ["egm"]' "$marketplace" >/dev/null ||
-    fail "marketplace.json does not allowlist exactly the egm marketplace: $(jq -c '.allowCrossMarketplaceDependenciesOn' "$marketplace")"
+jq -e 'has("allowCrossMarketplaceDependenciesOn") | not' "$marketplace" >/dev/null ||
+    fail "marketplace.json still has allowCrossMarketplaceDependenciesOn: $(jq -c '.allowCrossMarketplaceDependenciesOn' "$marketplace")"
+
+# ---------------------------------------------------------------- task-draft gate: the install hint
+case_ "task-draft gates on egm"
+skill="$plugin/skills/task-draft/SKILL.md"
+state="$plugin/skills/task-draft/bin/task-draft-state"
+grep -q 'Run `task-draft-state egm`. On exit 1, print its one line and stop.' "$skill" ||
+    fail "task-draft/SKILL.md does not stop on the task-draft-state egm gate"
+case_ "egm missing: one install line"
+rc=0
+out=$(JUNK_DRAWER_RUNTIME=claude "$state" egm 2>&1) || rc=$?
+[ "$rc" = 1 ] || fail "task-draft-state egm with no egm exited $rc: $out"
+[ "$out" = 'egm is not installed: claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm' ] ||
+    fail "task-draft-state egm with no egm printed: $out"
 
 # ---------------------------------------------------------------- setup.sh is silent about egm
 case_ "setup.sh is silent about egm"

@@ -1510,7 +1510,7 @@ commit (outside a run, the merge-base with `default_base`); the report names bot
 ## egm
 
 The egm group turns on EGM-backed task drafting: `/junkd:task-draft` drafts and reviews a task as an EGM spec with
-the [egm plugin](https://github.com/google/elephant-goldfish-model) (a dependency of junkd), checks, when
+the [egm plugin](https://github.com/google/elephant-goldfish-model) (optional; without it everything else in junkd works and `/junkd:task-draft` stops with the install line), checks, when
 `egm_models` is on, that the lowest class of the model registry understands it, and writes the orch task file. With
 `egm_enabled` on, `/junkd:orch` runs it before the criteria freeze of a task that is not drafted yet. The egm tab
 (Claude Code only) edits the model registry, `~/.claude/junkd/models.json`.
@@ -1615,18 +1615,19 @@ written as `JSON.stringify(list, null, 2)` plus a newline. Every key is written:
 The skill reads the ladder with `bin/task-draft-state models`: for A, B, C and F, the first entry in sorted order,
 one JSON line each. The registry is plain JSON, readable on every host; outside Claude Code you edit it by hand.
 
-### The EGM dependency
+### The optional egm plugin
 
-On Claude Code, junkd's `plugin.json` declares `"dependencies": [{"name":"egm","marketplace":"egm","version":"0.1.1"}]`
-(pinned at exactly `0.1.1`) and the root `marketplace.json` allows it with
-`"allowCrossMarketplaceDependenciesOn": ["egm"]`, so installing junkd installs egm once the `egm` marketplace is known:
+egm is optional: junkd's `plugin.json` declares no dependency on it, so junkd loads, and everything but the EGM
+features works, without the `egm` marketplace. To use `/junkd:task-draft`, install egm:
 
 ```bash
 claude plugin marketplace add google/elephant-goldfish-model && claude plugin install egm@egm
 ```
 
 The EGM skills appear in a new session or after `/reload-plugins`. Nothing is printed at session start on any host,
-and nothing in junkd installs egm: the install hint shows only in the `/junkd:task-draft` gate.
+and nothing in junkd installs egm: without it, `/junkd:task-draft` prints the install hint below and stops, and an
+orch run with `egm_enabled` on sets the task `blocked` (`needs-spec`) with that line. The egm tab and its settings
+edit only junkd's own files (`models.json`, the userConfig rows), so they work with or without egm.
 
 `bin/task-draft-state egm` finds the EGM root with one rule on every host:
 
