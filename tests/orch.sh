@@ -987,6 +987,15 @@ if command -v python3 >/dev/null; then
         [ "$rc" = 2 ] || fail "pr-wait $args: exit $rc, expected 2 ($out)"
     done
     [ ! -e "$tmp/prwait" ] || fail "pr-wait: bad input wrote state"
+    # a review bot is a Bot account: a person whose login names a bot is not one
+    python3 -I -B - "$bin/pr-wait" <<'PY' || fail "pr-wait: bot_of trusts a non-Bot login"
+import sys, importlib.machinery, importlib.util
+loader = importlib.machinery.SourceFileLoader("prwait", sys.argv[1])
+m = importlib.util.module_from_spec(importlib.util.spec_from_loader("prwait", loader)); loader.exec_module(m)
+assert m.bot_of({"author": {"login": "greptile-apps", "__typename": "Bot"}}) == "greptile"
+assert m.bot_of({"author": {"login": "greptile-fan", "__typename": "User"}}) is None
+assert m.bot_of({}) is None
+PY
 fi
 
 # ---------------------------------------------------------------- orch-worktree: config `worktree_links`
