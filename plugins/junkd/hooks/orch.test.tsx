@@ -14,7 +14,7 @@ const CFG = '/fake/claude'
 const FABLE = 'claude-fable-5-1'
 const OPUS = 'claude-opus-5-5'
 const BIN = '/p/bin/'
-const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 }
+const on_: OrchValues = { enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, monitor_pr: false, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 }
 const main = (tool: string, args: Record<string, unknown> = {}) => ({ tool, ...args })
 const REPO = '/repo'
 const st = (s: Partial<OrchState> = {}): OrchState => ({ model: FABLE, binDir: BIN, configDir: CFG, repo: REPO, ...s })
@@ -274,7 +274,7 @@ test('CronCreate and ScheduleWakeup: only /junkd:orch, /loop of an allowed promp
 
 test("Bash and Monitor: only the plugin's own bin/ scripts with plain arguments", () => {
   for (const c of [`${BIN}orch-state`, `"${BIN}orch-state"`, `'${BIN}orch-state' list`, `  ${BIN}orch-sync pull`, `${BIN}orch-state set T-1 done`,
-    `${BIN}orch-worktree add T-1 task/T-1-x main`]) {
+    `${BIN}orch-worktree add T-1 task/T-1-x main`, `${BIN}pr-wait https://github.com/o/r/pull/12 --until ready`]) {
     expect(orchGuard(main('Bash', { command: c }), st(), on_), c).toBeUndefined()
     expect(orchGuard(main('Monitor', { command: c, description: 'd', timeout_ms: 1 }), st(), on_), c).toBeUndefined()
   }
@@ -452,11 +452,11 @@ test('T35: a recipient is trimmed and its id read in lower case, so a known suba
 
 test('settings: defaults for missing or wrong types, the number rows clamped to their bounds at load', () => {
   applyOrchSettings({})
-  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 })
-  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, inject_rules: false, rounds: 99, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 121, stall_minutes: 500 })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, inject_rules: false, rounds: 10, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 120, stall_minutes: 120, dashboard_refresh: 30, dashboard_window_h: 24 })
-  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', inject_rules: 1, rounds: 0, claude_md: 'true', watchdog: 'on', idle_stop: 1, idle_stop_minutes: 0, stall_minutes: 'x' })
-  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, inject_rules: false, rounds: 1, claude_md: false, watchdog: false, idle_stop: false, idle_stop_minutes: 1, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 })
+  expect({ ...O }).toEqual({ enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, monitor_pr: false, inject_rules: true, rounds: 3, claude_md: false, watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 })
+  applyOrchSettings({ enabled: false, guard: 'always', implementer_ctx_k: 5000, allow_fable_agents: true, ui_review: false, monitor_pr: true, inject_rules: false, rounds: 99, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 121, stall_minutes: 500 })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'always', allow_fable_agents: true, implementer_ctx_k: 1000, ui_review: false, monitor_pr: true, inject_rules: false, rounds: 10, claude_md: true, watchdog: false, idle_stop: false, idle_stop_minutes: 120, stall_minutes: 120, dashboard_refresh: 30, dashboard_window_h: 24 })
+  applyOrchSettings({ enabled: 'yes', guard: 'sometimes', implementer_ctx_k: 10.4, allow_fable_agents: 'yes', ui_review: 'no', monitor_pr: 'on', inject_rules: 1, rounds: 0, claude_md: 'true', watchdog: 'on', idle_stop: 1, idle_stop_minutes: 0, stall_minutes: 'x' })
+  expect({ ...O }).toEqual({ enabled: false, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 50, ui_review: false, monitor_pr: false, inject_rules: false, rounds: 1, claude_md: false, watchdog: false, idle_stop: false, idle_stop_minutes: 1, stall_minutes: 15, dashboard_refresh: 30, dashboard_window_h: 24 })
   // claude_md at load, one assertion per value: only a JSON true is on (the default is off)
   for (const [v, want] of [[true, true], [undefined, false], [false, false], ['true', false], ['on', false], [1, false], [null, false]] as const) {
     applyOrchSettings(v === undefined ? {} : { claude_md: v })
@@ -482,6 +482,8 @@ test('coerce: one check for every write path; the exact bounds of the number row
   expect(coerce('rounds', '4').value).toBe(4)
   for (const v of ['abc', '', ' ', null, undefined, true]) expect(coerce('rounds', v).error, String(v)).toMatch(/not a valid rounds/)
   for (const v of [true, 'true', 'on']) expect(coerce('ui_review', v).value, String(v)).toBe(true)
+  for (const v of [true, 'true', 'on']) expect(coerce('monitor_pr', v).value, String(v)).toBe(true)
+  for (const v of [false, 'false', 'off', 'yes', 1, '']) expect(coerce('monitor_pr', v).value, String(v)).toBe(false)
   for (const v of [false, 'false', 'off', 'yes', 1, 'maybe']) expect(coerce('inject_rules', v).value, String(v)).toBe(false)
   for (const v of [true, 'true', 'on']) expect(coerce('enabled', v).value, String(v)).toBe(true)
   for (const v of [false, 'false', 'off', 'yes', 1, '']) expect(coerce('enabled', v).value, String(v)).toBe(false)
@@ -490,7 +492,7 @@ test('coerce: one check for every write path; the exact bounds of the number row
 })
 
 test("SCHEMA is settings.ts's orch rows, by field and in manifest order: enabled first, the guard the one choice row", () => {
-  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'inject_rules', 'rounds', 'claude_md', 'dashboard_refresh', 'dashboard_window_h', 'watchdog', 'idle_stop', 'idle_stop_minutes', 'stall_minutes'])
+  expect(SCHEMA.map(f => f.key)).toEqual(['enabled', 'guard', 'allow_fable_agents', 'implementer_ctx_k', 'ui_review', 'monitor_pr', 'inject_rules', 'rounds', 'claude_md', 'dashboard_refresh', 'dashboard_window_h', 'watchdog', 'idle_stop', 'idle_stop_minutes', 'stall_minutes'])
   expect(SCHEMA.map(f => ({ ...f, key: `orch_${f.key}` }))).toEqual(rowsOf('orch').map(({ group: _g, field: _f, ...f }) => f))
   expect(SCHEMA.filter(f => f.options).map(f => [f.key, f.options])).toEqual([['guard', ['fable', 'always', 'off']]])
 })
@@ -1358,7 +1360,7 @@ test("the script's answer: an updated line is a toast, up to date or skipped is 
 
 // ------------------------------------------------------------------ $.junkd's orch rows and the pane
 
-const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md', 'orch_dashboard_refresh', 'orch_dashboard_window_h', 'orch_watchdog', 'orch_idle_stop', 'orch_idle_stop_minutes', 'orch_stall_minutes']
+const MANIFEST_KEYS = ['orch_enabled', 'orch_guard', 'orch_allow_fable_agents', 'orch_implementer_ctx_k', 'orch_ui_review', 'orch_monitor_pr', 'orch_inject_rules', 'orch_rounds', 'orch_claude_md', 'orch_dashboard_refresh', 'orch_dashboard_window_h', 'orch_watchdog', 'orch_idle_stop', 'orch_idle_stop_minutes', 'orch_stall_minutes']
 
 test("$.junkd: the orch calls answer; schema's orch rows mirror the manifest; get answers the defaults; guard is the choice row", WITH_FRAME, async ($, on) => {
   world(on)
@@ -1584,24 +1586,24 @@ async function hotkey(ui: Mounted<Surface, 'Pane'>, key: string) {
   await ui.press({ key: b!.key! })
 }
 
-test('the pane: eight rows; a letter flips a switch, enter in a field saves it, the choice row picks the guard, tab is a hint', WITH_FRAME, async ($, on) => {
+test('the pane: nine rows; a letter flips a switch, enter in a field saves it, the choice row picks the guard, tab is a hint', WITH_FRAME, async ($, on) => {
   const rec = world(on)
   await start($)
   await orchCmd($, 'panel')
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'junkd', surface, ...PANE })
     const t = await texts(ui)
-    for (const title of ['Orchestrator: enabled', 'Main-loop guard', 'Allow Fable subagents', 'Implementer context cap (k tokens)', 'UI review', 'Inject orchestrator rules', 'Fix rounds', 'CLAUDE.md pointer block'])
+    for (const title of ['Orchestrator: enabled', 'Main-loop guard', 'Allow Fable subagents', 'Implementer context cap (k tokens)', 'UI review', 'Monitor PR', 'Inject orchestrator rules', 'Fix rounds', 'CLAUDE.md pointer block'])
       expect(t, title).toContain(title)
     expect(t).toContain('tab')
     expect(t).toContain('enter')
     expect(t).toContain('/junkd:orch')
-    // letters: a enabled, b allow_fable_agents, c implementer_ctx_k, d ui_review, e inject_rules, f rounds, g claude_md
+    // letters: a enabled, b allow_fable_agents, c implementer_ctx_k, d ui_review, e monitor_pr, f inject_rules, g rounds, h claude_md
     const buttons = await ui.findAll({ type: 'Button' })
-    expect(buttons.filter(b => /^[a-g]$/.test(String(b.props.hotkey ?? ''))).map(b => b.key).sort()).toEqual(
-      ['orch:allow_fable_agents', 'orch:claude_md', 'orch:enabled', 'orch:implementer_ctx_k-focus', 'orch:inject_rules', 'orch:rounds-focus', 'orch:ui_review'],
+    expect(buttons.filter(b => /^[a-h]$/.test(String(b.props.hotkey ?? ''))).map(b => b.key).sort()).toEqual(
+      ['orch:allow_fable_agents', 'orch:claude_md', 'orch:enabled', 'orch:implementer_ctx_k-focus', 'orch:inject_rules', 'orch:monitor_pr', 'orch:rounds-focus', 'orch:ui_review'],
     )
-    expect(buttons.find(b => b.key === 'orch:claude_md')?.props.hotkey).toBe('g')
+    expect(buttons.find(b => b.key === 'orch:claude_md')?.props.hotkey).toBe('h')
     const before = rec.config.length
     await hotkey(ui, 'a')
     expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_enabled', value: false })
@@ -1624,25 +1626,30 @@ test('the pane: eight rows; a letter flips a switch, enter in a field saves it, 
     await hotkey(ui, 'd')
     expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_ui_review', value: true })
     await hotkey(ui, 'e')
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_monitor_pr', value: true })
+    expect(await frame($, 'get', { key: 'orch_monitor_pr' })).toBe(true)
+    await hotkey(ui, 'e')
+    expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_monitor_pr', value: false })
+    await hotkey(ui, 'f')
     expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_inject_rules', value: false })
     await frame($, 'get', { key: 'orch_inject_rules' }) // a round trip: the press settles before the flag file's write does
     expect(RULES_FLAG in rec.files).toBe(true)
-    await hotkey(ui, 'e')
+    await hotkey(ui, 'f')
     await frame($, 'get', { key: 'orch_inject_rules' })
     expect(RULES_FLAG in rec.files).toBe(false)
-    // g flips claude_md and runs the CLAUDE.md script with the new state
-    await hotkey(ui, 'g')
+    // h flips claude_md and runs the CLAUDE.md script with the new state
+    await hotkey(ui, 'h')
     expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_claude_md', value: true })
     expect(await frame($, 'get', { key: 'orch_claude_md' })).toBe(true)
     expect(claudeMdRuns(rec).at(-1)?.mode).toEqual(['on'])
-    await hotkey(ui, 'g')
+    await hotkey(ui, 'h')
     expect(rec.config.at(-1)).toEqual({ key: 'junkd.orch_claude_md', value: false })
     await frame($, 'get', { key: 'orch_claude_md' })
     expect(claudeMdRuns(rec).at(-1)?.mode).toEqual(['off'])
-    // c and f ask the focus ring onto the number fields; the kit implements no $.ui.focus (no hook of the test's or
+    // c and g ask the focus ring onto the number fields; the kit implements no $.ui.focus (no hook of the test's or
     // of another plugin's is reached), so only that the press settles and the pane stays is checked here
     await hotkey(ui, 'c')
-    await hotkey(ui, 'f')
+    await hotkey(ui, 'g')
     expect(await ui.find({ key: 'orch:rounds-focus' })).toBeDefined()
     // the choice row: the other options are Buttons, the current one is text
     expect((await ui.find({ key: 'orch:guard=fable' }))?.type).toBe('Box')

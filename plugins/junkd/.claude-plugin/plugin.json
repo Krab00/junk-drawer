@@ -107,6 +107,12 @@
       "description": "Run ui-reviewer on the UI criteria when the project config declares a web capability; off, they become PM-REVIEW rows.",
       "default": true
     },
+    "orch_monitor_pr": {
+      "type": "boolean",
+      "title": "Monitor PR",
+      "description": "After orch opens a task's draft PR, watch it through CI and review bots with pr-wait and fix real findings within the fix-round budget. The PR stays draft.",
+      "default": false
+    },
     "orch_inject_rules": {
       "type": "boolean",
       "title": "Inject orchestrator rules",

@@ -55,11 +55,11 @@ export const ORCH_RANGE: Record<OrchNumberField, readonly [number, number]> = { 
 export const CLAMPED: ReadonlySet<string> = new Set(['idle_stop_minutes', 'stall_minutes'])
 const clampTo = (key: OrchNumberField, n: number) => Math.min(ORCH_RANGE[key][1], Math.max(ORCH_RANGE[key][0], Math.round(n)))
 export type OrchValues = {
-  enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; inject_rules: boolean; rounds: number; claude_md: boolean
+  enabled: boolean; guard: OrchGuard; allow_fable_agents: boolean; implementer_ctx_k: number; ui_review: boolean; monitor_pr: boolean; inject_rules: boolean; rounds: number; claude_md: boolean
   watchdog: boolean; idle_stop: boolean; idle_stop_minutes: number; stall_minutes: number
 } & DashValues
 export const O: OrchValues = {
-  enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, inject_rules: true, rounds: 3, claude_md: false,
+  enabled: true, guard: 'fable', allow_fable_agents: false, implementer_ctx_k: 400, ui_review: true, monitor_pr: false, inject_rules: true, rounds: 3, claude_md: false,
   watchdog: true, idle_stop: true, idle_stop_minutes: 10, stall_minutes: 15, ...DASH_DEFAULTS,
 }
 
@@ -97,6 +97,7 @@ export function applyOrchSettings(v: Record<string, unknown>): void {
   O.guard = g.error === undefined ? (g.value as OrchGuard) : 'fable'
   O.allow_fable_agents = v.allow_fable_agents === true
   O.ui_review = v.ui_review === undefined ? true : v.ui_review === true
+  O.monitor_pr = v.monitor_pr === true
   O.inject_rules = v.inject_rules === undefined ? true : v.inject_rules === true
   O.claude_md = v.claude_md === true
   O.watchdog = v.watchdog === undefined ? true : v.watchdog === true

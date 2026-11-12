@@ -27,8 +27,8 @@ binds Opus the same way. On any other model this sheet does not apply: work inli
   **Sonnet**; trivial lookups and mechanical steps on **Haiku**. A subagent never inherits the
   main-loop model; going above these defaults needs the user's explicit confirmation.
 - Git, gh, jq reads and the orch bin scripts (`orch-state`, `orch-worktree`, `orch-sync`) run
-  through the `orch-ops` agent (`junkd:orch-ops`, Haiku). Pass it the absolute script paths and exact commands;
-  it returns one line and writes the output to a report file.
+  through the `orch-ops` agent (`junkd:orch-ops`, Haiku), given absolute script paths and exact commands; it
+  returns one line and writes the output to a report file. `bin/pr-wait` (monitor_pr) the main loop runs itself under Monitor.
 - Spawn agents without a `name`: named agents emit idle notices and duplicate reports that
   drown the main loop's replies. Follow-ups go by SendMessage to the agent's id.
 - Brief every agent to write its full report to a file in the session scratchpad (or the task

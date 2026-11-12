@@ -12,7 +12,7 @@
 
 export type JunkdGroup = 'core' | 'handoff' | 'orch' | 'tldr' | 'ctx' | 'statusline' | 'tools' | 'egm'
 export type JunkdHandoffField = 'enabled' | 'threshold' | 'checkEvery' | 'autoOn' | 'resumeAfterLimit' | 'staleDays' | 'segment'
-export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'inject_rules' | 'rounds' | 'claude_md' | JunkdOrchDashboardField | JunkdOrchWatchdogField
+export type JunkdOrchField = 'enabled' | 'guard' | 'allow_fable_agents' | 'implementer_ctx_k' | 'ui_review' | 'monitor_pr' | 'inject_rules' | 'rounds' | 'claude_md' | JunkdOrchDashboardField | JunkdOrchWatchdogField
 // The orch dashboard's two rows (orch_dashboard_refresh, orch_dashboard_window_h), clamped in code.
 export type JunkdOrchDashboardField = 'dashboard_refresh' | 'dashboard_window_h'
 // The agent watchdog's rows (hooks/watchdog.tsx): the whole watchdog, stopping idle leftovers, the idle minutes before a

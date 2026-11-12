@@ -180,7 +180,7 @@ Every setting is a `userConfig` row of junkd, keyed `<group>_<field>`, and a `/c
 |---|---|---|
 | core | `core_output_style`, `core_cache_check_sessions` | [Output style](#output-style-ste), [prompt-cache check](#prompt-cache-check-claude-code-only) |
 | handoff | `handoff_enabled`, `handoff_threshold`, `handoff_checkEvery`, `handoff_autoOn`, `handoff_resumeAfterLimit`, `handoff_staleDays`, `handoff_segment` | [handoff settings](#settings-1) |
-| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md`, `orch_dashboard_refresh`, `orch_dashboard_window_h`, `orch_watchdog`, `orch_idle_stop`, `orch_idle_stop_minutes`, `orch_stall_minutes` | [orch settings](#settings-2), [dashboard](#dashboard), [watchdog settings](#settings-7) |
+| orch | `orch_enabled`, `orch_guard`, `orch_allow_fable_agents`, `orch_implementer_ctx_k`, `orch_ui_review`, `orch_monitor_pr`, `orch_inject_rules`, `orch_rounds`, `orch_claude_md`, `orch_dashboard_refresh`, `orch_dashboard_window_h`, `orch_watchdog`, `orch_idle_stop`, `orch_idle_stop_minutes`, `orch_stall_minutes` | [orch settings](#settings-2), [dashboard](#dashboard), [watchdog settings](#settings-7) |
 | tldr | `tldr_enabled`, `tldr_terse`, `tldr_sentences` | [tldr settings](#settings-3) |
 | ctx | `ctx_enabled`, `ctx_threshold`, `ctx_action`, `ctx_cmd` | [ctx-limit settings](#settings-4) |
 | statusline | `statusline_enabled`, `statusline_ctx`, `statusline_branch`, `statusline_worktree`, `statusline_model`, `statusline_effort`, `statusline_limits` | [statusline settings](#settings-5) |
@@ -868,6 +868,7 @@ The same rows are in `/config` under plugin `junkd` (`junkd.orch_<field>`), and 
 | `orch_allow_fable_agents` | boolean | `false` | Let the main loop spawn a subagent on an explicit Fable model (the user asked) |
 | `orch_implementer_ctx_k` | number | `400` | Reuse an implementer for a fix round only while its context is under this many k tokens (50–1000) |
 | `orch_ui_review` | boolean | `true` | Run `ui-reviewer` on the UI criteria when the config declares `web`; off, they are `PM-REVIEW` rows |
+| `orch_monitor_pr` | boolean | `false` | After a task's draft PR opens, watch it through CI and review bots with `bin/pr-wait` and fix real findings within the fix-round budget; false positives get a reply and are resolved. The PR stays draft |
 | `orch_inject_rules` | boolean | `true` | Print `ORCHESTRATOR.md` into the main session at start (the flag file `junkd/orch-rules-off` while off) |
 | `orch_rounds` | number | `3` | Fix rounds per task; `--rounds` overrides it for one run (1–10) |
 | `orch_claude_md` | boolean | `false` | On: the `## Orchestrator mode` section of `~/.claude/CLAUDE.md` becomes the `junkd:orch` pointer block; off: the block is removed (the original section only from the backup). Runs at once and at every session start while `orch_enabled` is on; see [the CLAUDE.md pointer block](#the-claudemd-pointer-block-orch_claude_md) |
@@ -917,7 +918,7 @@ of truth — no separate manifest to drift):
 
 - `bin/orch-state` — task-store CRUD (`list` / `set` / `reset-stale [--blocked]` / `new` /
   `cfg <key>` / `id <id>` / `settings`). `settings` prints `enabled`, `rounds`, `ui_review`,
-  `implementer_ctx_k` and `inject_rules` as `/junkd:orch` uses them (read from `settings.json`, the `orch_*`
+  `monitor_pr`, `implementer_ctx_k` and `inject_rules` as `/junkd:orch` uses them (read from `settings.json`, the `orch_*`
   options of [the shell rule](#settings)'s entry, clamped like the hooks module).
   All three scripts work on the checkout they run in; from a task worktree (`<project>/.worktrees/<id>`,
   which has no `.orch/`) on the nearest enclosing checkout that has one (`orch-state root` prints it). The config's `tasks_dir` must be a relative path to a folder under the project's `.orch/` (no `..` segment, and its real path, symlinks resolved, below `.orch/`; never `.orch/` itself), or the scripts stop. `list` hides every `_`-prefixed file (they are
@@ -932,6 +933,10 @@ of truth — no separate manifest to drift):
   if it says nothing, no full install (`npm ci`, `pod install`, `bundle install`, ...) — ask the orchestrator.
   `/junkd:orch-init` writes that AGENTS.md section, and `orch-worktree add` symlinks the config's
   `worktree_links` from the main checkout.
+- `bin/pr-wait` — monitor-pr's PR watcher (`orch_monitor_pr`), ported unchanged from
+  [t3dotgg/tstack](https://github.com/t3dotgg/tstack) (MIT, Copyright (c) 2026 Theo Browne): one line per new CI,
+  review or thread event, exit 0 done, 1 needs action, 2 bad input; state in `~/.local/state/pr-wait/`. Needs
+  `python3` and `gh`.
 - `bin/orch-sync` — the task-store ⇄ backend bridge.
 
 `bin/` at the plugin root links into `skills/junkd/bin/`, whose entries link to `../../orch/bin/<script>`;
