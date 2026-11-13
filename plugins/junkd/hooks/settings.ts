@@ -23,6 +23,7 @@ export const SCHEMA: readonly JunkdSchemaEntry[] = [
   { key: 'orch_allow_fable_agents', group: 'orch', field: 'allow_fable_agents', type: 'boolean', title: 'Allow Fable subagents', default: false, main: true },
   { key: 'orch_implementer_ctx_k', group: 'orch', field: 'implementer_ctx_k', type: 'number', title: 'Implementer context cap (k tokens)', default: 400, main: true },
   { key: 'orch_ui_review', group: 'orch', field: 'ui_review', type: 'boolean', title: 'UI review', default: true, main: false },
+  { key: 'orch_monitor_pr', group: 'orch', field: 'monitor_pr', type: 'boolean', title: 'Monitor PR', default: false, main: false },
   { key: 'orch_inject_rules', group: 'orch', field: 'inject_rules', type: 'boolean', title: 'Inject orchestrator rules', default: true, main: false },
   { key: 'orch_rounds', group: 'orch', field: 'rounds', type: 'number', title: 'Fix rounds', default: 3, main: false },
   { key: 'orch_claude_md', group: 'orch', field: 'claude_md', type: 'boolean', title: 'CLAUDE.md pointer block', default: false, main: true },

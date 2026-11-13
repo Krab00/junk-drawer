@@ -124,8 +124,7 @@ handoff_result=$(CODEX_THREAD_ID=codex-id CLAUDE_CODE_SESSION_ID=claude-id CLAUD
 
 # Two plugins: plugins/ holds junkd and junk-drawer (the cheatsheet); every host's marketplace lists those two and
 # nothing else, no plugin that moved into junkd (handoff, orch, tldr, ctx-limit, ctx-tokens, statusline) among them,
-# and junkd depends on one plugin only: egm of the egm marketplace (/junkd:task-draft), which the root marketplace
-# allowlists for a cross-marketplace dependency.
+# and junkd depends on no plugin: egm (/junkd:task-draft) is optional, so the root marketplace allowlists nothing.
 [ "$(ls -1 "$root/plugins" | LC_ALL=C sort | tr '\n' ' ')" = "junk-drawer junkd " ] ||
     { echo "plugins/ holds $(ls -1 "$root/plugins" | tr '\n' ' '), expected junk-drawer junkd"; exit 1; }
 for gone in ctx-limit ctx-tokens statusline; do
@@ -142,10 +141,10 @@ for gone in handoff orch tldr ctx-limit ctx-tokens statusline; do
         { echo "a marketplace still lists $gone"; exit 1; }
 done
 junkd_manifest="$junkd/.claude-plugin/plugin.json"
-jq -e '.dependencies == [{"name":"egm","marketplace":"egm","version":"0.1.1"}]' "$junkd_manifest" >/dev/null ||
-    { echo "junkd: the manifest's dependencies are not the one egm@egm entry"; exit 1; }
-jq -e '.allowCrossMarketplaceDependenciesOn == ["egm"]' "$root/.claude-plugin/marketplace.json" >/dev/null ||
-    { echo "marketplace.json does not allowlist the egm marketplace for cross-marketplace dependencies"; exit 1; }
+jq -e 'has("dependencies") | not' "$junkd_manifest" >/dev/null ||
+    { echo "junkd: the manifest declares dependencies; egm must stay optional"; exit 1; }
+jq -e 'has("allowCrossMarketplaceDependenciesOn") | not' "$root/.claude-plugin/marketplace.json" >/dev/null ||
+    { echo "marketplace.json still allowlists cross-marketplace dependencies"; exit 1; }
 jq -e '.plugins[] | select(.name == "junkd" and .source == "./plugins/junkd")' "$root/.claude-plugin/marketplace.json" >/dev/null ||
     { echo "marketplace.json does not list junkd at ./plugins/junkd"; exit 1; }
 for f in .kimi-plugin/plugin.json .codex-plugin/plugin.json; do

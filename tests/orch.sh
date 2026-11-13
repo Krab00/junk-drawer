@@ -789,18 +789,18 @@ git init -q "$tmp/w/.worktreesX/p"
 
 # orch-state settings: the user settings /orch runs with, from settings.json pluginConfigs (no config needed)
 settings_json="$CLAUDE_CONFIG_DIR/settings.json"
-defaults=$'enabled=true\nrounds=3\nui_review=true\nimplementer_ctx_k=400\ninject_rules=true'
+defaults=$'enabled=true\nrounds=3\nui_review=true\nmonitor_pr=false\nimplementer_ctx_k=400\ninject_rules=true'
 settings() { (cd "$tmp" && "$bin/orch-state" settings); }   # $tmp: no repo, no .orch/config.md
 mkdir -p "$CLAUDE_CONFIG_DIR"
 rm -f "$settings_json"
 [ "$(settings)" = "$defaults" ] || fail "settings, no settings.json: expected the defaults, got: $(settings)"
 # opts <json of junkd@junk-drawer's options> -> what settings prints
 opts() { printf '{"theme":"dark","pluginConfigs":{"tldr@junk-drawer":{"options":{"orch_rounds":9}},"junkd@junk-drawer":{"options":%s}}}\n' "$1" > "$settings_json"; settings; }
-[ "$(opts '{"orch_enabled":false,"orch_rounds":5,"orch_ui_review":false,"orch_implementer_ctx_k":600,"orch_inject_rules":false}')" = $'enabled=false\nrounds=5\nui_review=false\nimplementer_ctx_k=600\ninject_rules=false' ] ||
+[ "$(opts '{"orch_enabled":false,"orch_rounds":5,"orch_ui_review":false,"orch_monitor_pr":true,"orch_implementer_ctx_k":600,"orch_inject_rules":false}')" = $'enabled=false\nrounds=5\nui_review=false\nmonitor_pr=true\nimplementer_ctx_k=600\ninject_rules=false' ] ||
     fail "settings: values not read: $(settings)"
 [ "$(opts '{"orch_enabled":true,"orch_ui_review":true,"orch_inject_rules":true}')" = "$defaults" ] || fail "settings: explicit true switches: $(settings)"
 # the keys without their orch_ prefix (the old plugin's) are no setting of junkd's
-[ "$(opts '{"enabled":false,"rounds":5,"ui_review":false,"implementer_ctx_k":600,"inject_rules":false}')" = "$defaults" ] ||
+[ "$(opts '{"enabled":false,"rounds":5,"ui_review":false,"monitor_pr":true,"implementer_ctx_k":600,"inject_rules":false}')" = "$defaults" ] ||
     fail "settings: unprefixed keys read: $(settings)"
 # the exact bounds, one assertion each: in range kept, one past clamped
 for pair in rounds:0:1 rounds:1:1 rounds:10:10 rounds:11:10 rounds:-4:1 implementer_ctx_k:49:50 implementer_ctx_k:50:50 \
@@ -817,10 +817,10 @@ for pair in '2.5:3' '2.4:2' '"4":4' '" 6 ":6' '"abc":3' '"":3' '" ":3' '"\t6\n":
 done
 got=$(opts '{"orch_implementer_ctx_k":"250"}' | rg '^implementer_ctx_k=')
 [ "$got" = implementer_ctx_k=250 ] || fail "settings: implementer_ctx_k \"250\": got $got"
-# a switch: missing = true, only a JSON true is true
+# a switch: missing = true (monitor_pr: false), only a JSON true is true
 for in in false null 0 1 '"true"' '"on"'; do
-    got=$(opts "{\"orch_enabled\":$in,\"orch_ui_review\":$in,\"orch_inject_rules\":$in}" | rg '^(enabled|ui_review|inject_rules)=' | tr '\n' ' ')
-    [ "$got" = "enabled=false ui_review=false inject_rules=false " ] || fail "settings: switch $in: got $got"
+    got=$(opts "{\"orch_enabled\":$in,\"orch_ui_review\":$in,\"orch_monitor_pr\":$in,\"orch_inject_rules\":$in}" | rg '^(enabled|ui_review|monitor_pr|inject_rules)=' | tr '\n' ' ')
+    [ "$got" = "enabled=false ui_review=false monitor_pr=false inject_rules=false " ] || fail "settings: switch $in: got $got"
 done
 # no junkd@ entry (another plugin, the old orch plugin, a name that only starts or ends with junkd), no options,
 # options not an object, the file not one JSON object: the defaults
@@ -973,6 +973,30 @@ if command -v plutil >/dev/null; then
 fi
 export HOME="$HOME_SAVED"
 if "$bin/orch-deps" reap --bogus 2>/dev/null; then fail "reap: unknown flag accepted"; fi
+
+# ---------------------------------------------------------------- pr-wait: monitor-pr's watcher (tstack, MIT)
+# A real file in the skill (Codex drops symlinks), linked from skills/junkd/bin; bad input exits 2 before any gh call.
+[ -f "$plugin/skills/orch/bin/pr-wait" ] && [ ! -L "$plugin/skills/orch/bin/pr-wait" ] && [ -x "$plugin/skills/orch/bin/pr-wait" ] ||
+    fail "skills/orch/bin/pr-wait is no executable real file"
+[ -L "$plugin/skills/junkd/bin/pr-wait" ] || fail "skills/junkd/bin/pr-wait is no link"
+rg -q 'MIT License, Copyright \(c\) 2026 Theo Browne' "$plugin/skills/orch/bin/pr-wait" || fail "pr-wait: MIT attribution missing"
+if command -v python3 >/dev/null; then
+    "$bin/pr-wait" --help | rg -q '^usage: pr-wait' || fail "pr-wait --help: no usage"
+    for args in '' 'abc' '0' '1 --until bogus' '1 --repo bad' '1 --bogus'; do
+        rc=0; out=$(HOME="$tmp/prwait" "$bin/pr-wait" $args 2>&1) || rc=$?
+        [ "$rc" = 2 ] || fail "pr-wait $args: exit $rc, expected 2 ($out)"
+    done
+    [ ! -e "$tmp/prwait" ] || fail "pr-wait: bad input wrote state"
+    # a review bot is a Bot account: a person whose login names a bot is not one
+    python3 -I -B - "$bin/pr-wait" <<'PY' || fail "pr-wait: bot_of trusts a non-Bot login"
+import sys, importlib.machinery, importlib.util
+loader = importlib.machinery.SourceFileLoader("prwait", sys.argv[1])
+m = importlib.util.module_from_spec(importlib.util.spec_from_loader("prwait", loader)); loader.exec_module(m)
+assert m.bot_of({"author": {"login": "greptile-apps", "__typename": "Bot"}}) == "greptile"
+assert m.bot_of({"author": {"login": "greptile-fan", "__typename": "User"}}) is None
+assert m.bot_of({}) is None
+PY
+fi
 
 # ---------------------------------------------------------------- orch-worktree: config `worktree_links`
 lk="$tmp/links/main"; mkdir -p "$lk/mobile" "$lk/lib/node_modules" "$lk/packages/a" "$lk/packages/b" "$lk/.orch/tasks"

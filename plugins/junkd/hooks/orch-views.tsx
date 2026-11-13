@@ -28,6 +28,7 @@ const HINTS: Record<OrchField, string> = {
   allow_fable_agents: 'an explicit Fable model on a subagent',
   implementer_ctx_k: 'reuse an implementer under this many k tokens',
   ui_review: 'ui-reviewer on web UI criteria; off: PM-REVIEW rows',
+  monitor_pr: 'pr-wait on each draft PR; fix real CI and bot findings',
   inject_rules: 'ORCHESTRATOR.md into the main session at start',
   rounds: 'fix rounds per task; --rounds overrides',
   claude_md: 'the CLAUDE.md orchestrator section as a pointer block; off removes it',
