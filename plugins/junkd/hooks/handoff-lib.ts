@@ -37,6 +37,9 @@ export const S = {
   count: 0,
   lastId: null as string | null,
   fresh: false, // right after /clear: usage() still reports the old window until the first response
+  staleFills: [] as number[], // every old-window fill of this cycle: the turn-end reading when its /clear was issued, plus each
+                               // measurement dropped while that clear was in flight. A fresh-window measurement that reports
+                               // one of them is the old window's, no baseline. Empty while fresh is off; not persisted.
   threshold: 300, // thousands of tokens (300 = 300k); 100 or less is the legacy percent of the window, see thresholdTokens
   base: 0, // used tokens on the first measurement of the window (system prompt + handon); 0 = not measured yet
   checkEvery: 5,

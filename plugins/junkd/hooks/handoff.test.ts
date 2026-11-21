@@ -1339,7 +1339,7 @@ test('a fresh window no threshold can reach disarms the loop and the log says so
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await turn($)
   await clock.advance(1000)
-  await measure($, 95) // 95 + 90 can never be reached
+  await measure($, 96) // 96 + 90 can never be reached (not 95: that is the old window's last fill, no baseline)
   expect(bodies(rec).at(-1)).toContain('note=base-set,fresh-cleared,auto-disarmed')
   expect(bodies(rec).at(-1)).toContain('armed=false')
 })
@@ -1519,8 +1519,8 @@ test('a written handoff gives the next cycle its 3 tries again', THRESHOLD_5, as
   await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-01-01T00-00_abcdef12.md`, content: '# h' })
   await turn($)
   await clock.advance(1000) // cleared and resumed
-  await measure($, 7) // the new window opens at 7%: the limit is 12
-  rec.percent = 12
+  await measure($, 8) // the new window opens at 8% (not 7: the old window's last fill is no baseline): the limit is 13
+  rec.percent = 13
   expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // due at a tool call this time: no ask yet
   for (let i = 0; i < 6; i++) {
     await turn($)
@@ -1985,6 +1985,7 @@ test('external handoffs leave the 3-tries cap alone: five in a row keep the loop
     await start($)
     await ahandoff($, '')
     for (const id of ['aaaa0001', 'aaaa0002', 'aaaa0003', 'aaaa0004', 'aaaa0005']) {
+      rec.tokens = 30_000 // the old window's fill at its turn end: the new window's first fill (20k) differs from it
       await $.tool.call({ tool: 'Write', file_path: `${DIR}/2026-10-21T10-00_${id}.md`, content: '# h' })
       drop(id)
       await turn($)
@@ -3111,12 +3112,14 @@ test('M5c session.start with a stale phase=clear (the clear threw, nothing in fl
 })
 
 // M12: a chain superseded while it waits on its /clear stops when that clear answers: no second handon.
-test('M12 a chain held in its /clear while a retry-clear starts a newer one stops when its clear answers: one handon', TOKENS_300, async ($, on) => {
+// A turn end cannot start the newer chain any more: a measurement while the clear is in flight is the old window's
+// (stale-window) and keeps fresh on, so the turn end is skip:fresh, never a retry-clear. The pane's "Resume last" can.
+test('M12 a chain held in its /clear while the pane\'s Resume last starts a newer one stops when its clear answers: one handon', TOKENS_300, async ($, on) => {
   let releaseClear!: () => void
   const held = new Promise<void>(r => { releaseClear = r })
   let clearsSeen = 0
   on('command.run', { command: 'clear' }, async (_$, e, next) => {
-    if (clearsSeen++ === 0) await held // the first chain's clear answers late
+    if (clearsSeen++ === 0) await held // the first chain's clear answers late (well inside the 10 s timeout)
     return next(e)
   })
   const rec = world(on)
@@ -3127,9 +3130,16 @@ test('M12 a chain held in its /clear while a retry-clear starts a newer one stop
   await settle()
   expect(clearsSeen).toBe(1)
   expect(await statusLines($)).toContain('phase clear')
-  await $.session.measure({ context: usageTokens(20_000).context, rateLimits: [], changed: ['context'] }) // fresh off
+  await $.session.measure({ context: usageTokens(20_000).context, rateLimits: [], changed: ['context'] })
+  expect(lastLog(rec)).toContain('note=stale-window')
   await turn($)
-  expect(lastLog(rec)).toContain('decision=cycle:retry-clear')
+  expect(lastLog(rec)).toContain('decision=skip:fresh') // no retry-clear over the held clear
+  expect(clearsSeen).toBe(1)
+  await handoff($, 'panel')
+  const ui = await $.ui.mount({ plugin: 'junkd', surface: 'terminal', ...PANE })
+  await hotkey(ui, '1')
+  await hotkey(ui, 'r') // Resume last: a newer chain for the same id
+  await ui.unmount()
   await handonRuns($, rec, clock, [handonOf('abcdef12')]) // the newer chain: its clear, its handon
   expect(clearsSeen).toBe(2)
   expect(await statusLines($)).toContain('phase idle')
@@ -3161,3 +3171,194 @@ test('M16 follow resets the resume retries: a cycle:continue after a resume retr
   expect(lastLog(rec)).toContain('decision=cycle:continue')
   expect(await statusLines($)).toContain('retries clear 0/3 · resume 0/3')
 })
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The old window's own end-of-turn measurement after the cycle's /clear was issued (the host raises turn.complete and
+// session.measure in either order). Taken as the new window's baseline it raised the limit to old fill + threshold
+// (617k for a 300k threshold); it is the old window's, so fresh stays on and the new window's first fill is the base.
+
+const measureTokens = ($: Engine, tokens: number) => $.session.measure({ context: usageTokens(tokens).context, rateLimits: [], changed: ['context'] })
+
+test('stale window 1: the old window\'s measurement while the /clear is in flight is no baseline: stale-window, fresh stays, limit 300k', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await start($)
+  await ahandoff($, '')
+  setClear(rec, 'hang')
+  await reachClear($, rec, clock) // the turn end read the old window at 400k
+  expect(lastLog(rec)).toContain('decision=cycle:clear-issued')
+  await measureTokens($, 401_000) // not the turn-end reading: only the in-flight clear (phase=clear) makes it stale
+  expect(lastLog(rec)).toBe('session.measure percent=40 used=401000 limit=300000 armed=true fresh=true decision=skip:measure-only base=0 threshold=300 phase=clear window=1000000 note=stale-window')
+  // the lost clear still goes as before: clear-failed:timeout after 10 s, fresh off, the phase stays clear, a retry next
+  await clock.advance(10_000)
+  await settle()
+  expect(lastLog(rec)).toContain('decision=cycle:clear-failed:timeout')
+  expect(lastLog(rec)).toContain('fresh=false')
+  expect(lastLog(rec)).toContain('base=0')
+  setClear(rec, 'ok')
+  await turn($)
+  expect(lastLog(rec)).toContain('decision=cycle:retry-clear')
+})
+
+test('stale window 2: the old window\'s measurement after the /clear answered is no baseline; the real first fill is, and the next handoff is at 300k', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await start($)
+  await ahandoff($, '')
+  await reachClear($, rec, clock) // the old window ends at 400k
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(await statusLines($)).toContain('phase idle')
+  await measureTokens($, 400_000) // late: the clear answered, the old window's measurement arrives now
+  expect(lastLog(rec)).toContain('used=400000 limit=300000 armed=true fresh=true decision=skip:measure-only base=0')
+  expect(lastLog(rec)).toContain('note=stale-window')
+  await measureTokens($, 80_000) // the new window's first fill
+  expect(lastLog(rec)).toBe('session.measure percent=8 used=80000 limit=300000 armed=true fresh=false decision=skip:measure-only base=80000 threshold=300 phase=idle window=1000000 note=base-set,fresh-cleared')
+  rec.tokens = 299_999
+  expect(denial(await $.tool.call(READ))).toBeUndefined()
+  rec.tokens = 300_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // at 300k, not at 700k
+})
+
+test('stale window 3: the old window\'s measurement before the chain starts (fresh still off) is an ordinary one; the real first fill sets the base', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await start($)
+  await ahandoff($, '')
+  rec.tokens = 400_000
+  await turn($) // fire: the loop asks for the handoff
+  await clock.advance(1000)
+  await $.tool.call(WRITE('abcdef12'))
+  await turn($) // cycle:continue: the chain waits on sleep(0)
+  expect(lastLog(rec)).toContain('decision=cycle:continue')
+  await measureTokens($, 400_000) // the measurement comes before the clear is issued: the good order
+  expect(lastLog(rec)).toBe('session.measure percent=40 used=400000 limit=300000 armed=true fresh=false decision=skip:measure-only base=0 threshold=300 phase=resume window=1000000')
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  await measureTokens($, 80_000)
+  expect(lastLog(rec)).toContain('used=80000 limit=300000 armed=true fresh=false decision=skip:measure-only base=80000')
+  expect(lastLog(rec)).toContain('note=base-set,fresh-cleared')
+  rec.tokens = 300_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+})
+
+test('stale window 4: after a stale-window skip, a real first fill over the threshold is still the baseline: limit base + threshold', TOKENS_300, async ($, on) => {
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await start($)
+  await ahandoff($, '')
+  await reachClear($, rec, clock) // the old window ends at 400k
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  await measureTokens($, 400_000)
+  expect(lastLog(rec)).toContain('note=stale-window')
+  await measureTokens($, 320_000) // the new window opens over the threshold (system prompt + a big handoff)
+  expect(lastLog(rec)).toBe('session.measure percent=32 used=320000 limit=620000 armed=true fresh=false decision=skip:measure-only base=320000 threshold=300 phase=idle window=1000000 note=base-set,fresh-cleared')
+  expect(rec.toasts).toContain('handoff: fresh window at 320k, next handoff at 620k')
+  rec.tokens = 619_999
+  expect(denial(await $.tool.call(READ))).toBeUndefined()
+  rec.tokens = 620_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+})
+
+test('stale window 5: a handoff written by hand (fire:external-handoff) — the old window\'s measurement during the clear is no baseline either', TOKENS_300, async ($, on) => {
+  let releaseClear!: () => void
+  const held = new Promise<void>(r => { releaseClear = r })
+  on('command.run', { command: 'clear' }, async (_$, e, next) => {
+    await held // the clear answers once the old window's measurement is in
+    return next(e)
+  })
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  try {
+    await start($)
+    await ahandoff($, '')
+    rec.tokens = 250_000
+    await $.tool.call(WRITE('feed0001'))
+    drop('feed0001')
+    rec.tokens = 510_000 // the window grew during the turn
+    await turn($)
+    expect(lastLog(rec)).toContain('decision=fire:external-handoff')
+    await clock.advance(1) // the chain starts: /clear is issued and held
+    await settle()
+    expect(lastLog(rec)).toContain('decision=cycle:clear-issued')
+    await measureTokens($, 510_000)
+    expect(lastLog(rec)).toBe('session.measure percent=51 used=510000 limit=300000 armed=true fresh=true decision=skip:measure-only base=0 threshold=300 phase=clear window=1000000 note=stale-window')
+    releaseClear()
+    await handonRuns($, rec, clock, [handonOf('feed0001')])
+    expect(rec.commands).toContain('junkd:handon feed0001')
+    await measureTokens($, 90_000)
+    expect(lastLog(rec)).toContain('used=90000 limit=300000 armed=true fresh=false decision=skip:measure-only base=90000')
+    rec.tokens = 300_000
+    expect(denial(await $.tool.call(READ))).toMatch(/handoff/i) // at 300k, not at 810k
+  } finally { undrop() }
+})
+
+test('stale window 6: a measurement dropped during the clear (not the turn-end reading) delivered again after the clear answered is still stale; the real first fill sets the base', TOKENS_300, async ($, on) => {
+  let releaseClear!: () => void
+  const held = new Promise<void>(r => { releaseClear = r })
+  on('command.run', { command: 'clear' }, async (_$, e, next) => {
+    await held
+    return next(e)
+  })
+  const rec = world(on)
+  const clock = mock.clock(on)
+  passMeasure(on)
+  await start($)
+  await ahandoff($, '')
+  await reachClear($, rec, clock) // the turn end read the old window at 400k; the /clear is held
+  expect(lastLog(rec)).toContain('decision=cycle:clear-issued')
+  await measureTokens($, 401_000) // the old window's final fill, unlike the turn-end reading
+  expect(lastLog(rec)).toContain('phase=clear window=1000000 note=stale-window')
+  releaseClear()
+  await handonRuns($, rec, clock, [handonOf('abcdef12')])
+  expect(await statusLines($)).toContain('phase idle')
+  await measureTokens($, 401_000) // the same old-window fill again, now after the clear answered
+  expect(lastLog(rec)).toBe('session.measure percent=40 used=401000 limit=300000 armed=true fresh=true decision=skip:measure-only base=0 threshold=300 phase=idle window=1000000 note=stale-window')
+  await measureTokens($, 80_000)
+  expect(lastLog(rec)).toBe('session.measure percent=8 used=80000 limit=300000 armed=true fresh=false decision=skip:measure-only base=80000 threshold=300 phase=idle window=1000000 note=base-set,fresh-cleared')
+  rec.tokens = 300_000
+  expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+})
+
+// The cycle remembers every old-window fill, not one: a value dropped while the clear is in flight never replaces the
+// turn-end reading or another dropped value.
+for (const [name, during, late] of [
+  ['stale window 7: a low reading dropped during the clear does not replace the turn-end 400k; the 400k delivered late is still stale', [15_000], 400_000],
+  ['stale window 8: two different old readings dropped during the clear (401k, 402k); the first one delivered late is still stale', [401_000, 402_000], 401_000],
+] as const) {
+  test(`${name}; the real first fill sets the base and the fire is at 300k`, TOKENS_300, async ($, on) => {
+    let releaseClear!: () => void
+    const held = new Promise<void>(r => { releaseClear = r })
+    on('command.run', { command: 'clear' }, async (_$, e, next) => {
+      await held
+      return next(e)
+    })
+    const rec = world(on)
+    const clock = mock.clock(on)
+    passMeasure(on)
+    await start($)
+    await ahandoff($, '')
+    await reachClear($, rec, clock) // the turn end read the old window at 400k; the /clear is held
+    expect(lastLog(rec)).toContain('decision=cycle:clear-issued')
+    for (const tokens of during) {
+      await measureTokens($, tokens)
+      expect(lastLog(rec)).toContain(`used=${tokens} limit=300000 armed=true fresh=true decision=skip:measure-only base=0`)
+      expect(lastLog(rec)).toContain('phase=clear window=1000000 note=stale-window')
+    }
+    releaseClear()
+    await handonRuns($, rec, clock, [handonOf('abcdef12')])
+    expect(await statusLines($)).toContain('phase idle')
+    await measureTokens($, late) // an old-window fill delivered again after the clear answered
+    expect(lastLog(rec)).toContain(`used=${late} limit=300000 armed=true fresh=true decision=skip:measure-only base=0 threshold=300 phase=idle`)
+    expect(lastLog(rec)).toContain('note=stale-window')
+    await measureTokens($, 80_000)
+    expect(lastLog(rec)).toBe('session.measure percent=8 used=80000 limit=300000 armed=true fresh=false decision=skip:measure-only base=80000 threshold=300 phase=idle window=1000000 note=base-set,fresh-cleared')
+    rec.tokens = 299_999
+    expect(denial(await $.tool.call(READ))).toBeUndefined()
+    rec.tokens = 300_000
+    expect(denial(await $.tool.call(READ))).toMatch(/handoff/i)
+  })
+}
