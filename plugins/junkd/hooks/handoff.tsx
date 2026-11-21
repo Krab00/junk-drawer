@@ -184,6 +184,7 @@ function resetCycle() {
   S.clearTries = 0
   S.resumeTries = 0
   S.fresh = false
+  S.staleFills = []
   S.chain++
 }
 
@@ -317,6 +318,7 @@ function continueFrom($: $, id: string) {
     S.inFlight = true
     try {
       S.fresh = S.armed // the guard is the loop's: a manual resume while off needs none
+      S.staleFills = [S.tokens] // the old window's last fill (readUsage at this turn end)
       setPhase('clear')
       // ponytail: queue /clear before any other await — a headless session exits right after the turn.
       const cleared = $.command.run({ command: 'clear' })
@@ -328,6 +330,7 @@ function continueFrom($: $, id: string) {
       if (!latest()) return
       if (failed) {
         S.fresh = false // the window was not cleared: the next turn end is judged as a turn end, not as a fresh window
+        S.staleFills = [] // kept only while fresh is on
         await measured($, 'cycle', S.percent, `cycle:clear-failed:${failed}`)
         await sync($)
         return
@@ -476,6 +479,7 @@ async function disarm($: $) {
   S.clearTries = 0
   S.resumeTries = 0
   S.fresh = false
+  S.staleFills = []
   S.base = 0 // the baseline belongs to the window a handoff of this loop started; a loop armed again starts from none
   S.armedAt = null
   S.asks = 0
@@ -935,8 +939,18 @@ export function registerHandoff(on: On, options: Record<string, unknown>): void 
       // The baseline is the fill of a window THIS loop's handoff started (system prompt + handon): a limit that
       // sits at or under it counts growth from it. Any other window (a fresh session, the one the loop was armed
       // in) has none: its limit is the threshold itself, whatever the first turns already filled.
-      if (e.context.tokens !== undefined && S.fresh) {
+      // The old window's own end-of-turn measurement can come after the cycle's /clear was issued (the host raises
+      // turn.complete and session.measure in either order): taken as the baseline it raised the limit to old fill +
+      // threshold. While the clear has not answered, or with the old window's last fill, it is none: fresh stays on.
+      // Every value dropped while the clear is in flight joins the cycle's old fills beside the turn-end reading (the
+      // host may deliver it again after the clear answered, and it may differ from that reading); none replaces another.
+      const stale = S.fresh && e.context.tokens !== undefined && (S.phase === 'clear' || S.staleFills.includes(used))
+      if (stale) {
+        note = note ? `${note},stale-window` : 'stale-window'
+        if (S.phase === 'clear' && !S.staleFills.includes(used)) S.staleFills.push(used)
+      } else if (e.context.tokens !== undefined && S.fresh) {
         S.base = used
+        S.staleFills = []
         note = 'base-set'
         if (S.armed && S.fresh) {
           note = 'base-set,fresh-cleared'

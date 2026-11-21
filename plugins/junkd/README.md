@@ -419,6 +419,9 @@ The limit is the threshold itself. Only a window the loop's own handoff started 
 already fill it) has a baseline: when the threshold sits at or under that fill, the limit is the threshold in tokens
 of growth above it. A loop armed in any other window, a fresh session or one that already ran turns, has no
 baseline, so threshold 300 at 350k used hands off at the end of that turn. `/junkd:ahandoff off` drops the baseline.
+The old window's own last measurement can arrive after the cycle's `/clear` was issued; it is not taken as the baseline: a
+measurement while the clear has not answered, or one that still reports the old window's last fill, is logged with
+`note=stale-window` and the window stays fresh until its real first fill.
 
 **A threshold change re-arms.** Changing `handoff_threshold` while the loop is armed (`/config`, the Settings tab,
 `$.junkd.set`) takes effect at once: the next measurement compares with the new limit, the log gets a line with
@@ -469,7 +472,7 @@ asked for), `skip:below-limit`, `skip:fresh` (the first measurement of the windo
 pending), `skip:phase-<phase>` (a handoff is already under way), `skip:disarmed`, `skip:five-hour-limit`,
 `skip:measure-only`, `skip:restored`, `skip:threshold-changed`, `cycle:clear-issued`, `cycle:clear-failed:<reason>`, `cycle:retry-clear`, `give-up:clear`, `fire:external-handoff` (a handoff the loop did not ask for was written; the chain follows), or `cycle:ask-handoff` and `cycle:continue` (the model wrote no handoff
 that turn, or one was written and the clear starts) or `give-up:3-tries` (the handoff was asked for 3 times and never written;
-the loop disarms). `used`, `limit` and `base` are tokens; `window` is the context window the host reported, in tokens; `note=legacy-percent` marks a threshold of 100 or less. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
+the loop disarms). `used`, `limit` and `base` are tokens; `window` is the context window the host reported, in tokens; `note=legacy-percent` marks a threshold of 100 or less; `note=stale-window` marks a measurement of the old window that came after the cycle's `/clear`, taken as no baseline. `/junkd:ahandoff status` shows the last line and the path. A loop that "does nothing" shows its reason
 on the line of the turn that should have fired it.
 
 #### Resume after the 5h rate limit
